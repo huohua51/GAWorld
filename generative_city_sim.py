@@ -96,10 +96,16 @@ def visualize_agent_state_changes(
 ):
     os.makedirs(output_dir, exist_ok=True)
     if not metrics:
-        metrics = ["emotion", "stress", "econ_security", "city_identity"]
+        sample_history = next(iter(state_history.values()), {})
+        metrics = list(sample_history.keys())
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
-    axes = axes.flatten()
+    if not metrics:
+        return
+
+    cols = 3 if len(metrics) > 4 else 2
+    rows = int(np.ceil(len(metrics) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 4.2, rows * 3.2), sharex=True)
+    axes = np.array(axes).reshape(-1)
 
     steps = None
     for i, metric in enumerate(metrics):
@@ -109,10 +115,13 @@ def visualize_agent_state_changes(
             if steps is None:
                 steps = list(range(len(series)))
             label = agent_names.get(agent_id, str(agent_id))
-            ax.plot(steps, series, label=label, linewidth=1.8)
+            ax.plot(steps, series, label=label, linewidth=1.6)
         ax.set_title(metric)
         ax.set_ylim(0, 1)
         ax.grid(True, alpha=0.2)
+
+    for j in range(len(metrics), len(axes)):
+        axes[j].axis("off")
 
     axes[0].legend(loc="upper right", fontsize=8)
     fig.suptitle("Agent State Changes Over Time")
@@ -121,6 +130,23 @@ def visualize_agent_state_changes(
     out_path = os.path.join(output_dir, "agent_state_over_time.png")
     plt.savefig(out_path, dpi=200)
     plt.close()
+
+def save_state_history(state_history, output_dir="output/state"):
+    os.makedirs(output_dir, exist_ok=True)
+    rows = []
+    for agent_id, history in state_history.items():
+        for metric, series in history.items():
+            for step, value in enumerate(series):
+                rows.append({
+                    "agent_id": agent_id,
+                    "step": step,
+                    "metric": metric,
+                    "value": float(value),
+                })
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    df.to_csv(os.path.join(output_dir, "agent_state_history.csv"), index=False)
 
 
 # =========================================================
@@ -302,11 +328,19 @@ def build_agent(agent_id, df):
     return {
         "id": agent_id,
         **text,
+        "gender": row.get("gender", ""),
+        "hukou": row.get("hukou", ""),
+        "residence": row.get("residence", ""),
         "state": {
-            "emotion": row["emotion"],
-            "stress": row["stress"],
-            "econ_security": row["econ_security"],
-            "city_identity": row["city_identity"]
+            "emotion": float(row["emotion"]),
+            "stress": float(row["stress"]),
+            "econ_security": float(row["econ_security"]),
+            "city_identity": float(row["city_identity"]),
+            "policy_sensitivity": float(row.get("policy_sensitivity", 0.5)),
+            "platform_dependence": float(row.get("platform_dependence", 0.5)),
+            "risk_preference": float(row.get("risk_preference", 0.5)),
+            "voice_propensity": float(row.get("voice_propensity", 0.5)),
+            "mobility_intent": float(row.get("mobility_intent", 0.5)),
         },
         "memory": [],
         "social_neighbors": []
@@ -317,6 +351,12 @@ def build_agent(agent_id, df):
 # =========================================================
 def _memory_path(agent_id):
     return os.path.join(MEMORY_DIR, f"agent_{agent_id}.json")
+
+def _schedule_path(agent_id):
+    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_schedule.json")
+
+def _actions_path(agent_id):
+    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_actions.json")
 
 def _log_path(agent_id):
     return os.path.join(LOG_DIR, f"agent_{agent_id}.log")
@@ -336,6 +376,61 @@ def save_agent_memory(agent):
     os.makedirs(MEMORY_DIR, exist_ok=True)
     with open(_memory_path(agent["id"]), "w", encoding="utf-8") as f:
         json.dump(agent["memory"], f, ensure_ascii=False, indent=2)
+
+def load_agent_schedule(agent_id):
+    path = _schedule_path(agent_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, list):
+        return []
+    cleaned = []
+    for item in data:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            time_str, activity = item
+        elif isinstance(item, dict) and "time" in item and "activity" in item:
+            time_str, activity = item["time"], item["activity"]
+        else:
+            continue
+        time_str = str(time_str).strip()
+        activity = str(activity).strip()
+        if re.match(r"^\d{2}:\d{2}$", time_str) and activity:
+            cleaned.append((time_str, activity))
+    return cleaned
+
+def save_agent_schedule(agent_id, schedule):
+    os.makedirs(MEMORY_DIR, exist_ok=True)
+    payload = []
+    for time_str, activity in schedule:
+        payload.append({"time": time_str, "activity": activity})
+    with open(_schedule_path(agent_id), "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+def load_agent_actions(agent_id):
+    path = _actions_path(agent_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    cleaned = {}
+    for k, v in data.items():
+        if isinstance(v, list):
+            cleaned[k] = [str(a).strip() for a in v if str(a).strip()]
+    return cleaned
+
+def save_agent_actions(agent_id, action_space):
+    os.makedirs(MEMORY_DIR, exist_ok=True)
+    with open(_actions_path(agent_id), "w", encoding="utf-8") as f:
+        json.dump(action_space, f, ensure_ascii=False, indent=2)
 
 def reset_agent_memory(agent_id):
     os.makedirs(MEMORY_DIR, exist_ok=True)
@@ -566,7 +661,17 @@ def _parse_policy_effect(text):
         return {}
     if not isinstance(raw, dict):
         return {}
-    allowed = {"emotion", "stress", "econ_security", "city_identity"}
+    allowed = {
+        "emotion",
+        "stress",
+        "econ_security",
+        "city_identity",
+        "policy_sensitivity",
+        "platform_dependence",
+        "risk_preference",
+        "voice_propensity",
+        "mobility_intent",
+    }
     effect = {}
     for k in allowed:
         if k in raw:
@@ -700,7 +805,8 @@ def infer_event_effect(agent, event_desc, event_type="event"):
 事件类型：{event_type}
 事件描述：{event_desc}
 要求：
-1) 仅输出 JSON 对象，键为 emotion、stress、econ_security、city_identity 的子集。
+1) 仅输出 JSON 对象，键为 emotion、stress、econ_security、city_identity、policy_sensitivity、
+   platform_dependence、risk_preference、voice_propensity、mobility_intent 的子集。
 2) 值为 -0.2 到 0.2 的小幅浮点数，正值为提升，负值为下降。
 3) 不要输出其他文字。
 """
@@ -770,8 +876,22 @@ def social_influence(agent, agents_by_id):
 # =========================================================
 def update_state(agent):
     s = agent["state"]
+    s.setdefault("policy_sensitivity", 0.5)
+    s.setdefault("platform_dependence", 0.5)
+    s.setdefault("risk_preference", 0.5)
+    s.setdefault("voice_propensity", 0.5)
+    s.setdefault("mobility_intent", 0.5)
+
     s["emotion"] += 0.05 * s["econ_security"] - 0.07 * s["stress"] + random.uniform(-0.02, 0.02)
-    s["stress"] += random.uniform(-0.02, 0.03)
+    s["stress"] += 0.03 * (1 - s["econ_security"]) + random.uniform(-0.02, 0.03)
+    s["econ_security"] += 0.02 * (1 - s["stress"]) - 0.015 * s["platform_dependence"] + random.uniform(-0.015, 0.02)
+    s["city_identity"] += 0.03 * (s["emotion"] - 0.5) - 0.02 * s["mobility_intent"] + random.uniform(-0.01, 0.01)
+    s["policy_sensitivity"] += 0.02 * (s["stress"] - 0.5) + random.uniform(-0.01, 0.01)
+    s["platform_dependence"] += 0.02 * (1 - s["econ_security"]) + random.uniform(-0.01, 0.01)
+    s["risk_preference"] += 0.02 * (s["emotion"] - s["stress"]) + random.uniform(-0.01, 0.01)
+    s["voice_propensity"] += 0.02 * (s["city_identity"] - 0.5) + 0.01 * (s["emotion"] - 0.5) + random.uniform(-0.01, 0.01)
+    s["mobility_intent"] += 0.03 * (s["stress"] - s["city_identity"]) + random.uniform(-0.01, 0.01)
+
     for k in s:
         s[k] = float(np.clip(s[k], 0, 1))
 
@@ -836,12 +956,10 @@ def run_simulation():
             reset_agent_memory(agent["id"])
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
+    state_metrics = list(agents[0]["state"].keys()) if agents else []
     state_history = {
         a["id"]: {
-            "emotion": [],
-            "stress": [],
-            "econ_security": [],
-            "city_identity": [],
+            metric: [] for metric in state_metrics
         }
         for a in agents
     }
@@ -852,14 +970,27 @@ def run_simulation():
     for a in agents:
         a["social_neighbors"] = social_net[a["id"]]
 
-
-    schedules = {a["id"]: generate_schedule(a) for a in agents}
-    schedule_map = build_schedule_map(schedules)
-    timeline = build_master_timeline(schedules)
+    schedules = {}
     actions = {}
     for a in agents:
-        base_actions = generate_actions(a, schedules[a["id"]])
-        actions[a["id"]] = build_action_space_for_agent(a, base_actions)
+        agent_id = a["id"]
+        cached_schedule = load_agent_schedule(agent_id)
+        if cached_schedule:
+            schedules[agent_id] = cached_schedule
+        else:
+            schedules[agent_id] = generate_schedule(a)
+            save_agent_schedule(agent_id, schedules[agent_id])
+
+        cached_actions = load_agent_actions(agent_id)
+        if cached_actions:
+            actions[agent_id] = cached_actions
+        else:
+            base_actions = generate_actions(a, schedules[agent_id])
+            actions[agent_id] = build_action_space_for_agent(a, base_actions)
+            save_agent_actions(agent_id, actions[agent_id])
+
+    schedule_map = build_schedule_map(schedules)
+    timeline = build_master_timeline(schedules)
 
     validate_action_space(schedules, actions)
 
@@ -928,7 +1059,8 @@ Reflection: {refl}
 
     print("\n✅ 模拟完成")
     visualize_social_network(agents)
-    visualize_agent_state_changes(state_history, agent_names)
+    save_state_history(state_history)
+    visualize_agent_state_changes(state_history, agent_names, metrics=state_metrics)
 
 
 # =========================================================
