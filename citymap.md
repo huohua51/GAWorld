@@ -1,0 +1,123 @@
+# Village Map
+
+- Village: Hangzhou Riverside Village
+  - Hub: C-01 (Village Center)
+    - Nearby: C-02
+    - Nearby: Riverside Public Library
+    - Nearby: Hangzhou Riverside Community Center
+    - Nearby: Riverside Bank Branch
+    - Nearby: Central Parking Lot
+    - Nearby: Market St
+    - Nearby: East Loop
+  - Hub: Riverside Park
+    - Nearby: Riverwalk
+    - Nearby: Playground
+    - Nearby: Fitness Area
+    - Nearby: Riverside Cinema
+    - Nearby: Riverside Bus Station
+    - Nearby: Riverside Ave
+    - Nearby: Bridge Rd
+  - Hub: Riverside Community Hospital
+    - Nearby: Emergency Department
+    - Nearby: Pediatrics Department
+    - Nearby: Cardiology Department
+    - Nearby: Imaging Department
+    - Nearby: Northside Family Clinic
+    - Nearby: Willow Pharmacy
+    - Nearby: Willow Rd
+  - Hub: Riverside Bus Station
+    - Nearby: Riverside Post Office
+    - Nearby: Riverside Police Station
+    - Nearby: Riverside Fire Station
+    - Nearby: Corner Mart
+    - Nearby: West Loop
+  - Hub: Hangzhou Tech Labs
+    - Nearby: RnD Center
+    - Nearby: Admin Office
+    - Nearby: Riverside Logistics
+    - Nearby: Warehouse A
+    - Nearby: Warehouse B
+    - Nearby: Bridge Construction Co.
+  - Hub: Riverside Night Market
+    - Nearby: Riverside Supermart
+    - Nearby: Riverside Cinema
+    - Nearby: Corner Mart
+    - Nearby: Market St
+  - Hub: Willow Grove Park
+    - Nearby: Basketball Court
+    - Nearby: Picnic Area
+    - Nearby: East Pocket Park
+  - Hub: North Block
+    - Nearby: Building N-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+    - Nearby: Building N-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+    - Nearby: Riverside Primary School
+  - Hub: Central Block
+    - Nearby: Building C-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+        - Flat: 1C
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+        - Flat: 2C
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+        - Flat: 3C
+      - Floor: 4F
+        - Flat: 4A
+        - Flat: 4B
+        - Flat: 4C
+    - Nearby: Building C-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+    - Nearby: Riverside Middle School
+    - Nearby: Little River Daycare
+  - Hub: South Block
+    - Nearby: Building S-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+    - Nearby: Building S-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+      - Floor: 4F
+        - Flat: 4A
+        - Flat: 4B
+    - Nearby: Willow Design Studio
