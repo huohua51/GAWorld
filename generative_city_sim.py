@@ -358,6 +358,7 @@ STATEFUL = CONFIG["stateful"]
 MEMORY_DIR = CONFIG["memory_dir"]
 LOG_DIR = CONFIG["log_dir"]
 MAP_PATH = CONFIG.get("map_path", "citymap.md")
+PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
 
 # =========================================================
 # 政策事件
@@ -416,6 +417,17 @@ def build_agent(agent_id, df):
         "memory": [],
         "social_neighbors": []
     }
+
+def print_agent_profiles(agent_ids):
+    print("\n================= Agent Profiles =================")
+    for agent_id in agent_ids:
+        try:
+            block = load_profile_from_md(agent_id)
+        except ValueError as exc:
+            print(f"⚠️ {exc}")
+            continue
+        print(block.strip())
+        print()
 
 # =========================================================
 # Memory & Logs
@@ -1318,6 +1330,8 @@ def build_master_timeline(schedules):
 def run_simulation():
     df = pd.read_csv(CSV_PATH)
     agents = [build_agent(i, df) for i in AGENT_IDS]
+    if PRINT_AGENT_PROFILE:
+        print_agent_profiles([a["id"] for a in agents])
     start_day = 1
     if STATEFUL:
         sim_state = load_sim_state()

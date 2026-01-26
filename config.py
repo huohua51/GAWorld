@@ -34,9 +34,9 @@ CONFIG = {
             },
         },
         "routing": {
-            "default": "openai_gpt",
+            "default": "ollama_local",
             "tasks": {
-                "schedule": "openai_gpt",
+                "schedule": "ollama_local",
             },
         },
     },
@@ -44,6 +44,7 @@ CONFIG = {
     "agent_ids": [45],
     "sim_days": 1,
     "seconds_per_day": 10,
+    "print_agent_profile": False,
     # Data sources
     "csv_path": "hangzhou_agents_state_init.csv",
     "md_path": "hangzhou_profiles_with_names.md",
