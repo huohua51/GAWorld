@@ -213,6 +213,63 @@ class OpenAIProvider:
         data = r.json()
         return _extract_openai_response_text(data)
 
+class AnthropicProvider:
+    def __init__(
+        self,
+        base_url,
+        model,
+        api_key=None,
+        api_key_env="ANTHROPIC_API_KEY",
+        anthropic_version="2023-06-01",
+        timeout=120,
+        max_tokens=512,
+        system=None,
+        beta=None,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.api_key_env = api_key_env
+        self.anthropic_version = anthropic_version
+        self.timeout = timeout
+        self.max_tokens = max_tokens
+        self.system = system
+        self.beta = beta
+
+    def call(self, prompt):
+        api_key = self.api_key or os.environ.get(self.api_key_env)
+        if not api_key:
+            raise ValueError(f"Missing Anthropic API key in env var: {self.api_key_env}")
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": self.anthropic_version,
+            "content-type": "application/json",
+        }
+        if self.beta:
+            headers["anthropic-beta"] = self.beta
+        payload = {
+            "model": self.model,
+            "max_tokens": int(self.max_tokens),
+            "messages": [{"role": "user", "content": str(prompt)}],
+        }
+        if self.system:
+            payload["system"] = self.system
+        r = requests.post(
+            f"{self.base_url}/v1/messages",
+            headers=headers,
+            json=payload,
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+        data = r.json()
+        chunks = []
+        for block in data.get("content", []):
+            if block.get("type") == "text":
+                text = block.get("text", "")
+                if text:
+                    chunks.append(text)
+        return "".join(chunks).strip()
+
 class LLMRouter:
     def __init__(self, config):
         llm_cfg = config.get("llm") or {}
@@ -249,8 +306,21 @@ class LLMRouter:
                     api_key_env=cfg.get("api_key_env", "OPENAI_API_KEY"),
                     timeout=cfg.get("timeout", 120),
                 )
+            elif p_type in ("claude", "anthropic"):
+                providers[name] = AnthropicProvider(
+                    cfg.get("base_url", "https://api.anthropic.com"),
+                    cfg["model"],
+                    api_key=cfg.get("api_key") or cfg.get("ANTHROPIC_AUTH_TOKEN"),
+                    api_key_env=cfg.get("api_key_env", "ANTHROPIC_API_KEY"),
+                    anthropic_version=cfg.get("anthropic_version", "2023-06-01"),
+                    timeout=cfg.get("timeout", 120),
+                    max_tokens=cfg.get("max_tokens", 512),
+                    system=cfg.get("system"),
+                    beta=cfg.get("anthropic_beta"),
+                )
             else:
-                raise ValueError(f"Unsupported LLM provider type: {p_type}")
+                print(f"⚠️ 跳过不支持的 LLM provider 类型: {name} ({p_type})")
+                continue
         if not providers:
             raise ValueError("No LLM providers configured.")
         return providers
@@ -287,6 +357,7 @@ MD_PATH = CONFIG["md_path"]
 STATEFUL = CONFIG["stateful"]
 MEMORY_DIR = CONFIG["memory_dir"]
 LOG_DIR = CONFIG["log_dir"]
+MAP_PATH = CONFIG.get("map_path", "citymap.md")
 
 # =========================================================
 # 政策事件
@@ -358,8 +429,14 @@ def _schedule_path(agent_id):
 def _actions_path(agent_id):
     return os.path.join(MEMORY_DIR, f"agent_{agent_id}_actions.json")
 
+def _location_path(agent_id):
+    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_locations.json")
+
 def _log_path(agent_id):
     return os.path.join(LOG_DIR, f"agent_{agent_id}.log")
+
+def _sim_state_path():
+    return os.path.join(MEMORY_DIR, "sim_state.json")
 
 def load_agent_memory(agent_id):
     path = _memory_path(agent_id)
@@ -432,6 +509,22 @@ def save_agent_actions(agent_id, action_space):
     with open(_actions_path(agent_id), "w", encoding="utf-8") as f:
         json.dump(action_space, f, ensure_ascii=False, indent=2)
 
+def load_agent_locations(agent_id):
+    path = _location_path(agent_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def save_agent_locations(agent_id, locations):
+    os.makedirs(MEMORY_DIR, exist_ok=True)
+    with open(_location_path(agent_id), "w", encoding="utf-8") as f:
+        json.dump(locations, f, ensure_ascii=False, indent=2)
+
 def reset_agent_memory(agent_id):
     os.makedirs(MEMORY_DIR, exist_ok=True)
     with open(_memory_path(agent_id), "w", encoding="utf-8") as f:
@@ -441,6 +534,75 @@ def append_agent_log(agent, text):
     os.makedirs(LOG_DIR, exist_ok=True)
     with open(_log_path(agent["id"]), "a", encoding="utf-8") as f:
         f.write(text)
+
+def load_sim_state():
+    path = _sim_state_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def save_sim_state(state):
+    os.makedirs(MEMORY_DIR, exist_ok=True)
+    with open(_sim_state_path(), "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+def _split_log_blocks(log_text):
+    if not log_text:
+        return []
+    blocks = []
+    current = []
+    for line in log_text.splitlines():
+        if line.startswith("[") and current:
+            blocks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current).strip())
+    return [b for b in blocks if b]
+
+def load_recent_log_blocks(agent_id, max_blocks=2, max_chars=500):
+    path = _log_path(agent_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return []
+    blocks = _split_log_blocks(text)
+    if not blocks:
+        return []
+    tail = blocks[-max_blocks:]
+    trimmed = []
+    for block in tail:
+        if len(block) > max_chars:
+            trimmed.append(block[-max_chars:])
+        else:
+            trimmed.append(block)
+    return trimmed
+
+def load_recent_actions(agent_id, max_items=6):
+    path = _log_path(agent_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return []
+    actions = []
+    for line in text.splitlines():
+        if line.startswith("Action:"):
+            action = line.split("Action:", 1)[-1].strip()
+            if action:
+                actions.append(action)
+    return actions[-max_items:]
 
 def _extract_keywords(text):
     if not text:
@@ -491,6 +653,138 @@ def build_social_network(agents, avg_degree=6, p_cross=0.15):
                 network[b].add(a)
 
     return {k: list(v) for k, v in network.items()}
+
+# =========================================================
+# Map & Location
+# =========================================================
+def load_city_map(map_path):
+    if not os.path.exists(map_path):
+        return {}
+    hubs = {}
+    current_hub = None
+    with open(map_path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            hub_match = re.match(r"-\s*Hub:\s*(.+)", line)
+            if hub_match:
+                current_hub = hub_match.group(1).strip()
+                hubs.setdefault(current_hub, [])
+                continue
+            nearby_match = re.match(r"-\s*Nearby:\s*(.+)", line)
+            if nearby_match and current_hub:
+                hubs[current_hub].append(nearby_match.group(1).strip())
+    return hubs
+
+def _all_locations(city_map):
+    locs = []
+    for hub, nearby in city_map.items():
+        locs.append(hub)
+        locs.extend(nearby)
+    return list(dict.fromkeys(locs))
+
+def _pick_first_available(candidates, location_set):
+    for c in candidates:
+        if c in location_set:
+            return c
+    return None
+
+def _infer_workplace(agent, location_set):
+    profile_blob = " ".join([
+        agent.get("job", ""),
+        agent.get("personality", ""),
+        agent.get("daily_life", ""),
+        agent.get("values", "")
+    ])
+    if any(k in profile_blob for k in ["学生", "硕士", "博士", "学校", "上课", "老师", "教师", "教育"]):
+        return _pick_first_available(
+            ["Riverside Middle School", "Riverside Primary School", "Little River Daycare"],
+            location_set
+        )
+    if any(k in profile_blob for k in ["医院", "医生", "护士", "医疗", "诊所"]):
+        return _pick_first_available(
+            ["Riverside Community Hospital", "Northside Family Clinic"],
+            location_set
+        )
+    if any(k in profile_blob for k in ["研发", "工程", "技术", "程序", "互联网", "算法", "产品", "数据"]):
+        return _pick_first_available(
+            ["Hangzhou Tech Labs", "RnD Center", "Admin Office"],
+            location_set
+        )
+    if any(k in profile_blob for k in ["银行", "金融", "证券", "财务"]):
+        return _pick_first_available(
+            ["Riverside Bank Branch"],
+            location_set
+        )
+    if any(k in profile_blob for k in ["物流", "仓储", "配送", "快递"]):
+        return _pick_first_available(
+            ["Riverside Logistics", "Warehouse A", "Warehouse B"],
+            location_set
+        )
+    if any(k in profile_blob for k in ["设计", "工作室"]):
+        return _pick_first_available(
+            ["Willow Design Studio"],
+            location_set
+        )
+    if any(k in profile_blob for k in ["警察", "公安", "消防"]):
+        return _pick_first_available(
+            ["Riverside Police Station", "Riverside Fire Station"],
+            location_set
+        )
+    return _pick_first_available(
+        ["C-01 (Village Center)", "Riverside Night Market", "Market St"],
+        location_set
+    )
+
+def _infer_home(agent, location_set):
+    candidates = ["Central Block", "North Block", "South Block"]
+    home = _pick_first_available(candidates, location_set)
+    if home:
+        return home
+    return random.choice(list(location_set)) if location_set else "Home"
+
+def assign_agent_locations(agent, city_map):
+    location_set = set(_all_locations(city_map))
+    home = _infer_home(agent, location_set)
+    workplace = _infer_workplace(agent, location_set) or home
+    return {
+        "home": home,
+        "workplace": workplace,
+        "current": home,
+    }
+
+def resolve_location(agent, activity, time_str, city_map):
+    location_set = set(_all_locations(city_map))
+    home = agent["locations"].get("home", "Home")
+    work = agent["locations"].get("workplace", home)
+
+    def pick_any(candidates):
+        choice = _pick_first_available(candidates, location_set)
+        return choice or home
+
+    if any(k in activity for k in ["通勤"]):
+        return pick_any(["Riverside Bus Station", "Riverside Ave", "Bridge Rd", "Market St"])
+    if any(k in activity for k in ["工作", "上班", "加班"]):
+        return work
+    if any(k in activity for k in ["学习", "上课", "实验"]):
+        return pick_any(["Riverside Middle School", "Riverside Primary School", "Hangzhou Tech Labs"])
+    if any(k in activity for k in ["看病", "医院", "诊所"]):
+        return pick_any(["Riverside Community Hospital", "Northside Family Clinic", "Willow Pharmacy"])
+    if any(k in activity for k in ["晨练", "散步", "运动", "健身", "锻炼"]):
+        return pick_any(["Riverside Park", "Willow Grove Park", "Fitness Area", "Playground"])
+    if any(k in activity for k in ["买菜", "购物", "市场"]):
+        return pick_any(["Market St", "Riverside Supermart", "Riverside Night Market", "Corner Mart"])
+    if any(k in activity for k in ["电影", "娱乐", "休闲"]):
+        return pick_any(["Riverside Cinema", "Riverside Park"])
+    if any(k in activity for k in ["午饭", "晚饭", "吃饭"]):
+        if time_str <= "10:30":
+            return home
+        return pick_any(["Market St", "Riverside Night Market", "Riverside Supermart"])
+    if any(k in activity for k in ["吃早饭", "睡前", "午休", "休息", "个人时间"]):
+        return home
+
+    return agent["locations"].get("current", home)
 
 # =========================================================
 # Schedule & Action
@@ -762,6 +1056,9 @@ def choose_action(agent, activity, action_space):
 
     weights = []
     s = agent["state"]
+    recent_actions = []
+    if STATEFUL:
+        recent_actions = load_recent_actions(agent["id"], max_items=6)
 
     for act in options:
         w = 1.0
@@ -781,6 +1078,10 @@ def choose_action(agent, activity, action_space):
         # 睡前更容易反思
         if activity == "睡前" and "回顾" in act:
             w += 1.0
+
+        # 历史行动偏好：更可能重复近期做过的行为
+        if act in recent_actions:
+            w += 0.4
 
         weights.append(max(w, 0.01))  # 防止权重为 0
 
@@ -843,10 +1144,17 @@ def perception(agent, time_str, social_context, env_context, policy_event):
 
 def planning(agent, perception_text):
     memory_hint = "；".join(relevant_memory(agent, context=perception_text, max_items=2)) if agent["memory"] else "暂无重要经验"
+    history_hint = "暂无历史"
+    if STATEFUL:
+        history_blocks = load_recent_log_blocks(agent["id"], max_blocks=2, max_chars=380)
+        if history_blocks:
+            history_hint = "\n---\n".join(history_blocks)
     prompt = f"""
 你是{agent['name']}。
 你的感知是：{perception_text}
 你的近期经验：{memory_hint}
+你的近期历史片段：
+{history_hint}
 
 你此刻的短期计划是什么？（1-2句）
 """
@@ -860,6 +1168,69 @@ def reflection(agent, outcome):
 你对此有何反思或情绪变化？（1-2句）
 """
     return call_llm(prompt, task="reflection", agent_id=agent["id"])
+
+def _parse_interview(text, questions):
+    json_blob = _extract_json_array_block(text)
+    if not json_blob:
+        return []
+    try:
+        raw = json.loads(json_blob)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(raw, list):
+        return []
+    parsed = []
+    for i, item in enumerate(raw):
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            q, a = item
+        elif isinstance(item, dict):
+            q = item.get("question")
+            a = item.get("answer")
+        else:
+            continue
+        q = str(q).strip() if q else ""
+        a = str(a).strip() if a else ""
+        if not q:
+            q = questions[i] if i < len(questions) else ""
+        if q and a:
+            parsed.append({"question": q, "answer": a})
+    return parsed
+
+def interview_agent(agent, questions, context=None, max_questions=6):
+    if not questions:
+        return []
+    if isinstance(questions, str):
+        questions = [q.strip() for q in questions.splitlines() if q.strip()]
+    else:
+        questions = [str(q).strip() for q in questions if str(q).strip()]
+    if not questions:
+        return []
+    questions = questions[:max_questions]
+
+    memory_hint = "；".join(relevant_memory(agent, context="访谈", max_items=3)) if agent.get("memory") else "暂无重要经验"
+    context_text = context if context else "无"
+    question_text = "\n".join(f"- {q}" for q in questions)
+    prompt = f"""
+你是{agent['name']}。
+这是一次访谈，回答要真实且基于角色经历。
+背景：{context_text}
+你的近期经验：{memory_hint}
+
+请逐题回答以下问题，每题1-3句。
+要求：
+1) 输出 JSON 数组，每项为 {{"question":"...","answer":"..."}} 或 ["question","answer"]。
+2) 仅输出 JSON，不要其他文字。
+问题列表：
+{question_text}
+"""
+    response = call_llm(prompt, task="interview", agent_id=agent["id"])
+    parsed = _parse_interview(response, questions)
+    if parsed:
+        return parsed
+    fallback = response.strip()
+    if not fallback:
+        return []
+    return [{"question": q, "answer": fallback} for q in questions]
 
 # =========================================================
 # 社会影响（情绪扩散）
@@ -947,6 +1318,12 @@ def build_master_timeline(schedules):
 def run_simulation():
     df = pd.read_csv(CSV_PATH)
     agents = [build_agent(i, df) for i in AGENT_IDS]
+    start_day = 1
+    if STATEFUL:
+        sim_state = load_sim_state()
+        last_day = sim_state.get("last_day", 0)
+        if isinstance(last_day, int) and last_day >= 0:
+            start_day = last_day + 1
     if STATEFUL:
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
@@ -964,11 +1341,21 @@ def run_simulation():
         for a in agents
     }
     env_system = EnvironmentSystem(CONFIG.get("environment", {}), llm_fn=call_llm)
+    city_map = load_city_map(MAP_PATH)
 
     # === 构建社交网络 ===
     social_net = build_social_network(agents)
     for a in agents:
         a["social_neighbors"] = social_net[a["id"]]
+
+    for a in agents:
+        cached_locations = load_agent_locations(a["id"])
+        if cached_locations:
+            a["locations"] = cached_locations
+            a["locations"].setdefault("current", a["locations"].get("home", "Home"))
+        else:
+            a["locations"] = assign_agent_locations(a, city_map)
+            save_agent_locations(a["id"], a["locations"])
 
     schedules = {}
     actions = {}
@@ -996,11 +1383,14 @@ def run_simulation():
 
     sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
 
-    for day in range(1, SIM_DAYS + 1):
+    for day in range(start_day, start_day + SIM_DAYS):
         print(f"\n================= Day {day} =================")
         daily_logs = defaultdict(str)
 
-
+        day_header = f"\n================= Day {day} =================\n"
+        for agent in agents:
+            daily_logs[agent["id"]] += day_header
+            append_agent_log(agent, day_header)
             
         for time_str in timeline:
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
@@ -1012,6 +1402,8 @@ def run_simulation():
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 activity = schedule_map[agent["id"]].get(time_str, "个人时间")
                 act = choose_action(agent, activity, actions[agent["id"]])
+                location = resolve_location(agent, activity, time_str, city_map)
+                agent["locations"]["current"] = location
                 social_context = get_social_context(agent, agents_by_id)
 
                 policy_desc = None
@@ -1040,6 +1432,7 @@ def run_simulation():
 
                 log = f"""
 [{agent['name']} @ {time_str}]
+Location: {location}
 Environment: {env_context}
 Perception: {perc}
 Plan: {plan}
@@ -1056,6 +1449,8 @@ Reflection: {refl}
         for agent in agents:
             mem = daily_summary(agent, daily_logs[agent["id"]])
             print(f"🧠 {agent['name']} 的今日长期记忆：{mem}")
+        if STATEFUL:
+            save_sim_state({"last_day": day})
 
     print("\n✅ 模拟完成")
     visualize_social_network(agents)
@@ -1066,5 +1461,72 @@ Reflection: {refl}
 # =========================================================
 # 入口
 # =========================================================
-if __name__ == "__main__":
+def _parse_question_list(value):
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [v.strip() for v in str(value).splitlines() if v.strip()]
+
+def _cli_interview_agent(agent_id, questions, context=None):
+    df = pd.read_csv(CSV_PATH)
+    agent = build_agent(agent_id, df)
+    if STATEFUL:
+        agent["memory"] = load_agent_memory(agent["id"])
+    else:
+        agent["memory"] = []
+    answers = interview_agent(agent, questions, context=context)
+    print(json.dumps(answers, ensure_ascii=False, indent=2))
+
+def _build_arg_parser():
+    import argparse
+    parser = argparse.ArgumentParser(description="GAWorld simulator")
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("run", help="Run the full simulation")
+
+    interview = subparsers.add_parser("interview", help="Interview a specific agent by ID")
+    interview.add_argument("--agent-id", type=int, required=True, help="Agent ID to interview")
+    interview.add_argument(
+        "--question",
+        action="append",
+        dest="questions",
+        help="Interview question (can be used multiple times)",
+    )
+    interview.add_argument(
+        "--questions-file",
+        help="Path to a UTF-8 text file with one question per line",
+    )
+    interview.add_argument(
+        "--context",
+        default=None,
+        help="Optional background context for the interview",
+    )
+    return parser
+
+def _load_questions_from_file(path):
+    if not path:
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
+    except OSError:
+        return []
+
+def _main():
+    parser = _build_arg_parser()
+    args = parser.parse_args()
+
+    if args.command == "interview":
+        questions = []
+        questions.extend(_parse_question_list(args.questions))
+        questions.extend(_load_questions_from_file(args.questions_file))
+        if not questions:
+            parser.error("Provide at least one --question or a --questions-file.")
+        _cli_interview_agent(args.agent_id, questions, context=args.context)
+        return
+
     run_simulation()
+
+if __name__ == "__main__":
+    _main()

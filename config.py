@@ -22,21 +22,28 @@ CONFIG = {
                 "type": "openai",
                 "base_url": "https://api.openai.com/v1",
                 "model": "gpt-4.1",
-                "api_key_env": "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",
+                "api_key_env": "OPENAI_API_KEY",
+                "timeout": 120,
+            },
+            "claude": {
+                "type": "claude",
+                "base_url": "https://www.packyapi.com",
+                "model": "gpt-4.1",
+                "ANTHROPIC_AUTH_TOKEN": "sk-b0n7ujizk2dHMXnuiWUzHJ6tnGzbRRdPP2YK7hdxV0Xk5Pt7",
                 "timeout": 120,
             },
         },
         "routing": {
-            "default": "ollama_local",
+            "default": "openai_gpt",
             "tasks": {
-                "schedule": "ollama_local",
+                "schedule": "openai_gpt",
             },
         },
     },
     # Simulation
-    "agent_ids": [31, 1, 5],
+    "agent_ids": [45],
     "sim_days": 1,
-    "seconds_per_day": 30,
+    "seconds_per_day": 10,
     # Data sources
     "csv_path": "hangzhou_agents_state_init.csv",
     "md_path": "hangzhou_profiles_with_names.md",
