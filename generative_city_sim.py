@@ -359,6 +359,7 @@ MEMORY_DIR = CONFIG["memory_dir"]
 LOG_DIR = CONFIG["log_dir"]
 MAP_PATH = CONFIG.get("map_path", "citymap.md")
 PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
+BACKGROUND = CONFIG.get("background", "")
 
 # =========================================================
 # 政策事件
@@ -1356,6 +1357,7 @@ def run_simulation():
     }
     env_system = EnvironmentSystem(CONFIG.get("environment", {}), llm_fn=call_llm)
     city_map = load_city_map(MAP_PATH)
+    background_text = str(BACKGROUND).strip()
 
     # === 构建社交网络 ===
     social_net = build_social_network(agents)
@@ -1411,6 +1413,8 @@ def run_simulation():
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
+            if background_text:
+                env_context = f"背景：{background_text} 当前环境事件：{env_context}"
 
             for agent in agents:
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))

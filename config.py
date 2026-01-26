@@ -45,6 +45,8 @@ CONFIG = {
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
+    # Simulation background (time/city/societal status prompt)
+    "background": "2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。",
     # Data sources
     "csv_path": "hangzhou_agents_state_init.csv",
     "md_path": "hangzhou_profiles_with_names.md",
