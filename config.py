@@ -41,8 +41,8 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [45],
-    "sim_days": 1,
+    "agent_ids": [46],
+    "sim_days": 5,
     "seconds_per_day": 10,
     "print_agent_profile": False,
     # Simulation background (time/city/societal status prompt)
@@ -54,6 +54,11 @@ CONFIG = {
     "stateful": True,
     "memory_dir": "output/memory",
     "log_dir": "output/logs",
+    # Vector DB (memory + logs)
+    "vector_db_path": "output/memory/vector_db.sqlite",
+    "vector_db_dim": 256,
+    "vector_db_top_k": 3,
+    "vector_db_max_chars": 2000,
     # Policy events (description only; effect inferred by LLM)
     "policy_events": [
         {

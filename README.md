@@ -84,6 +84,7 @@ All runtime settings live in `config.py`.
 - `stateful`: if true, preserves memory and schedules across runs.
 - `memory_dir`: JSON memory/schedule/action/locations per agent.
 - `log_dir`: per-agent logs.
+- `vector_db_path`: sqlite vector store for memory + logs (with `vector_db_dim`, `vector_db_top_k`, `vector_db_max_chars`).
 
 ### Policy events
 `policy_events` is a list of `{day, time, name, description}`. Effects are inferred via LLM and applied to agent state.
@@ -101,9 +102,15 @@ Simulation output is written under `output/`:
 - `output/memory/agent_<id>_actions.json` cached action space.
 - `output/memory/agent_<id>_locations.json` cached locations.
 - `output/memory/sim_state.json` last simulated day for stateful runs.
+- `output/memory/vector_db.sqlite` vector memory store (logs + summaries).
 - `output/network/social_network.png` social graph snapshot.
 - `output/state/agent_state_over_time.png` state evolution plot.
 - `output/state/agent_state_history.csv` time series data.
+
+## Code organization
+- `generative_city_sim.py`: main simulation loop and core domain logic.
+- `llm_providers.py`: LLM provider wrappers and routing logic.
+- `memory_store.py`: JSON memory/log persistence plus vector DB retrieval.
 
 ## Notes on behavior
 - Schedule/action generation is LLM-driven with a heuristic fallback.
@@ -118,5 +125,3 @@ Avoid hardcoding API keys in `config.py`. Prefer environment variables (`OPENAI_
 - Missing actions for a schedule: ensure the LLM provider is reachable; cached action spaces can be deleted from `output/memory` to regenerate.
 - Empty logs or memory: verify `stateful` and output paths in `config.py`.
 - Slow runs: reduce `sim_days`, agents in `agent_ids`, or increase `seconds_per_day`.
-
-

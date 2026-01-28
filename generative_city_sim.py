@@ -1,18 +1,39 @@
 import pandas as pd
-import requests
 import time
 import random
 import numpy as np
 import re
 import json
 from collections import defaultdict
-
 import os
 import matplotlib.pyplot as plt
 import networkx as nx
 
 from config import CONFIG
 from environment import EnvironmentSystem
+from llm_providers import call_llm
+from memory_store import (
+    append_agent_log,
+    load_agent_actions,
+    load_agent_locations,
+    load_agent_memory,
+    load_agent_schedule,
+    load_recent_actions,
+    load_recent_log_blocks,
+    load_sim_state,
+    reset_agent_memory,
+    retrieve_relevant_memories,
+    save_agent_actions,
+    save_agent_locations,
+    save_agent_memory,
+    save_agent_schedule,
+    save_sim_state,
+    seed_vector_db_from_memory,
+    vector_db_add_entry,
+    VECTOR_DB_TOP_K,
+    _format_memory_hint,
+    _memory_action_bias,
+)
 
 # =========================================================
 # Utils
@@ -150,202 +171,6 @@ def save_state_history(state_history, output_dir="output/state"):
 
 
 # =========================================================
-# LLM backends
-# =========================================================
-def _extract_openai_response_text(response_json):
-    if "output_text" in response_json and response_json["output_text"]:
-        return str(response_json["output_text"]).strip()
-    output = response_json.get("output", [])
-    chunks = []
-    for item in output:
-        if item.get("type") != "message":
-            continue
-        for content in item.get("content", []):
-            if content.get("type") in ("output_text", "text"):
-                text = content.get("text", "")
-                if text:
-                    chunks.append(text)
-    return "".join(chunks).strip()
-
-class OllamaProvider:
-    def __init__(self, url, model, timeout=120):
-        self.url = url
-        self.model = model
-        self.timeout = timeout
-
-    def call(self, prompt):
-        r = requests.post(
-            self.url,
-            json={"model": self.model, "prompt": prompt, "stream": False},
-            timeout=self.timeout
-        )
-        r.raise_for_status()
-        data = r.json()
-        return str(data.get("response", "")).strip()
-
-class OpenAIProvider:
-    def __init__(self, base_url, model, api_key=None, api_key_env="OPENAI_API_KEY", timeout=120):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.api_key = api_key
-        self.api_key_env = api_key_env
-        self.timeout = timeout
-
-    def call(self, prompt):
-        api_key = self.api_key or os.environ.get(self.api_key_env)
-        if not api_key:
-            raise ValueError(f"Missing OpenAI API key in env var: {self.api_key_env}")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model,
-            "input": prompt,
-        }
-        r = requests.post(
-            f"{self.base_url}/responses",
-            headers=headers,
-            json=payload,
-            timeout=self.timeout
-        )
-        r.raise_for_status()
-        data = r.json()
-        return _extract_openai_response_text(data)
-
-class AnthropicProvider:
-    def __init__(
-        self,
-        base_url,
-        model,
-        api_key=None,
-        api_key_env="ANTHROPIC_API_KEY",
-        anthropic_version="2023-06-01",
-        timeout=120,
-        max_tokens=512,
-        system=None,
-        beta=None,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.api_key = api_key
-        self.api_key_env = api_key_env
-        self.anthropic_version = anthropic_version
-        self.timeout = timeout
-        self.max_tokens = max_tokens
-        self.system = system
-        self.beta = beta
-
-    def call(self, prompt):
-        api_key = self.api_key or os.environ.get(self.api_key_env)
-        if not api_key:
-            raise ValueError(f"Missing Anthropic API key in env var: {self.api_key_env}")
-        headers = {
-            "x-api-key": api_key,
-            "anthropic-version": self.anthropic_version,
-            "content-type": "application/json",
-        }
-        if self.beta:
-            headers["anthropic-beta"] = self.beta
-        payload = {
-            "model": self.model,
-            "max_tokens": int(self.max_tokens),
-            "messages": [{"role": "user", "content": str(prompt)}],
-        }
-        if self.system:
-            payload["system"] = self.system
-        r = requests.post(
-            f"{self.base_url}/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=self.timeout,
-        )
-        r.raise_for_status()
-        data = r.json()
-        chunks = []
-        for block in data.get("content", []):
-            if block.get("type") == "text":
-                text = block.get("text", "")
-                if text:
-                    chunks.append(text)
-        return "".join(chunks).strip()
-
-class LLMRouter:
-    def __init__(self, config):
-        llm_cfg = config.get("llm") or {}
-        if not llm_cfg:
-            llm_cfg = {
-                "providers": {
-                    "ollama_local": {
-                        "type": "ollama",
-                        "url": config.get("ollama_url"),
-                        "model": config.get("model_name"),
-                        "timeout": config.get("llm_timeout", 120),
-                    },
-                },
-                "routing": {"default": "ollama_local"},
-            }
-        self.providers = self._build_providers(llm_cfg.get("providers", {}))
-        self.routing = llm_cfg.get("routing", {})
-
-    def _build_providers(self, providers_cfg):
-        providers = {}
-        for name, cfg in providers_cfg.items():
-            p_type = (cfg.get("type") or "ollama").lower()
-            if p_type == "ollama":
-                providers[name] = OllamaProvider(
-                    cfg["url"],
-                    cfg["model"],
-                    timeout=cfg.get("timeout", 120),
-                )
-            elif p_type == "openai":
-                providers[name] = OpenAIProvider(
-                    cfg.get("base_url", "https://api.openai.com/v1"),
-                    cfg["model"],
-                    api_key=cfg.get("api_key"),
-                    api_key_env=cfg.get("api_key_env", "OPENAI_API_KEY"),
-                    timeout=cfg.get("timeout", 120),
-                )
-            elif p_type in ("claude", "anthropic"):
-                providers[name] = AnthropicProvider(
-                    cfg.get("base_url", "https://api.anthropic.com"),
-                    cfg["model"],
-                    api_key=cfg.get("api_key") or cfg.get("ANTHROPIC_AUTH_TOKEN"),
-                    api_key_env=cfg.get("api_key_env", "ANTHROPIC_API_KEY"),
-                    anthropic_version=cfg.get("anthropic_version", "2023-06-01"),
-                    timeout=cfg.get("timeout", 120),
-                    max_tokens=cfg.get("max_tokens", 512),
-                    system=cfg.get("system"),
-                    beta=cfg.get("anthropic_beta"),
-                )
-            else:
-                print(f"⚠️ 跳过不支持的 LLM provider 类型: {name} ({p_type})")
-                continue
-        if not providers:
-            raise ValueError("No LLM providers configured.")
-        return providers
-
-    def _select_provider(self, task=None, agent_id=None):
-        tasks = self.routing.get("tasks", {})
-        if task and task in tasks:
-            return tasks[task]
-        agents = self.routing.get("agents", {})
-        if agent_id is not None and str(agent_id) in agents:
-            return agents[str(agent_id)]
-        return self.routing.get("default") or next(iter(self.providers))
-
-    def call(self, prompt, task=None, agent_id=None):
-        provider_name = self._select_provider(task=task, agent_id=agent_id)
-        if provider_name not in self.providers:
-            raise ValueError(f"Provider '{provider_name}' not found in config.")
-        return self.providers[provider_name].call(prompt)
-
-LLM_ROUTER = LLMRouter(CONFIG)
-
-def call_llm(prompt, task=None, agent_id=None):
-    return LLM_ROUTER.call(prompt, task=task, agent_id=agent_id)
-
-# =========================================================
 # 参数
 # =========================================================
 AGENT_IDS = CONFIG["agent_ids"]   # 可扩展为 100
@@ -355,8 +180,6 @@ SECONDS_PER_DAY = CONFIG["seconds_per_day"]
 CSV_PATH = CONFIG["csv_path"]
 MD_PATH = CONFIG["md_path"]
 STATEFUL = CONFIG["stateful"]
-MEMORY_DIR = CONFIG["memory_dir"]
-LOG_DIR = CONFIG["log_dir"]
 MAP_PATH = CONFIG.get("map_path", "citymap.md")
 PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
 BACKGROUND = CONFIG.get("background", "")
@@ -429,210 +252,6 @@ def print_agent_profiles(agent_ids):
             continue
         print(block.strip())
         print()
-
-# =========================================================
-# Memory & Logs
-# =========================================================
-def _memory_path(agent_id):
-    return os.path.join(MEMORY_DIR, f"agent_{agent_id}.json")
-
-def _schedule_path(agent_id):
-    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_schedule.json")
-
-def _actions_path(agent_id):
-    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_actions.json")
-
-def _location_path(agent_id):
-    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_locations.json")
-
-def _log_path(agent_id):
-    return os.path.join(LOG_DIR, f"agent_{agent_id}.log")
-
-def _sim_state_path():
-    return os.path.join(MEMORY_DIR, "sim_state.json")
-
-def load_agent_memory(agent_id):
-    path = _memory_path(agent_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-    return data if isinstance(data, list) else []
-
-def save_agent_memory(agent):
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    with open(_memory_path(agent["id"]), "w", encoding="utf-8") as f:
-        json.dump(agent["memory"], f, ensure_ascii=False, indent=2)
-
-def load_agent_schedule(agent_id):
-    path = _schedule_path(agent_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-    if not isinstance(data, list):
-        return []
-    cleaned = []
-    for item in data:
-        if isinstance(item, (list, tuple)) and len(item) == 2:
-            time_str, activity = item
-        elif isinstance(item, dict) and "time" in item and "activity" in item:
-            time_str, activity = item["time"], item["activity"]
-        else:
-            continue
-        time_str = str(time_str).strip()
-        activity = str(activity).strip()
-        if re.match(r"^\d{2}:\d{2}$", time_str) and activity:
-            cleaned.append((time_str, activity))
-    return cleaned
-
-def save_agent_schedule(agent_id, schedule):
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    payload = []
-    for time_str, activity in schedule:
-        payload.append({"time": time_str, "activity": activity})
-    with open(_schedule_path(agent_id), "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-def load_agent_actions(agent_id):
-    path = _actions_path(agent_id)
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    cleaned = {}
-    for k, v in data.items():
-        if isinstance(v, list):
-            cleaned[k] = [str(a).strip() for a in v if str(a).strip()]
-    return cleaned
-
-def save_agent_actions(agent_id, action_space):
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    with open(_actions_path(agent_id), "w", encoding="utf-8") as f:
-        json.dump(action_space, f, ensure_ascii=False, indent=2)
-
-def load_agent_locations(agent_id):
-    path = _location_path(agent_id)
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-def save_agent_locations(agent_id, locations):
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    with open(_location_path(agent_id), "w", encoding="utf-8") as f:
-        json.dump(locations, f, ensure_ascii=False, indent=2)
-
-def reset_agent_memory(agent_id):
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    with open(_memory_path(agent_id), "w", encoding="utf-8") as f:
-        json.dump([], f, ensure_ascii=False, indent=2)
-
-def append_agent_log(agent, text):
-    os.makedirs(LOG_DIR, exist_ok=True)
-    with open(_log_path(agent["id"]), "a", encoding="utf-8") as f:
-        f.write(text)
-
-def load_sim_state():
-    path = _sim_state_path()
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-def save_sim_state(state):
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    with open(_sim_state_path(), "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
-def _split_log_blocks(log_text):
-    if not log_text:
-        return []
-    blocks = []
-    current = []
-    for line in log_text.splitlines():
-        if line.startswith("[") and current:
-            blocks.append("\n".join(current).strip())
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        blocks.append("\n".join(current).strip())
-    return [b for b in blocks if b]
-
-def load_recent_log_blocks(agent_id, max_blocks=2, max_chars=500):
-    path = _log_path(agent_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return []
-    blocks = _split_log_blocks(text)
-    if not blocks:
-        return []
-    tail = blocks[-max_blocks:]
-    trimmed = []
-    for block in tail:
-        if len(block) > max_chars:
-            trimmed.append(block[-max_chars:])
-        else:
-            trimmed.append(block)
-    return trimmed
-
-def load_recent_actions(agent_id, max_items=6):
-    path = _log_path(agent_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return []
-    actions = []
-    for line in text.splitlines():
-        if line.startswith("Action:"):
-            action = line.split("Action:", 1)[-1].strip()
-            if action:
-                actions.append(action)
-    return actions[-max_items:]
-
-def _extract_keywords(text):
-    if not text:
-        return []
-    return re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{3,}", text)
-
-def relevant_memory(agent, context=None, max_items=3):
-    memory = agent.get("memory", [])
-    if not memory:
-        return []
-    if context:
-        tokens = _extract_keywords(context)
-        if tokens:
-            hits = [m for m in memory if any(t in m for t in tokens)]
-            if hits:
-                return hits[-max_items:]
-    return memory[-max_items:]
 
 # =========================================================
 # 社交网络构建（核心新增）
@@ -912,7 +531,8 @@ def generate_schedule(agent):
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
-    memory_hint = "；".join(relevant_memory(agent, context="日程安排")) if agent.get("memory") else "暂无重要经验"
+    memory_hits = retrieve_relevant_memories(agent, "日程安排", max_items=VECTOR_DB_TOP_K)
+    memory_hint = _format_memory_hint(memory_hits)
     prompt = f"""
 你是城市生活模拟器的日程生成器。请基于角色资料生成一天日程安排。
 角色资料：
@@ -998,7 +618,8 @@ def _llm_generate_actions(agent, activities, seed_actions=None):
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
     memory_context = " ".join(activities)
-    memory_hint = "；".join(relevant_memory(agent, context=memory_context)) if agent.get("memory") else "暂无重要经验"
+    memory_hits = retrieve_relevant_memories(agent, memory_context, max_items=VECTOR_DB_TOP_K)
+    memory_hint = _format_memory_hint(memory_hits)
     seed_text = ""
     if seed_actions:
         seed_text = f"\n已有动作参考（可改写、扩展、去重）：\n{json.dumps(seed_actions, ensure_ascii=False, indent=2)}"
@@ -1057,7 +678,7 @@ def fallback_action(activity):
             return v
     return "继续当前活动"
 
-def choose_action(agent, activity, action_space):
+def choose_action(agent, activity, action_space, context=None):
     options = action_space.get(activity, [])
 
     # === 关键兜底：防止空动作空间 ===
@@ -1070,8 +691,12 @@ def choose_action(agent, activity, action_space):
     weights = []
     s = agent["state"]
     recent_actions = []
+    memory_hits = []
     if STATEFUL:
         recent_actions = load_recent_actions(agent["id"], max_items=6)
+    if context or activity:
+        query = context if context else activity
+        memory_hits = retrieve_relevant_memories(agent, query, max_items=2)
 
     for act in options:
         w = 1.0
@@ -1095,6 +720,7 @@ def choose_action(agent, activity, action_space):
         # 历史行动偏好：更可能重复近期做过的行为
         if act in recent_actions:
             w += 0.4
+        w += _memory_action_bias(act, memory_hits)
 
         weights.append(max(w, 0.01))  # 防止权重为 0
 
@@ -1156,7 +782,8 @@ def perception(agent, time_str, social_context, env_context, policy_event):
     return call_llm(prompt, task="perception", agent_id=agent["id"])
 
 def planning(agent, perception_text):
-    memory_hint = "；".join(relevant_memory(agent, context=perception_text, max_items=2)) if agent["memory"] else "暂无重要经验"
+    memory_hits = retrieve_relevant_memories(agent, perception_text, max_items=VECTOR_DB_TOP_K)
+    memory_hint = _format_memory_hint(memory_hits)
     history_hint = "暂无历史"
     if STATEFUL:
         history_blocks = load_recent_log_blocks(agent["id"], max_blocks=2, max_chars=380)
@@ -1174,9 +801,12 @@ def planning(agent, perception_text):
     return call_llm(prompt, task="planning", agent_id=agent["id"])
 
 def reflection(agent, outcome):
+    memory_hits = retrieve_relevant_memories(agent, outcome, max_items=VECTOR_DB_TOP_K)
+    memory_hint = _format_memory_hint(memory_hits)
     prompt = f"""
 你是{agent['name']}。
 刚刚发生的事情是：{outcome}
+你的相关记忆：{memory_hint}
 
 你对此有何反思或情绪变化？（1-2句）
 """
@@ -1220,7 +850,8 @@ def interview_agent(agent, questions, context=None, max_questions=6):
         return []
     questions = questions[:max_questions]
 
-    memory_hint = "；".join(relevant_memory(agent, context="访谈", max_items=3)) if agent.get("memory") else "暂无重要经验"
+    memory_hits = retrieve_relevant_memories(agent, "访谈", max_items=VECTOR_DB_TOP_K)
+    memory_hint = _format_memory_hint(memory_hits)
     context_text = context if context else "无"
     question_text = "\n".join(f"- {q}" for q in questions)
     prompt = f"""
@@ -1282,7 +913,7 @@ def update_state(agent):
 # =========================================================
 # B. 长期记忆
 # =========================================================
-def daily_summary(agent, logs):
+def daily_summary(agent, logs, day=None):
     prompt = f"""
 你是{agent['name']}。
 这是你今天经历的关键片段：
@@ -1293,6 +924,7 @@ def daily_summary(agent, logs):
     memory = call_llm(prompt, task="summary", agent_id=agent["id"])
     agent["memory"].append(memory)
     save_agent_memory(agent)
+    vector_db_add_entry(agent["id"], "memory", memory, sim_day=day, sim_time="end_of_day")
     return memory
 
 # =========================================================
@@ -1335,6 +967,7 @@ def run_simulation():
         print_agent_profiles([a["id"] for a in agents])
     start_day = 1
     if STATEFUL:
+        # Resume day count for persistent simulations.
         sim_state = load_sim_state()
         last_day = sim_state.get("last_day", 0)
         if isinstance(last_day, int) and last_day >= 0:
@@ -1342,6 +975,7 @@ def run_simulation():
     if STATEFUL:
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
+            seed_vector_db_from_memory(agent)
     else:
         for agent in agents:
             agent["memory"] = []
@@ -1381,6 +1015,7 @@ def run_simulation():
         if cached_schedule:
             schedules[agent_id] = cached_schedule
         else:
+            # Generate schedule once per agent unless cache exists.
             schedules[agent_id] = generate_schedule(a)
             save_agent_schedule(agent_id, schedules[agent_id])
 
@@ -1388,6 +1023,7 @@ def run_simulation():
         if cached_actions:
             actions[agent_id] = cached_actions
         else:
+            # Action space is expensive; cache for reuse across runs.
             base_actions = generate_actions(a, schedules[agent_id])
             actions[agent_id] = build_action_space_for_agent(a, base_actions)
             save_agent_actions(agent_id, actions[agent_id])
@@ -1419,7 +1055,6 @@ def run_simulation():
             for agent in agents:
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 activity = schedule_map[agent["id"]].get(time_str, "个人时间")
-                act = choose_action(agent, activity, actions[agent["id"]])
                 location = resolve_location(agent, activity, time_str, city_map)
                 agent["locations"]["current"] = location
                 social_context = get_social_context(agent, agents_by_id)
@@ -1427,8 +1062,10 @@ def run_simulation():
                 policy_desc = None
                 if policy:
                     policy_desc = policy.get("description") or policy.get("name")
+                # Core cognition loop: perceive -> plan -> act -> reflect.
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
                 plan = planning(agent, perc)
+                act = choose_action(agent, activity, actions[agent["id"]], context=f"{activity} {perc}")
                 outcome = f"在【{activity}】中执行了【{act}】"
                 refl = reflection(agent, outcome)
 
@@ -1461,11 +1098,15 @@ Reflection: {refl}
                 print(log)
                 daily_logs[agent["id"]] += log
                 append_agent_log(agent, log)
+                vector_db_add_entry(agent["id"], "log", log, sim_day=day, sim_time=time_str)
+                vector_db_add_entry(agent["id"], "plan", plan, sim_day=day, sim_time=time_str)
+                vector_db_add_entry(agent["id"], "reflection", refl, sim_day=day, sim_time=time_str)
+                vector_db_add_entry(agent["id"], "action", outcome, sim_day=day, sim_time=time_str)
 
             time.sleep(sleep_step)
 
         for agent in agents:
-            mem = daily_summary(agent, daily_logs[agent["id"]])
+            mem = daily_summary(agent, daily_logs[agent["id"]], day=day)
             print(f"🧠 {agent['name']} 的今日长期记忆：{mem}")
         if STATEFUL:
             save_sim_state({"last_day": day})
@@ -1491,6 +1132,7 @@ def _cli_interview_agent(agent_id, questions, context=None):
     agent = build_agent(agent_id, df)
     if STATEFUL:
         agent["memory"] = load_agent_memory(agent["id"])
+        seed_vector_db_from_memory(agent)
     else:
         agent["memory"] = []
     answers = interview_agent(agent, questions, context=context)
