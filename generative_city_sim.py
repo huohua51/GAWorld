@@ -41,6 +41,41 @@ from memory_store import (
 # =========================================================
 # Utils
 # =========================================================
+def _parse_step_minutes(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    match = re.match(r"^(\d+)\s*(m|min|mins|minute|minutes|h|hour|hours)?$", text)
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if not unit or unit.startswith("m"):
+        return amount
+    if unit.startswith("h"):
+        return amount * 60
+    return amount
+
+def _time_str_to_minutes(time_str):
+    if not re.match(r"^\d{2}:\d{2}$", str(time_str)):
+        return None
+    hh, mm = time_str.split(":")
+    return int(hh) * 60 + int(mm)
+
+def _minutes_to_time_str(minutes):
+    minutes = int(minutes) % (24 * 60)
+    hh = minutes // 60
+    mm = minutes % 60
+    return f"{hh:02d}:{mm:02d}"
+
+def _build_time_grid(step_minutes):
+    step = max(1, int(step_minutes))
+    return [_minutes_to_time_str(m) for m in range(0, 24 * 60, step)]
+
 def _clear_dir(path):
     if not path or not os.path.exists(path):
         return
@@ -217,6 +252,7 @@ STATEFUL = CONFIG["stateful"]
 MAP_PATH = CONFIG.get("map_path", "citymap.md")
 PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
 BACKGROUND = CONFIG.get("background", "")
+TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
 
 # =========================================================
 # 政策事件
@@ -1201,9 +1237,31 @@ def validate_action_space(schedules, action_space):
             print("  -", m)
 
 def build_schedule_map(schedules):
-    return {agent_id: {t: a for t, a in sch} for agent_id, sch in schedules.items()}
+    sorted_map = {}
+    for agent_id, sch in schedules.items():
+        sorted_map[agent_id] = sorted(sch, key=lambda x: x[0])
+    return sorted_map
 
-def build_master_timeline(schedules):
+def get_activity_for_time(schedule, time_str):
+    if not schedule:
+        return "个人时间"
+    current_minutes = _time_str_to_minutes(time_str)
+    if current_minutes is None:
+        return schedule[-1][1]
+    last_activity = None
+    for t, activity in schedule:
+        t_minutes = _time_str_to_minutes(t)
+        if t_minutes is None:
+            continue
+        if t_minutes <= current_minutes:
+            last_activity = activity
+        else:
+            break
+    return last_activity or "个人时间"
+
+def build_master_timeline(schedules, step_minutes=None):
+    if step_minutes:
+        return _build_time_grid(step_minutes)
     times = set()
     for sch in schedules.values():
         times.update(t for t, _ in sch)
@@ -1284,7 +1342,7 @@ def run_simulation():
             save_agent_actions(agent_id, actions[agent_id])
 
     schedule_map = build_schedule_map(schedules)
-    timeline = build_master_timeline(schedules)
+    timeline = build_master_timeline(schedules, TIME_STEP_MINUTES)
 
     validate_action_space(schedules, actions)
 
@@ -1309,7 +1367,7 @@ def run_simulation():
 
             for agent in agents:
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
-                activity = schedule_map[agent["id"]].get(time_str, "个人时间")
+                activity = get_activity_for_time(schedule_map[agent["id"]], time_str)
                 location = resolve_location(agent, activity, time_str, city_map)
                 agent["locations"]["current"] = location
                 social_context = get_social_context(agent, agents_by_id)

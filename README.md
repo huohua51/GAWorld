@@ -88,6 +88,7 @@ All runtime settings live in `config.py`.
 - `sim_days`: number of days to run.
 - `seconds_per_day`: wall-clock seconds per simulated day.
 - `print_agent_profile`: print each agent profile at startup.
+- `time_step_minutes`: optional timeline granularity (e.g., `10`, `120`, `2h`). If unset, uses schedule times only.
 - `background`: background context injected into environment descriptions.
 
 ### Data sources

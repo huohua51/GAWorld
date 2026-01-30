@@ -41,10 +41,13 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [46],
+    "agent_ids": [47],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
+    # Time step for simulation timeline (minutes). None/0 uses schedule times only.
+    # "time_step_minutes": None,
+    "time_step_minutes": 10,
     # Simulation background (time/city/societal status prompt)
     "background": "2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。",
     # Data sources
@@ -62,7 +65,7 @@ CONFIG = {
     # Policy events (description only; effect inferred by LLM)
     "policy_events": [
         {
-            "day": 1,
+            "day": 2,
             "time": "10:00",
             "name": "Platform worker protection policy",
             "description": "Increase social security coverage and wage transparency, strengthen platform labor oversight."
