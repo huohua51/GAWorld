@@ -6,6 +6,7 @@ import re
 import json
 from collections import defaultdict
 import os
+import shutil
 import matplotlib.pyplot as plt
 import networkx as nx
 
@@ -16,6 +17,7 @@ from memory_store import (
     append_agent_log,
     load_agent_actions,
     load_agent_locations,
+    load_agent_location_action_bias,
     load_agent_memory,
     load_agent_schedule,
     load_recent_actions,
@@ -24,6 +26,7 @@ from memory_store import (
     reset_agent_memory,
     retrieve_relevant_memories,
     save_agent_actions,
+    save_agent_location_action_bias,
     save_agent_locations,
     save_agent_memory,
     save_agent_schedule,
@@ -38,6 +41,37 @@ from memory_store import (
 # =========================================================
 # Utils
 # =========================================================
+def _clear_dir(path):
+    if not path or not os.path.exists(path):
+        return
+    for name in os.listdir(path):
+        target = os.path.join(path, name)
+        try:
+            if os.path.islink(target) or os.path.isfile(target):
+                os.remove(target)
+            elif os.path.isdir(target):
+                shutil.rmtree(target)
+        except OSError:
+            continue
+
+def reset_simulation():
+    memory_dir = CONFIG.get("memory_dir", "output/memory")
+    log_dir = CONFIG.get("log_dir", "output/logs")
+    _clear_dir(memory_dir)
+    _clear_dir(log_dir)
+    vector_db_path = CONFIG.get("vector_db_path")
+    if vector_db_path and os.path.exists(vector_db_path):
+        try:
+            if os.path.isdir(vector_db_path):
+                shutil.rmtree(vector_db_path)
+            else:
+                os.remove(vector_db_path)
+        except OSError:
+            pass
+    for output_dir in ["output/state", "output/network"]:
+        if output_dir not in (memory_dir, log_dir):
+            _clear_dir(output_dir)
+
 def visualize_social_network(
     agents,
     step=None,
@@ -218,10 +252,10 @@ def parse_profile(block):
     p["work_style"] = p["job"]
     return p
 
-def build_agent(agent_id, df):
+def build_agent(agent_id, df, city_map=None):
     row = df[df["id"] == agent_id].iloc[0]
     text = parse_profile(load_profile_from_md(agent_id))
-    return {
+    agent = {
         "id": agent_id,
         **text,
         "gender": row.get("gender", ""),
@@ -241,6 +275,10 @@ def build_agent(agent_id, df):
         "memory": [],
         "social_neighbors": []
     }
+    if city_map is None:
+        city_map = load_city_map(MAP_PATH)
+    init_agent_locations(agent, city_map)
+    return agent
 
 def print_agent_profiles(agent_ids):
     print("\n================= Agent Profiles =================")
@@ -308,6 +346,15 @@ def load_city_map(map_path):
             if nearby_match and current_hub:
                 hubs[current_hub].append(nearby_match.group(1).strip())
     return hubs
+
+def load_city_map_text(map_path):
+    if not os.path.exists(map_path):
+        return ""
+    try:
+        with open(map_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 def _all_locations(city_map):
     locs = []
@@ -386,37 +433,150 @@ def assign_agent_locations(agent, city_map):
         "current": home,
     }
 
+def init_agent_locations(agent, city_map):
+    cached_locations = load_agent_locations(agent["id"]) if STATEFUL else {}
+    if cached_locations:
+        agent["locations"] = cached_locations
+        agent["locations"].setdefault("current", agent["locations"].get("home", "Home"))
+        return agent["locations"]
+    agent["locations"] = assign_agent_locations(agent, city_map)
+    if STATEFUL:
+        save_agent_locations(agent["id"], agent["locations"])
+    return agent["locations"]
+
 def resolve_location(agent, activity, time_str, city_map):
     location_set = set(_all_locations(city_map))
     home = agent["locations"].get("home", "Home")
     work = agent["locations"].get("workplace", home)
+    current = agent["locations"].get("current", home)
 
     def pick_any(candidates):
         choice = _pick_first_available(candidates, location_set)
         return choice or home
 
+    def _time_to_minutes(t):
+        if not re.match(r"^\d{2}:\d{2}$", str(t)):
+            return None
+        hh, mm = t.split(":")
+        return int(hh) * 60 + int(mm)
+
+    def _profile_flags(a):
+        profile_blob = " ".join([
+            a.get("job", ""),
+            a.get("personality", ""),
+            a.get("daily_life", ""),
+            a.get("values", ""),
+            a.get("work_style", ""),
+        ])
+        is_student = any(k in profile_blob for k in ["学生", "硕士", "博士", "课题组", "上课", "学习"])
+        is_retired = any(k in profile_blob for k in ["退休", "无业", "待业", "失业", "家庭主妇", "家庭主夫", "已退休"])
+        late_schedule = any(k in profile_blob for k in ["夜间活跃", "晚睡", "作息偏晚"])
+        overtime = "加班" in a.get("work_style", "")
+        return is_student, is_retired, late_schedule, overtime
+
+    def _public_pool():
+        keywords = ["Park", "Cinema", "Market", "Library", "Community", "Center", "Riverwalk",
+                    "Grove", "Playground", "Fitness", "Picnic", "Pocket", "Night Market"]
+        pool = [loc for loc in location_set if any(k in loc for k in keywords)]
+        if not pool:
+            pool = [loc for loc in location_set if loc not in {home, work}]
+        return pool
+
+    def _time_bias():
+        minutes = _time_to_minutes(time_str)
+        is_student, is_retired, late_schedule, overtime = _profile_flags(agent)
+        if minutes is None:
+            return {"home": 0.4, "work": 0.3, "public": 0.3, "current": 0.2}
+        if late_schedule:
+            minutes = (minutes - 60) % (24 * 60)
+
+        if minutes >= 22 * 60 or minutes < 6 * 60:
+            base = {"home": 0.75, "work": 0.05, "public": 0.2, "current": 0.25}
+        elif minutes < 9 * 60:
+            base = {"home": 0.45, "work": 0.2, "public": 0.35, "current": 0.25}
+        elif minutes < 17 * 60 + 30:
+            if is_retired:
+                base = {"home": 0.45, "work": 0.15, "public": 0.4, "current": 0.25}
+            elif is_student:
+                base = {"home": 0.2, "work": 0.55, "public": 0.25, "current": 0.2}
+            else:
+                base = {"home": 0.2, "work": 0.6, "public": 0.2, "current": 0.2}
+        else:
+            base = {"home": 0.55, "work": 0.1, "public": 0.35, "current": 0.25}
+            if overtime:
+                base["work"] += 0.1
+                base["home"] -= 0.05
+        s = agent.get("state", {})
+        mobility = s.get("mobility_intent", 0.5)
+        stress = s.get("stress", 0.5)
+        if mobility > 0.65:
+            base["public"] += 0.1
+            base["home"] -= 0.05
+        if mobility < 0.35:
+            base["home"] += 0.1
+            base["public"] -= 0.05
+        if stress > 0.7:
+            base["home"] += 0.08
+            base["public"] -= 0.05
+        return base
+
+    def _weighted_pick(candidate_weights):
+        if not candidate_weights:
+            return home
+        items = list(candidate_weights.items())
+        locs, weights = zip(*items)
+        return random.choices(locs, weights=weights, k=1)[0]
+
+    def _add_weight(weights, loc, w):
+        if not loc or w <= 0:
+            return
+        if loc not in location_set:
+            return
+        weights[loc] = weights.get(loc, 0) + w
+
     if any(k in activity for k in ["通勤"]):
         return pick_any(["Riverside Bus Station", "Riverside Ave", "Bridge Rd", "Market St"])
+
+    activity_candidates = []
     if any(k in activity for k in ["工作", "上班", "加班"]):
-        return work
+        activity_candidates.append(work)
     if any(k in activity for k in ["学习", "上课", "实验"]):
-        return pick_any(["Riverside Middle School", "Riverside Primary School", "Hangzhou Tech Labs"])
+        activity_candidates += ["Riverside Middle School", "Riverside Primary School", "Hangzhou Tech Labs"]
     if any(k in activity for k in ["看病", "医院", "诊所"]):
-        return pick_any(["Riverside Community Hospital", "Northside Family Clinic", "Willow Pharmacy"])
+        activity_candidates += ["Riverside Community Hospital", "Northside Family Clinic", "Willow Pharmacy"]
     if any(k in activity for k in ["晨练", "散步", "运动", "健身", "锻炼"]):
-        return pick_any(["Riverside Park", "Willow Grove Park", "Fitness Area", "Playground"])
+        activity_candidates += ["Riverside Park", "Willow Grove Park", "Fitness Area", "Playground"]
     if any(k in activity for k in ["买菜", "购物", "市场"]):
-        return pick_any(["Market St", "Riverside Supermart", "Riverside Night Market", "Corner Mart"])
+        activity_candidates += ["Market St", "Riverside Supermart", "Riverside Night Market", "Corner Mart"]
     if any(k in activity for k in ["电影", "娱乐", "休闲"]):
-        return pick_any(["Riverside Cinema", "Riverside Park"])
+        activity_candidates += ["Riverside Cinema", "Riverside Park"]
+
+    weights = {}
+    bias = _time_bias()
+    _add_weight(weights, home, bias["home"])
+    _add_weight(weights, work, bias["work"])
+    _add_weight(weights, current, bias["current"])
+
+    public_pool = _public_pool()
+    if public_pool:
+        for loc in random.sample(public_pool, k=min(2, len(public_pool))):
+            _add_weight(weights, loc, bias["public"])
+
+    for loc in activity_candidates:
+        _add_weight(weights, loc, 1.2)
+
     if any(k in activity for k in ["午饭", "晚饭", "吃饭"]):
         if time_str <= "10:30":
-            return home
-        return pick_any(["Market St", "Riverside Night Market", "Riverside Supermart"])
-    if any(k in activity for k in ["吃早饭", "睡前", "午休", "休息", "个人时间"]):
-        return home
+            _add_weight(weights, home, 0.6)
+        _add_weight(weights, "Market St", 0.8)
+        _add_weight(weights, "Riverside Night Market", 0.8)
+        _add_weight(weights, "Riverside Supermart", 0.6)
 
-    return agent["locations"].get("current", home)
+    if any(k in activity for k in ["吃早饭", "睡前", "午休", "休息", "个人时间"]):
+        _add_weight(weights, home, 0.8)
+
+    choice = _weighted_pick(weights)
+    return choice or home
 
 # =========================================================
 # Schedule & Action
@@ -578,6 +738,36 @@ def _parse_action_space(text, activities):
             action_space[activity] = cleaned
     return action_space
 
+def _parse_location_bias(text, activities):
+    json_blob = _extract_json_block(text)
+    if not json_blob:
+        return {}
+    try:
+        raw = json.loads(json_blob)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    bias_map = {}
+    for activity in activities:
+        item = raw.get(activity, {})
+        if not isinstance(item, dict):
+            continue
+        prefer = item.get("prefer", [])
+        avoid = item.get("avoid", [])
+        if not isinstance(prefer, list):
+            prefer = []
+        if not isinstance(avoid, list):
+            avoid = []
+        cleaned_prefer = [str(a).strip() for a in prefer if str(a).strip()]
+        cleaned_avoid = [str(a).strip() for a in avoid if str(a).strip()]
+        if cleaned_prefer or cleaned_avoid:
+            bias_map[activity] = {
+                "prefer": cleaned_prefer,
+                "avoid": cleaned_avoid,
+            }
+    return bias_map
+
 def _parse_policy_effect(text):
     json_blob = _extract_json_block(text)
     if not json_blob:
@@ -652,6 +842,55 @@ def _llm_generate_actions(agent, activities, seed_actions=None):
             action_space[activity] = acts
     return action_space
 
+def _llm_generate_location_bias(agent, location, city_map_text, action_space):
+    activities = list(action_space.keys())
+    if not activities:
+        return {}
+    profile_text = "\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"年龄：{agent.get('age', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    actions_text = json.dumps(action_space, ensure_ascii=False, indent=2)
+    prompt = f"""
+你是城市生活模拟器的“地点动作偏好”生成器。请基于角色资料、地点与城市地图，
+为每个活动在该地点给出“偏好动作/避免动作”。
+
+角色资料：
+{profile_text}
+
+地点：{location}
+
+城市地图（完整）：
+{city_map_text}
+
+活动与可选动作（仅可从下列动作中选择）：
+{actions_text}
+
+要求：
+1) 仅输出 JSON 对象，键为活动名，值为对象：{{"prefer":[...], "avoid":[...]}}。
+2) prefer/avoid 中的动作必须来自给定动作列表，使用完全一致的动作文本。
+3) 每个活动 0-5 个 prefer，0-5 个 avoid，允许为空数组。
+4) 不要输出其他文字。
+"""
+    response = call_llm(prompt, task="location_actions", agent_id=agent["id"])
+    return _parse_location_bias(response, activities)
+
+def get_location_action_bias(agent, location, city_map_text, action_space):
+    if not city_map_text:
+        return {}
+    bias_cache = agent.setdefault("location_action_bias", {})
+    cached = bias_cache.get(location)
+    if isinstance(cached, dict):
+        return cached
+    bias = _llm_generate_location_bias(agent, location, city_map_text, action_space)
+    bias_cache[location] = bias
+    save_agent_location_action_bias(agent["id"], bias_cache)
+    return bias
+
 def generate_actions(agent, schedule):
     activities = sorted({activity for _, activity in schedule})
     return _llm_generate_actions(agent, activities)
@@ -678,7 +917,7 @@ def fallback_action(activity):
             return v
     return "继续当前活动"
 
-def choose_action(agent, activity, action_space, context=None):
+def choose_action(agent, activity, action_space, context=None, location_bias=None):
     options = action_space.get(activity, [])
 
     # === 关键兜底：防止空动作空间 ===
@@ -697,6 +936,10 @@ def choose_action(agent, activity, action_space, context=None):
     if context or activity:
         query = context if context else activity
         memory_hits = retrieve_relevant_memories(agent, query, max_items=2)
+
+    bias = (location_bias or {}).get(activity, {})
+    prefer_set = set(bias.get("prefer", [])) if isinstance(bias, dict) else set()
+    avoid_set = set(bias.get("avoid", [])) if isinstance(bias, dict) else set()
 
     for act in options:
         w = 1.0
@@ -721,6 +964,12 @@ def choose_action(agent, activity, action_space, context=None):
         if act in recent_actions:
             w += 0.4
         w += _memory_action_bias(act, memory_hits)
+
+        # 地点偏好：同一地点的行为倾向
+        if act in prefer_set:
+            w += 1.0
+        if act in avoid_set:
+            w -= 0.6
 
         weights.append(max(w, 0.01))  # 防止权重为 0
 
@@ -962,7 +1211,9 @@ def build_master_timeline(schedules):
 
 def run_simulation():
     df = pd.read_csv(CSV_PATH)
-    agents = [build_agent(i, df) for i in AGENT_IDS]
+    city_map = load_city_map(MAP_PATH)
+    city_map_text = load_city_map_text(MAP_PATH)
+    agents = [build_agent(i, df, city_map=city_map) for i in AGENT_IDS]
     if PRINT_AGENT_PROFILE:
         print_agent_profiles([a["id"] for a in agents])
     start_day = 1
@@ -990,7 +1241,6 @@ def run_simulation():
         for a in agents
     }
     env_system = EnvironmentSystem(CONFIG.get("environment", {}), llm_fn=call_llm)
-    city_map = load_city_map(MAP_PATH)
     background_text = str(BACKGROUND).strip()
 
     # === 构建社交网络 ===
@@ -999,13 +1249,18 @@ def run_simulation():
         a["social_neighbors"] = social_net[a["id"]]
 
     for a in agents:
-        cached_locations = load_agent_locations(a["id"])
-        if cached_locations:
-            a["locations"] = cached_locations
-            a["locations"].setdefault("current", a["locations"].get("home", "Home"))
-        else:
-            a["locations"] = assign_agent_locations(a, city_map)
-            save_agent_locations(a["id"], a["locations"])
+        if not a.get("locations"):
+            init_agent_locations(a, city_map)
+        a["location_action_bias"] = load_agent_location_action_bias(a["id"])
+        locs = a.get("locations", {})
+        init_loc_line = (
+            f"[InitLocation] {a.get('name', a['id'])}: "
+            f"home={locs.get('home', 'Home')} "
+            f"work={locs.get('workplace', locs.get('home', 'Home'))} "
+            f"current={locs.get('current', locs.get('home', 'Home'))}\n"
+        )
+        print(init_loc_line.strip())
+        append_agent_log(a, init_loc_line)
 
     schedules = {}
     actions = {}
@@ -1065,7 +1320,19 @@ def run_simulation():
                 # Core cognition loop: perceive -> plan -> act -> reflect.
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
                 plan = planning(agent, perc)
-                act = choose_action(agent, activity, actions[agent["id"]], context=f"{activity} {perc}")
+                location_bias = get_location_action_bias(
+                    agent,
+                    location,
+                    city_map_text,
+                    actions[agent["id"]],
+                )
+                act = choose_action(
+                    agent,
+                    activity,
+                    actions[agent["id"]],
+                    context=f"{activity} {perc}",
+                    location_bias=location_bias,
+                )
                 outcome = f"在【{activity}】中执行了【{act}】"
                 refl = reflection(agent, outcome)
 
@@ -1129,7 +1396,8 @@ def _parse_question_list(value):
 
 def _cli_interview_agent(agent_id, questions, context=None):
     df = pd.read_csv(CSV_PATH)
-    agent = build_agent(agent_id, df)
+    city_map = load_city_map(MAP_PATH)
+    agent = build_agent(agent_id, df, city_map=city_map)
     if STATEFUL:
         agent["memory"] = load_agent_memory(agent["id"])
         seed_vector_db_from_memory(agent)
@@ -1144,6 +1412,7 @@ def _build_arg_parser():
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("run", help="Run the full simulation")
+    subparsers.add_parser("reset", help="Reset simulation memory/logs/cache")
 
     interview = subparsers.add_parser("interview", help="Interview a specific agent by ID")
     interview.add_argument("--agent-id", type=int, required=True, help="Agent ID to interview")
@@ -1176,6 +1445,11 @@ def _load_questions_from_file(path):
 def _main():
     parser = _build_arg_parser()
     args = parser.parse_args()
+
+    if args.command == "reset":
+        reset_simulation()
+        print("✅ 已重置模拟：清空记忆、日志与缓存。")
+        return
 
     if args.command == "interview":
         questions = []

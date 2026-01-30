@@ -10,6 +10,10 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - Environment event system (natural + social events).
 - Social network creation and emotion diffusion.
 - Stateful memory and logs across runs.
+- Location-aware actions with per-agent, per-location LLM biasing.
+- Time-aware location resolution (home at night, workplace during day with flexibility).
+- City map generation from natural language descriptions.
+- Reset command to clear stateful caches/logs and restart from day 1.
 - Visualizations for social networks and state evolution.
 
 ## Project layout
@@ -19,6 +23,7 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - `hangzhou_agents_state_init.csv` seed state values per agent.
 - `hangzhou_profiles_with_names.md` detailed agent profiles.
 - `citymap.md` village map (hubs + nearby locations).
+- `generate_citymap.py` city map generator (from text descriptions).
 - `output/` simulation artifacts (logs, memory, plots, CSVs).
 
 ## Quickstart
@@ -43,6 +48,11 @@ Run a full simulation (default command when no subcommand is provided):
 python generative_city_sim.py run
 ```
 
+Reset the simulation (clears memory/logs/caches and restarts day count):
+```bash
+python generative_city_sim.py reset
+```
+
 Interview a specific agent:
 ```bash
 python generative_city_sim.py interview --agent-id 31 --question "Question 1" --question "Question 2"
@@ -56,6 +66,11 @@ python generative_city_sim.py interview --agent-id 31 --questions-file questions
 Optional interview context:
 ```bash
 python generative_city_sim.py interview --agent-id 31 --question "Question" --context "Short background context"
+```
+
+Generate a new city map from a text description:
+```bash
+python generate_citymap.py --description "a small city with about 1000 residents, in east china"
 ```
 
 ## Configuration guide
@@ -101,6 +116,7 @@ Simulation output is written under `output/`:
 - `output/memory/agent_<id>_schedule.json` cached schedules.
 - `output/memory/agent_<id>_actions.json` cached action space.
 - `output/memory/agent_<id>_locations.json` cached locations.
+- `output/memory/agent_<id>_location_action_bias.json` cached location action bias.
 - `output/memory/sim_state.json` last simulated day for stateful runs.
 - `output/memory/vector_db.sqlite` vector memory store (logs + summaries).
 - `output/network/social_network.png` social graph snapshot.
@@ -116,7 +132,7 @@ Simulation output is written under `output/`:
 - Schedule/action generation is LLM-driven with a heuristic fallback.
 - Agent state updates blend deterministic rules with small random noise.
 - Social influence shifts emotion toward neighbors’ average.
-- Location assignment uses `citymap.md` hubs + heuristic role matching.
+- Location assignment uses `citymap.md` hubs + heuristic role matching and time-aware biasing.
 
 ## Security note
 Avoid hardcoding API keys in `config.py`. Prefer environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or your custom `api_key_env`) and keep secrets out of source control.

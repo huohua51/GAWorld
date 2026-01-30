@@ -1,0 +1,126 @@
+# City Map
+
+- City: Riverside Village
+  - Hub: Lake Block
+    - Nearby: Building L-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+      - Floor: 4F
+        - Flat: 4A
+        - Flat: 4B
+    - Nearby: Building L-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+      - Floor: 4F
+        - Flat: 4A
+        - Flat: 4B
+    - Nearby: Building L-03
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+      - Floor: 4F
+        - Flat: 4A
+        - Flat: 4B
+    - Nearby: Neighborhood Clinic
+    - Nearby: Pocket Park
+  - Hub: South Block
+    - Nearby: Building S-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+        - Flat: 1C
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+        - Flat: 2C
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+        - Flat: 3C
+      - Floor: 4F
+        - Flat: 4A
+        - Flat: 4B
+        - Flat: 4C
+    - Nearby: Building S-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+    - Nearby: Neighborhood Clinic
+    - Nearby: Pocket Park
+  - Hub: Central Block
+    - Nearby: Building C-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+        - Flat: 1C
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+        - Flat: 2C
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+        - Flat: 3C
+    - Nearby: Building C-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+    - Nearby: Building C-03
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+      - Floor: 4F
+        - Flat: 4A
+        - Flat: 4B
+    - Nearby: Neighborhood Clinic
+    - Nearby: Pocket Park
+  - Hub: Logistics Hub
+    - Nearby: Freight Station
+    - Nearby: Cold Storage Facility
+    - Nearby: Sorting Center
+    - Nearby: Truck Stop
+  - Hub: Waterfront
+    - Nearby: Riverside Port
+    - Nearby: Marina Pier
+    - Nearby: Riverfront Promenade
+    - Nearby: Boathouse
+  - Hub: Greenbelt Corridor
+    - Nearby: Eco Trail
+    - Nearby: Wetland Reserve
+    - Nearby: Botanical Garden
+    - Nearby: Outdoor Amphitheater

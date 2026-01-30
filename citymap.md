@@ -121,3 +121,109 @@
         - Flat: 4A
         - Flat: 4B
     - Nearby: Willow Design Studio
+  - Hub: East Block
+    - Nearby: Building E-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+    - Nearby: Building E-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+    - Nearby: East Community Clinic
+    - Nearby: East Pocket Park
+  - Hub: West Block
+    - Nearby: Building W-01
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+      - Floor: 3F
+        - Flat: 3A
+        - Flat: 3B
+    - Nearby: Building W-02
+      - Floor: 1F
+        - Flat: 1A
+        - Flat: 1B
+      - Floor: 2F
+        - Flat: 2A
+        - Flat: 2B
+    - Nearby: Westside Community Center
+    - Nearby: Westside Playground
+  - Hub: University District
+    - Nearby: Riverside University Gate
+    - Nearby: Main Library
+    - Nearby: Engineering Building
+    - Nearby: Arts Building
+    - Nearby: Dormitory A
+    - Nearby: Dormitory B
+    - Nearby: Student Canteen
+  - Hub: Old Town
+    - Nearby: Old Town Market
+    - Nearby: Heritage Street
+    - Nearby: Temple Square
+    - Nearby: Tea House Alley
+    - Nearby: Riverside Museum
+  - Hub: Financial District
+    - Nearby: Riverside Tower
+    - Nearby: Finance Plaza
+    - Nearby: Insurance Center
+    - Nearby: Central Bank Annex
+    - Nearby: Business Hotel
+  - Hub: Industrial Park
+    - Nearby: Manufacturing Zone A
+    - Nearby: Manufacturing Zone B
+    - Nearby: Logistics Yard
+    - Nearby: Power Substation
+    - Nearby: Freight Depot
+  - Hub: Logistics Hub
+    - Nearby: Riverside Freight Station
+    - Nearby: Cold Storage Facility
+    - Nearby: Sorting Center
+    - Nearby: Long Haul Truck Stop
+  - Hub: Riverside Stadium
+    - Nearby: Stadium Plaza
+    - Nearby: Aquatic Center
+    - Nearby: Training Grounds
+    - Nearby: Sports Clinic
+  - Hub: City Hall
+    - Nearby: Civic Square
+    - Nearby: Public Services Center
+    - Nearby: Archives Building
+    - Nearby: Courthouse
+  - Hub: Central Station
+    - Nearby: High Speed Rail Terminal
+    - Nearby: Metro Concourse
+    - Nearby: Taxi Loop
+    - Nearby: Intercity Bus Terminal
+  - Hub: Airport District
+    - Nearby: Riverside International Airport
+    - Nearby: Airport Cargo Terminal
+    - Nearby: Airport Hotel
+    - Nearby: Air Traffic Control
+  - Hub: Waterfront
+    - Nearby: Riverside Port
+    - Nearby: Marina Pier
+    - Nearby: Riverfront Promenade
+    - Nearby: Boathouse
+  - Hub: Hillside District
+    - Nearby: Hillside Park
+    - Nearby: Scenic Overlook
+    - Nearby: Mountain Trailhead
+    - Nearby: Hillside Clinic
+  - Hub: Greenbelt Corridor
+    - Nearby: Eco Trail
+    - Nearby: Wetland Reserve
+    - Nearby: Botanical Garden
+    - Nearby: Outdoor Amphitheater

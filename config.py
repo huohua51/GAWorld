@@ -42,7 +42,7 @@ CONFIG = {
     },
     # Simulation
     "agent_ids": [46],
-    "sim_days": 5,
+    "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
     # Simulation background (time/city/societal status prompt)
