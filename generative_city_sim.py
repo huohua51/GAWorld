@@ -253,6 +253,12 @@ MAP_PATH = CONFIG.get("map_path", "citymap.md")
 PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
 BACKGROUND = CONFIG.get("background", "")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
+ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
+ROUTINE_CHANGE_ENABLED = bool(ROUTINE_CHANGE_CONFIG.get("enabled", True))
+ROUTINE_CHANGE_BASE_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("base_chance", 0.08))
+ROUTINE_CHANGE_EVENT_BOOST = float(ROUTINE_CHANGE_CONFIG.get("event_boost", 0.08))
+ROUTINE_CHANGE_POLICY_BOOST = float(ROUTINE_CHANGE_CONFIG.get("policy_boost", 0.05))
+ROUTINE_CHANGE_MAX_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("max_chance", 0.45))
 
 # =========================================================
 # 政策事件
@@ -718,6 +724,149 @@ def _heuristic_schedule(agent):
     base += [("21:00", "个人时间"), ("23:30", "睡前")]
     return base
 
+def _schedule_profile_flags(agent):
+    profile_blob = " ".join([
+        agent.get("job", ""),
+        agent.get("personality", ""),
+        agent.get("daily_life", ""),
+        agent.get("values", ""),
+        agent.get("work_style", ""),
+    ])
+    is_student = any(k in profile_blob for k in ["学生", "硕士", "博士", "课题组", "上课", "学习"])
+    is_retired = any(k in profile_blob for k in ["退休", "无业", "待业", "失业", "家庭主妇", "家庭主夫", "已退休"])
+    late_schedule = any(k in profile_blob for k in ["夜间活跃", "晚睡", "作息偏晚"])
+    overtime = "加班" in agent.get("work_style", "")
+    return is_student, is_retired, late_schedule, overtime
+
+def ensure_sleep_in_schedule(agent, schedule):
+    if any(is_sleep_activity(activity) for _, activity in schedule):
+        return schedule
+    is_student, is_retired, late_schedule, _ = _schedule_profile_flags(agent)
+    if is_retired:
+        sleep_time = "22:30"
+    elif is_student:
+        sleep_time = "00:30"
+    elif late_schedule:
+        sleep_time = "01:00"
+    else:
+        sleep_time = "23:30"
+
+    used_times = {t for t, _ in schedule}
+    sleep_minutes = _time_str_to_minutes(sleep_time)
+    if sleep_minutes is None:
+        sleep_minutes = 23 * 60 + 30
+    max_minutes = max((_time_str_to_minutes(t) for t in used_times if _time_str_to_minutes(t) is not None), default=None)
+    if max_minutes is not None and max_minutes >= sleep_minutes:
+        sleep_minutes = min(max_minutes + 60, 23 * 60 + 59)
+    candidate = _minutes_to_time_str(sleep_minutes)
+    if candidate in used_times:
+        for _ in range(48):
+            sleep_minutes = (sleep_minutes + 30) % (24 * 60)
+            candidate = _minutes_to_time_str(sleep_minutes)
+            if candidate not in used_times:
+                break
+
+    schedule = list(schedule) + [(candidate, "睡前")]
+    schedule.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
+    return schedule
+
+def _schedule_times(schedule):
+    return [t for t, _ in schedule]
+
+def _is_strictly_increasing_times(schedule):
+    minutes = []
+    for t, _ in schedule:
+        m = _time_str_to_minutes(t)
+        if m is None:
+            return False
+        minutes.append(m)
+    return all(a < b for a, b in zip(minutes, minutes[1:]))
+
+def _jitter_schedule_times(base_schedule, max_shift=45, min_gap=20):
+    if not base_schedule:
+        return []
+    base_minutes = [_time_str_to_minutes(t) for t, _ in base_schedule]
+    if any(m is None for m in base_minutes):
+        return list(base_schedule)
+    adjusted_minutes = []
+    prev = None
+    for m in base_minutes:
+        shift = random.randint(-max_shift, max_shift)
+        target = m + shift
+        if prev is None:
+            target = max(0, target)
+        else:
+            target = max(prev + min_gap, target)
+        target = min(target, 23 * 60 + 59)
+        adjusted_minutes.append(target)
+        prev = target
+    adjusted = [(_minutes_to_time_str(m), act) for m, (_, act) in zip(adjusted_minutes, base_schedule)]
+    return adjusted
+
+def normalize_schedule_to_base(base_schedule, candidate_schedule):
+    if not base_schedule:
+        return candidate_schedule
+    if not candidate_schedule:
+        return base_schedule
+    base_times = [t for t, _ in base_schedule]
+    candidate_by_time = {t: a for t, a in candidate_schedule}
+    normalized = []
+    for t, base_act in base_schedule:
+        act = candidate_by_time.get(t, base_act)
+        normalized.append((t, act))
+    return normalized
+
+def normalize_flexible_schedule(base_schedule, candidate_schedule):
+    if not candidate_schedule or not base_schedule:
+        return None
+    if len(candidate_schedule) != len(base_schedule):
+        return None
+    sorted_candidate = sorted(candidate_schedule, key=lambda x: _time_str_to_minutes(x[0]) or 0)
+    if not _is_strictly_increasing_times(sorted_candidate):
+        return None
+    return sorted_candidate
+
+def generate_daily_routine(agent, base_schedule, day=None):
+    if not base_schedule:
+        return base_schedule
+    profile_text = "\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"年龄：{agent.get('age', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    base_text = json.dumps(
+        [{"time": t, "activity": a} for t, a in base_schedule],
+        ensure_ascii=False,
+        indent=2,
+    )
+    memory_hits = retrieve_relevant_memories(agent, "日程安排 今日计划", max_items=VECTOR_DB_TOP_K)
+    memory_hint = _format_memory_hint(memory_hits)
+    prompt = f"""
+你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
+角色资料：
+{profile_text}
+基础日程（作为框架，可在时间点上做 0-60 分钟内的微调）：
+{base_text}
+可参考的近期记忆：{memory_hint}
+要求：
+1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
+2) 时间点需保持顺序，可在基础时间上做小幅调整（0-60 分钟），不要大幅偏离。
+3) 必须包含“睡前/睡觉/睡眠”类活动，并给出具体时间。
+4) 仅输出 JSON，不要其他文字。
+"""
+    response = call_llm(prompt, task="daily_routine", agent_id=agent["id"])
+    schedule = _parse_schedule(response)
+    normalized = normalize_flexible_schedule(base_schedule, schedule)
+    if normalized:
+        if _schedule_times(normalized) == _schedule_times(base_schedule):
+            normalized = _jitter_schedule_times(base_schedule)
+        return ensure_sleep_in_schedule(agent, normalized)
+    jittered = _jitter_schedule_times(base_schedule)
+    return ensure_sleep_in_schedule(agent, jittered)
+
 def generate_schedule(agent):
     profile_text = "\n".join([
         f"姓名：{agent.get('name', '')}",
@@ -737,15 +886,16 @@ def generate_schedule(agent):
 要求：
 1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
 2) 6-10 项，时间升序覆盖早中晚，活动为中文短语。
-3) 若角色为退休/无业/待业/失业/家庭主妇/家庭主夫/已退休，不出现“工作/通勤/上班/加班”等活动。
-4) 若角色为学生，优先出现“上课/学习/实验”等活动；若作息偏晚，适度延后。
-5) 仅输出 JSON，不要其他文字。
+3) 必须包含“睡前/睡觉/睡眠”类活动，并给出具体时间。
+4) 若角色为退休/无业/待业/失业/家庭主妇/家庭主夫/已退休，不出现“工作/通勤/上班/加班”等活动。
+5) 若角色为学生，优先出现“上课/学习/实验”等活动；若作息偏晚，适度延后。
+6) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="schedule", agent_id=agent["id"])
     schedule = _parse_schedule(response)
     if schedule:
-        return schedule
-    return _heuristic_schedule(agent)
+        return ensure_sleep_in_schedule(agent, schedule)
+    return ensure_sleep_in_schedule(agent, _heuristic_schedule(agent))
 
 def _extract_json_block(text):
     block_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
@@ -753,6 +903,92 @@ def _extract_json_block(text):
         return block_match.group(1)
     inline_match = re.search(r"\{.*\}", text, re.S)
     return inline_match.group(0) if inline_match else ""
+
+def _parse_schedule_change(text):
+    json_blob = _extract_json_block(text)
+    if not json_blob:
+        return {}
+    try:
+        raw = json.loads(json_blob)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    change = raw.get("change")
+    if isinstance(change, str):
+        change = change.strip().lower() in ("true", "yes", "y", "1", "是", "需要", "改变", "变更")
+    change = bool(change)
+    activity = str(raw.get("activity", "")).strip()
+    reason = str(raw.get("reason", "")).strip()
+    return {"change": change, "activity": activity, "reason": reason}
+
+def _routine_change_probability(agent, env_events, policy_desc):
+    if not ROUTINE_CHANGE_ENABLED:
+        return 0.0
+    prob = ROUTINE_CHANGE_BASE_CHANCE
+    if env_events:
+        prob += ROUTINE_CHANGE_EVENT_BOOST * len(env_events)
+    if policy_desc:
+        prob += ROUTINE_CHANGE_POLICY_BOOST
+    s = agent.get("state", {})
+    stress = float(s.get("stress", 0.5))
+    emotion = float(s.get("emotion", 0.5))
+    if stress > 0.6:
+        prob += (stress - 0.6) * 0.3
+    if emotion < 0.4:
+        prob += (0.4 - emotion) * 0.25
+    return float(max(0.0, min(prob, ROUTINE_CHANGE_MAX_CHANCE)))
+
+def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, plan_text,
+                          env_context, env_events, policy_desc):
+    prob = _routine_change_probability(agent, env_events, policy_desc)
+    if prob <= 0 or random.random() > prob:
+        return scheduled_activity, "", False
+
+    profile_text = "\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"年龄：{agent.get('age', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    state = agent.get("state", {})
+    state_text = (
+        f"emotion={state.get('emotion', 0.5):.2f}, "
+        f"stress={state.get('stress', 0.5):.2f}, "
+        f"econ_security={state.get('econ_security', 0.5):.2f}, "
+        f"risk_preference={state.get('risk_preference', 0.5):.2f}"
+    )
+    prompt = f"""
+你是城市生活模拟器的“临时改程”决策器。
+当前时间：{time_str}
+原计划活动：{scheduled_activity}
+角色资料：
+{profile_text}
+当前状态数值：{state_text}
+当前感知：{perception_text}
+当前计划：{plan_text}
+环境事件：{env_context if env_context else "无"}
+政策事件：{policy_desc if policy_desc else "无"}
+
+请判断是否需要因个人意愿或环境/事件影响而临时更改该时段活动。
+要求：
+1) 仅输出 JSON：{{"change": true/false, "activity": "活动", "reason": "原因"}}。
+2) 若不改变，change=false，activity 可留空。
+3) 若改变，activity 为中文短语（2-8字），能合理反映动机与情境。
+4) 不要输出其他文字。
+"""
+    response = call_llm(prompt, task="routine_change", agent_id=agent["id"])
+    parsed = _parse_schedule_change(response)
+    if not parsed:
+        return scheduled_activity, "", False
+    if not parsed.get("change"):
+        return scheduled_activity, parsed.get("reason", ""), False
+    activity = parsed.get("activity", "").strip()
+    if not activity or activity == scheduled_activity:
+        return scheduled_activity, parsed.get("reason", ""), False
+    return activity, parsed.get("reason", ""), True
 
 def _parse_action_space(text, activities):
     json_blob = _extract_json_block(text)
@@ -947,13 +1183,30 @@ DEFAULT_ACTIONS = {
     "时间": "发呆",
 }
 
+SLEEP_KEYWORDS = ["睡前", "睡觉", "睡眠", "入睡", "就寝"]
+
+def is_sleep_activity(activity):
+    return any(k in activity for k in SLEEP_KEYWORDS)
+
 def fallback_action(activity):
     for k, v in DEFAULT_ACTIONS.items():
         if k in activity:
             return v
     return "继续当前活动"
 
+def ensure_action_space_for_activity(agent, action_space, activity):
+    if activity in action_space:
+        return False
+    generated = _llm_generate_actions(agent, [activity])
+    acts = generated.get(activity, [])
+    if not acts:
+        acts = [fallback_action(activity)]
+    action_space[activity] = acts
+    return True
+
 def choose_action(agent, activity, action_space, context=None, location_bias=None):
+    if is_sleep_activity(activity):
+        return "睡觉"
     options = action_space.get(activity, [])
 
     # === 关键兜底：防止空动作空间 ===
@@ -1259,9 +1512,20 @@ def get_activity_for_time(schedule, time_str):
             break
     return last_activity or "个人时间"
 
+def apply_schedule_override(schedule, time_str, activity):
+    if not schedule:
+        return [(time_str, activity)]
+    updated = [(t, a) for t, a in schedule if t != time_str]
+    updated.append((time_str, activity))
+    updated.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
+    return updated
+
 def build_master_timeline(schedules, step_minutes=None):
     if step_minutes:
-        return _build_time_grid(step_minutes)
+        times = set(_build_time_grid(step_minutes))
+        for sch in schedules.values():
+            times.update(t for t, _ in sch)
+        return sorted(times)
     times = set()
     for sch in schedules.values():
         times.update(t for t, _ in sch)
@@ -1326,7 +1590,10 @@ def run_simulation():
         agent_id = a["id"]
         cached_schedule = load_agent_schedule(agent_id)
         if cached_schedule:
-            schedules[agent_id] = cached_schedule
+            ensured = ensure_sleep_in_schedule(a, cached_schedule)
+            schedules[agent_id] = ensured
+            if ensured != cached_schedule and STATEFUL:
+                save_agent_schedule(agent_id, ensured)
         else:
             # Generate schedule once per agent unless cache exists.
             schedules[agent_id] = generate_schedule(a)
@@ -1341,16 +1608,49 @@ def run_simulation():
             actions[agent_id] = build_action_space_for_agent(a, base_actions)
             save_agent_actions(agent_id, actions[agent_id])
 
-    schedule_map = build_schedule_map(schedules)
-    timeline = build_master_timeline(schedules, TIME_STEP_MINUTES)
+    # Print each agent's base routine at the beginning of the simulation.
+    for agent in agents:
+        sch = schedules.get(agent["id"], [])
+        lines = [f"{t} {act}" for t, act in sch] if sch else ["(no schedule)"]
+        routine_text = "\n".join(lines)
+        header = f"\n[BasicRoutine] {agent.get('name', agent['id'])}\n"
+        print(header + routine_text)
+        append_agent_log(agent, header + routine_text + "\n")
 
+    base_schedule_map = build_schedule_map(schedules)
     validate_action_space(schedules, actions)
-
-    sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
 
     for day in range(start_day, start_day + SIM_DAYS):
         print(f"\n================= Day {day} =================")
         daily_logs = defaultdict(str)
+        daily_schedules = {}
+        daily_routine_texts = {}
+        daily_wake_times = {}
+        daily_routine_logged = {}
+        for agent in agents:
+            agent_id = agent["id"]
+            daily_schedule = generate_daily_routine(agent, base_schedule_map[agent_id], day=day)
+            daily_schedules[agent_id] = daily_schedule
+            # Ensure action space covers any new activities in today's routine.
+            updated = False
+            for _, activity in daily_schedule:
+                updated = ensure_action_space_for_activity(agent, actions[agent_id], activity) or updated
+            if updated and STATEFUL:
+                save_agent_actions(agent_id, actions[agent_id])
+            lines = [f"{t} {act}" for t, act in daily_schedule] if daily_schedule else ["(no schedule)"]
+            routine_text = "\n".join(lines)
+            daily_routine_texts[agent_id] = routine_text
+            wake_time = None
+            for t, act in daily_schedule:
+                if not is_sleep_activity(act):
+                    wake_time = t
+                    break
+            daily_wake_times[agent_id] = wake_time or (daily_schedule[0][0] if daily_schedule else None)
+            daily_routine_logged[agent_id] = False
+
+        schedule_map = build_schedule_map(daily_schedules)
+        timeline = build_master_timeline(daily_schedules, TIME_STEP_MINUTES)
+        sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
 
         day_header = f"\n================= Day {day} =================\n"
         for agent in agents:
@@ -1366,28 +1666,62 @@ def run_simulation():
                 env_context = f"背景：{background_text} 当前环境事件：{env_context}"
 
             for agent in agents:
+                agent_id = agent["id"]
+                if (
+                    not daily_routine_logged.get(agent_id)
+                    and daily_wake_times.get(agent_id) == time_str
+                ):
+                    header = (
+                        f"\n[TodayRoutine Day {day}] "
+                        f"{agent.get('name', agent_id)} @ {time_str}\n"
+                    )
+                    routine_text = daily_routine_texts.get(agent_id, "")
+                    print(header + routine_text)
+                    daily_logs[agent_id] += header + routine_text + "\n"
+                    append_agent_log(agent, header + routine_text + "\n")
+                    daily_routine_logged[agent_id] = True
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
-                activity = get_activity_for_time(schedule_map[agent["id"]], time_str)
-                location = resolve_location(agent, activity, time_str, city_map)
-                agent["locations"]["current"] = location
+                scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
                 social_context = get_social_context(agent, agents_by_id)
 
                 policy_desc = None
                 if policy:
                     policy_desc = policy.get("description") or policy.get("name")
-                # Core cognition loop: perceive -> plan -> act -> reflect.
+                # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
                 plan = planning(agent, perc)
+                activity, change_reason, changed = maybe_adjust_activity(
+                    agent,
+                    time_str,
+                    scheduled_activity,
+                    perc,
+                    plan,
+                    env_context,
+                    env_events,
+                    policy_desc,
+                )
+                if changed:
+                    schedule_map[agent_id] = apply_schedule_override(
+                        schedule_map[agent_id],
+                        time_str,
+                        activity,
+                    )
+                    updated = ensure_action_space_for_activity(agent, actions[agent_id], activity)
+                    if updated and STATEFUL:
+                        save_agent_actions(agent_id, actions[agent_id])
+
+                location = resolve_location(agent, activity, time_str, city_map)
+                agent["locations"]["current"] = location
                 location_bias = get_location_action_bias(
                     agent,
                     location,
                     city_map_text,
-                    actions[agent["id"]],
+                    actions[agent_id],
                 )
                 act = choose_action(
                     agent,
                     activity,
-                    actions[agent["id"]],
+                    actions[agent_id],
                     context=f"{activity} {perc}",
                     location_bias=location_bias,
                 )
@@ -1410,9 +1744,16 @@ def run_simulation():
                 for metric in state_history[agent["id"]]:
                     state_history[agent["id"]][metric].append(agent["state"][metric])
 
+                routine_line = ""
+                if changed:
+                    reason_text = change_reason or "临时改变"
+                    routine_line = f"RoutineChange: {scheduled_activity} -> {activity} ({reason_text})\n"
+
                 log = f"""
 [{agent['name']} @ {time_str}]
-Location: {location}
+Scheduled: {scheduled_activity}
+Activity: {activity}
+{routine_line}Location: {location}
 Environment: {env_context}
 Perception: {perc}
 Plan: {plan}

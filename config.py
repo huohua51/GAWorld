@@ -41,13 +41,13 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [47],
+    "agent_ids": [51],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
     # Time step for simulation timeline (minutes). None/0 uses schedule times only.
-    # "time_step_minutes": None,
-    "time_step_minutes": 10,
+    "time_step_minutes": "2 hours",
+    #"time_step_minutes": None,
     # Simulation background (time/city/societal status prompt)
     "background": "2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。",
     # Data sources
@@ -90,5 +90,13 @@ CONFIG = {
             "Neighborhood market fair",
             "Minor protest near city center"
         ]
+    },
+    # Routine change (chance to deviate from schedule during the day)
+    "routine_change": {
+        "enabled": True,
+        "base_chance": 0.08,
+        "event_boost": 0.08,
+        "policy_boost": 0.05,
+        "max_chance": 0.45,
     },
 }
