@@ -4,11 +4,13 @@ import random
 import numpy as np
 import re
 import json
+import requests
 from collections import defaultdict
 import os
 import shutil
 import matplotlib.pyplot as plt
 import networkx as nx
+from html import unescape
 
 from config import CONFIG
 from environment import EnvironmentSystem
@@ -88,6 +90,132 @@ def _clear_dir(path):
                 shutil.rmtree(target)
         except OSError:
             continue
+
+def _strip_html(text):
+    if not text:
+        return ""
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", text)
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    text = unescape(text)
+    text = re.sub(r"\\s+", " ", text)
+    return text.strip()
+
+def load_news_sources(path):
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return []
+    urls = re.findall(r"\\((https?://[^)\\s]+)\\)", text)
+    urls.extend(re.findall(r"https?://[^\\s)]+", text))
+    cleaned = []
+    seen = set()
+    for url in urls:
+        url = url.strip().rstrip(").,;")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        cleaned.append(url)
+    return cleaned
+
+def load_news_cache(path):
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("items", [])
+    if not isinstance(data, list):
+        return []
+    cleaned = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url", "")).strip()
+        text = str(item.get("text", "")).strip()
+        if not url or not text:
+            continue
+        cleaned.append({
+            "url": url,
+            "text": text,
+            "title": str(item.get("title", "")).strip(),
+            "fetched_at": str(item.get("fetched_at", "")).strip(),
+        })
+    return cleaned
+
+def fetch_news_excerpt(url, timeout=8, max_chars=2000, user_agent="GAWorld/1.0"):
+    if not url:
+        return ""
+    try:
+        headers = {"User-Agent": user_agent}
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        if not resp.encoding:
+            resp.encoding = resp.apparent_encoding
+        text = resp.text or ""
+    except requests.RequestException:
+        return ""
+    if not text:
+        return ""
+    content_type = (resp.headers.get("content-type") or "").lower()
+    if "text/html" in content_type or "<html" in text.lower():
+        text = _strip_html(text)
+    else:
+        text = re.sub(r"\\s+", " ", text).strip()
+    if max_chars and len(text) > max_chars:
+        text = text[:max_chars].rsplit(" ", 1)[0].strip() if " " in text else text[:max_chars]
+    return text
+
+def read_news_and_store(agent, source_url, day=None, time_str=None, config=None, excerpt=None, title=None):
+    config = config or {}
+    if not excerpt:
+        excerpt = fetch_news_excerpt(
+            source_url,
+            timeout=int(config.get("timeout", 8)),
+            max_chars=int(config.get("max_chars", 2000)),
+            user_agent=str(config.get("user_agent", "GAWorld/1.0")),
+        )
+    if not excerpt:
+        return None, None
+    profile_text = "\\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"年龄：{agent.get('age', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    prompt = f"""
+你是{agent['name']}。
+角色资料：
+{profile_text}
+
+你刚阅读了一条新闻/社交媒体内容（节选）：
+{excerpt}
+
+请用1-2句写出你的反应，尽量体现角色身份与态度。
+"""
+    response = call_llm(prompt, task="news_reaction", agent_id=agent["id"]).strip()
+    if not response:
+        return None, None
+    stamp = f"Day {day} {time_str}" if day and time_str else "NewsRead"
+    title_text = f" 标题：{title}" if title else ""
+    memory_entry = f"[{stamp}] 来源：{source_url}{title_text} 反应：{response}"
+    agent["memory"].append(memory_entry)
+    save_agent_memory(agent)
+    vector_db_add_entry(agent["id"], "news", memory_entry, sim_day=day, sim_time=time_str or "news")
+    log = f"""
+[NewsRead {agent['name']} @ {time_str}]
+Source: {source_url}
+Title: {title or "N/A"}
+Response: {response}
+"""
+    return memory_entry, log
 
 def reset_simulation():
     memory_dir = CONFIG.get("memory_dir", "output/memory")
@@ -259,6 +387,13 @@ ROUTINE_CHANGE_BASE_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("base_chance", 0.08
 ROUTINE_CHANGE_EVENT_BOOST = float(ROUTINE_CHANGE_CONFIG.get("event_boost", 0.08))
 ROUTINE_CHANGE_POLICY_BOOST = float(ROUTINE_CHANGE_CONFIG.get("policy_boost", 0.05))
 ROUTINE_CHANGE_MAX_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("max_chance", 0.45))
+NEWS_CONFIG = CONFIG.get("news", {})
+NEWS_ENABLED = bool(NEWS_CONFIG.get("enabled", False))
+NEWS_SOURCES_PATH = NEWS_CONFIG.get("sources_path", "news_source.md")
+NEWS_DAILY_CHANCE = float(NEWS_CONFIG.get("daily_chance", 0.5))
+NEWS_MAX_READS_PER_DAY = int(NEWS_CONFIG.get("max_reads_per_day", 1))
+NEWS_CACHE_PATH = NEWS_CONFIG.get("cache_path", "news_cache.json")
+NEWS_USE_CACHE_FIRST = bool(NEWS_CONFIG.get("use_cache_first", True))
 
 # =========================================================
 # 政策事件
@@ -1564,6 +1699,12 @@ def run_simulation():
     }
     env_system = EnvironmentSystem(CONFIG.get("environment", {}), llm_fn=call_llm)
     background_text = str(BACKGROUND).strip()
+    news_sources = load_news_sources(NEWS_SOURCES_PATH) if NEWS_ENABLED else []
+    news_cache = load_news_cache(NEWS_CACHE_PATH) if NEWS_ENABLED else []
+    if NEWS_ENABLED and not news_sources:
+        print(f"⚠️ 未找到新闻源列表或列表为空：{NEWS_SOURCES_PATH}")
+    if NEWS_ENABLED and not news_cache and NEWS_USE_CACHE_FIRST:
+        print(f"⚠️ 新闻缓存为空或未找到：{NEWS_CACHE_PATH}")
 
     # === 构建社交网络 ===
     social_net = build_social_network(agents)
@@ -1651,6 +1792,13 @@ def run_simulation():
         schedule_map = build_schedule_map(daily_schedules)
         timeline = build_master_timeline(daily_schedules, TIME_STEP_MINUTES)
         sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
+        news_schedule = {}
+        if NEWS_ENABLED and news_sources and NEWS_MAX_READS_PER_DAY > 0 and timeline:
+            for agent in agents:
+                if random.random() > NEWS_DAILY_CHANCE:
+                    continue
+                reads = min(NEWS_MAX_READS_PER_DAY, len(timeline))
+                news_schedule[agent["id"]] = set(random.sample(timeline, k=reads))
 
         day_header = f"\n================= Day {day} =================\n"
         for agent in agents:
@@ -1680,6 +1828,30 @@ def run_simulation():
                     daily_logs[agent_id] += header + routine_text + "\n"
                     append_agent_log(agent, header + routine_text + "\n")
                     daily_routine_logged[agent_id] = True
+                if time_str in news_schedule.get(agent_id, set()):
+                    source_url = ""
+                    excerpt = ""
+                    title = ""
+                    if NEWS_USE_CACHE_FIRST and news_cache:
+                        item = random.choice(news_cache)
+                        source_url = item.get("url", "")
+                        excerpt = item.get("text", "")
+                        title = item.get("title", "")
+                    else:
+                        source_url = random.choice(news_sources)
+                    _, news_log = read_news_and_store(
+                        agent,
+                        source_url,
+                        day=day,
+                        time_str=time_str,
+                        config=NEWS_CONFIG,
+                        excerpt=excerpt,
+                        title=title,
+                    )
+                    if news_log:
+                        print(news_log)
+                        daily_logs[agent_id] += news_log
+                        append_agent_log(agent, news_log)
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
                 social_context = get_social_context(agent, agents_by_id)

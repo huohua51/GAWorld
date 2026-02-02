@@ -110,6 +110,16 @@ All runtime settings live in `config.py`.
 - `enabled`, `event_chance`, `max_events_per_tick`
 - `natural_events` and `social_events` lists
 
+### News / social media
+`news` enables optional web reading and memory capture:
+- `enabled`: toggle web reading.
+- `sources_path`: Markdown file with one URL per line (or Markdown links).
+- `cache_path`: JSON cache file for offline reads.
+- `use_cache_first`: prefer cache items when available.
+- `daily_chance`: probability an agent reads news each day.
+- `max_reads_per_day`: max reads per agent per day.
+- `timeout`, `max_chars`, `user_agent`: fetch controls.
+
 ## Outputs
 Simulation output is written under `output/`:
 - `output/logs/agent_<id>.log` event-by-event logs.

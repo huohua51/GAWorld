@@ -1,0 +1,14 @@
+https://www.reuters.com/
+https://apnews.com/
+https://www.bbc.com/news
+https://www.cnn.com/
+https://www.nytimes.com/
+https://www.theguardian.com/international
+https://www.wsj.com/
+https://www.bloomberg.com/
+https://www.washingtonpost.com/
+https://www.aljazeera.com/
+https://news.ycombinator.com/
+https://www.reddit.com/r/news/
+https://www.reddit.com/r/worldnews/
+https://x.com/

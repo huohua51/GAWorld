@@ -46,8 +46,8 @@ CONFIG = {
     "seconds_per_day": 10,
     "print_agent_profile": False,
     # Time step for simulation timeline (minutes). None/0 uses schedule times only.
-    "time_step_minutes": "2 hours",
-    #"time_step_minutes": None,
+    #"time_step_minutes": "2 hours",
+    "time_step_minutes": None,
     # Simulation background (time/city/societal status prompt)
     "background": "2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。",
     # Data sources
@@ -98,5 +98,17 @@ CONFIG = {
         "event_boost": 0.08,
         "policy_boost": 0.05,
         "max_chance": 0.45,
+    },
+    # News / social media reading
+    "news": {
+        "enabled": True,
+        "sources_path": "news_source.md",
+        "cache_path": "news_cache.json",
+        "use_cache_first": True,
+        "daily_chance": 0.9,
+        "max_reads_per_day": 5,
+        "timeout": 8,
+        "max_chars": 2000,
+        "user_agent": "GAWorld/1.0",
     },
 }

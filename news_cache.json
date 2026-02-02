@@ -1,0 +1,20 @@
+[
+  {
+    "url": "https://news.ycombinator.com/",
+    "title": "Hacker News front page",
+    "text": "Front page items include Netbird (open source zero trust networking), Adventure Game Studio, a post about building a minimal coding agent, and a story about mobile carriers getting GPS location access, along with other tech/news links.",
+    "fetched_at": "2026-02-01"
+  },
+  {
+    "url": "https://www.reddit.com/r/news/",
+    "title": "r/news community highlights",
+    "text": "Community highlights list posts about DOJ releasing less than 1% of Epstein files, officials discovering more documents tied to the case, and a report that Rep. Doug LaMalfa of California has died, affecting House control.",
+    "fetched_at": "2026-02-01"
+  },
+  {
+    "url": "https://www.ap.org/",
+    "title": "AP latest stories highlights",
+    "text": "AP's Latest stories section features internal highlights, including coverage of the fatal shooting of Minneapolis protester Alex Pretti, visuals-led reporting on Syria's conflict, and reporting on a shift allowing federal immigration officers to enter homes without a judge-issued warrant.",
+    "fetched_at": "2026-02-01"
+  }
+]
