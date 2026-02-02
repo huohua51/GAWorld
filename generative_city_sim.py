@@ -100,6 +100,15 @@ def _strip_html(text):
     text = re.sub(r"\\s+", " ", text)
     return text.strip()
 
+def _extract_title(text):
+    if not text:
+        return ""
+    match = re.search(r"(?is)<title[^>]*>(.*?)</title>", text)
+    if not match:
+        return ""
+    title = _strip_html(match.group(1))
+    return re.sub(r"\\s+", " ", title).strip()
+
 def load_news_sources(path):
     if not path or not os.path.exists(path):
         return []
@@ -148,28 +157,80 @@ def load_news_cache(path):
         })
     return cleaned
 
-def fetch_news_excerpt(url, timeout=8, max_chars=2000, user_agent="GAWorld/1.0"):
+def fetch_news_excerpt(
+    url,
+    timeout=8,
+    max_chars=2000,
+    user_agent="GAWorld/1.0",
+    return_title=False,
+):
     if not url:
-        return ""
+        return ("", "") if return_title else ""
     try:
         headers = {"User-Agent": user_agent}
         resp = requests.get(url, headers=headers, timeout=timeout)
         resp.raise_for_status()
         if not resp.encoding:
             resp.encoding = resp.apparent_encoding
-        text = resp.text or ""
+        raw_text = resp.text or ""
     except requests.RequestException:
-        return ""
-    if not text:
-        return ""
+        return ("", "") if return_title else ""
+    if not raw_text:
+        return ("", "") if return_title else ""
     content_type = (resp.headers.get("content-type") or "").lower()
-    if "text/html" in content_type or "<html" in text.lower():
-        text = _strip_html(text)
+    title = ""
+    if "text/html" in content_type or "<html" in raw_text.lower():
+        title = _extract_title(raw_text)
+        cleaned = _strip_html(raw_text)
     else:
-        text = re.sub(r"\\s+", " ", text).strip()
-    if max_chars and len(text) > max_chars:
-        text = text[:max_chars].rsplit(" ", 1)[0].strip() if " " in text else text[:max_chars]
-    return text
+        cleaned = re.sub(r"\\s+", " ", raw_text).strip()
+    if max_chars and len(cleaned) > max_chars:
+        cleaned = cleaned[:max_chars].rsplit(" ", 1)[0].strip() if " " in cleaned else cleaned[:max_chars]
+    if return_title:
+        return cleaned, title
+    return cleaned
+
+def update_news_cache(path, sources, config=None):
+    config = config or {}
+    existing = load_news_cache(path)
+    if not sources:
+        return existing
+    timeout = int(config.get("timeout", 8))
+    max_chars = int(config.get("max_chars", 2000))
+    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
+    items = []
+    seen = set()
+    for url in sources:
+        url = str(url).strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        excerpt, title = fetch_news_excerpt(
+            url,
+            timeout=timeout,
+            max_chars=max_chars,
+            user_agent=user_agent,
+            return_title=True,
+        )
+        if not excerpt:
+            continue
+        items.append({
+            "url": url,
+            "title": title,
+            "text": excerpt,
+            "fetched_at": time.strftime("%Y-%m-%d"),
+        })
+    if not items:
+        return existing
+    cache_dir = os.path.dirname(path)
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+    except OSError:
+        return existing
+    return items
 
 def read_news_and_store(agent, source_url, day=None, time_str=None, config=None, excerpt=None, title=None):
     config = config or {}
@@ -1700,7 +1761,12 @@ def run_simulation():
     env_system = EnvironmentSystem(CONFIG.get("environment", {}), llm_fn=call_llm)
     background_text = str(BACKGROUND).strip()
     news_sources = load_news_sources(NEWS_SOURCES_PATH) if NEWS_ENABLED else []
-    news_cache = load_news_cache(NEWS_CACHE_PATH) if NEWS_ENABLED else []
+    news_cache = []
+    if NEWS_ENABLED:
+        if news_sources:
+            news_cache = update_news_cache(NEWS_CACHE_PATH, news_sources, NEWS_CONFIG)
+        else:
+            news_cache = load_news_cache(NEWS_CACHE_PATH)
     if NEWS_ENABLED and not news_sources:
         print(f"⚠️ 未找到新闻源列表或列表为空：{NEWS_SOURCES_PATH}")
     if NEWS_ENABLED and not news_cache and NEWS_USE_CACHE_FIRST:
