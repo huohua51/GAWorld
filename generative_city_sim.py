@@ -13,6 +13,7 @@ import networkx as nx
 from html import unescape
 
 from config import CONFIG
+from extensibility import HookBus
 from environment import EnvironmentSystem
 from llm_providers import call_llm
 from memory_store import (
@@ -1731,6 +1732,8 @@ def run_simulation():
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
     city_map_text = load_city_map_text(MAP_PATH)
+    hook_bus = HookBus(CONFIG.get("extensions", {}))
+    extension_state = {}
     agents = [build_agent(i, df, city_map=city_map) for i in AGENT_IDS]
     if PRINT_AGENT_PROFILE:
         print_agent_profiles([a["id"] for a in agents])
@@ -1826,6 +1829,17 @@ def run_simulation():
 
     base_schedule_map = build_schedule_map(schedules)
     validate_action_space(schedules, actions)
+    hook_bus.emit(
+        "on_simulation_start",
+        config=CONFIG,
+        agents=agents,
+        agents_by_id=agents_by_id,
+        city_map=city_map,
+        city_map_text=city_map_text,
+        schedules=schedules,
+        actions=actions,
+        extension_state=extension_state,
+    )
 
     for day in range(start_day, start_day + SIM_DAYS):
         print(f"\n================= Day {day} =================")
@@ -1870,7 +1884,21 @@ def run_simulation():
         for agent in agents:
             daily_logs[agent["id"]] += day_header
             append_agent_log(agent, day_header)
-            
+        hook_bus.emit(
+            "on_day_start",
+            day=day,
+            config=CONFIG,
+            agents=agents,
+            agents_by_id=agents_by_id,
+            city_map=city_map,
+            city_map_text=city_map_text,
+            schedule_map=schedule_map,
+            actions=actions,
+            timeline=timeline,
+            daily_logs=daily_logs,
+            extension_state=extension_state,
+        )
+
         for time_str in timeline:
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
             env_system.tick(day, time_str, agents)
@@ -1878,6 +1906,23 @@ def run_simulation():
             env_context = env_system.get_context_text()
             if background_text:
                 env_context = f"背景：{background_text} 当前环境事件：{env_context}"
+            hook_bus.emit(
+                "on_time_tick",
+                day=day,
+                time_str=time_str,
+                config=CONFIG,
+                agents=agents,
+                agents_by_id=agents_by_id,
+                city_map=city_map,
+                city_map_text=city_map_text,
+                schedule_map=schedule_map,
+                actions=actions,
+                daily_logs=daily_logs,
+                env_events=env_events,
+                env_context=env_context,
+                policy=policy,
+                extension_state=extension_state,
+            )
 
             for agent in agents:
                 agent_id = agent["id"]
@@ -1925,6 +1970,33 @@ def run_simulation():
                 policy_desc = None
                 if policy:
                     policy_desc = policy.get("description") or policy.get("name")
+                step_ctx = {
+                    "scheduled_activity": scheduled_activity,
+                    "activity": scheduled_activity,
+                    "social_context": social_context,
+                    "policy_desc": policy_desc,
+                }
+                hook_bus.emit(
+                    "on_agent_pre_step",
+                    day=day,
+                    time_str=time_str,
+                    config=CONFIG,
+                    agent=agent,
+                    agents=agents,
+                    agents_by_id=agents_by_id,
+                    city_map=city_map,
+                    city_map_text=city_map_text,
+                    schedule_map=schedule_map,
+                    actions=actions,
+                    env_events=env_events,
+                    env_context=env_context,
+                    policy=policy,
+                    step=step_ctx,
+                    extension_state=extension_state,
+                )
+                scheduled_activity = step_ctx.get("scheduled_activity", scheduled_activity)
+                social_context = step_ctx.get("social_context", social_context)
+                policy_desc = step_ctx.get("policy_desc", policy_desc)
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
                 plan = planning(agent, perc)
@@ -1938,6 +2010,12 @@ def run_simulation():
                     env_events,
                     policy_desc,
                 )
+                activity = step_ctx.get("activity", activity)
+                if activity != scheduled_activity and not changed:
+                    changed = True
+                    hook_reason = str(step_ctx.get("change_reason", "")).strip()
+                    if hook_reason:
+                        change_reason = hook_reason
                 if changed:
                     schedule_map[agent_id] = apply_schedule_override(
                         schedule_map[agent_id],
@@ -2006,16 +2084,73 @@ Reflection: {refl}
                 vector_db_add_entry(agent["id"], "plan", plan, sim_day=day, sim_time=time_str)
                 vector_db_add_entry(agent["id"], "reflection", refl, sim_day=day, sim_time=time_str)
                 vector_db_add_entry(agent["id"], "action", outcome, sim_day=day, sim_time=time_str)
+                step_ctx.update({
+                    "perception": perc,
+                    "plan": plan,
+                    "activity": activity,
+                    "action": act,
+                    "outcome": outcome,
+                    "reflection": refl,
+                    "log": log,
+                    "changed": changed,
+                    "change_reason": change_reason,
+                    "location": location,
+                })
+                hook_bus.emit(
+                    "on_agent_post_step",
+                    day=day,
+                    time_str=time_str,
+                    config=CONFIG,
+                    agent=agent,
+                    agents=agents,
+                    agents_by_id=agents_by_id,
+                    city_map=city_map,
+                    city_map_text=city_map_text,
+                    schedule_map=schedule_map,
+                    actions=actions,
+                    daily_logs=daily_logs,
+                    env_events=env_events,
+                    env_context=env_context,
+                    policy=policy,
+                    step=step_ctx,
+                    extension_state=extension_state,
+                )
 
             time.sleep(sleep_step)
 
         for agent in agents:
             mem = daily_summary(agent, daily_logs[agent["id"]], day=day)
             print(f"🧠 {agent['name']} 的今日长期记忆：{mem}")
+        hook_bus.emit(
+            "on_day_end",
+            day=day,
+            config=CONFIG,
+            agents=agents,
+            agents_by_id=agents_by_id,
+            city_map=city_map,
+            city_map_text=city_map_text,
+            schedule_map=schedule_map,
+            actions=actions,
+            daily_logs=daily_logs,
+            state_history=state_history,
+            extension_state=extension_state,
+        )
         if STATEFUL:
             save_sim_state({"last_day": day})
 
     print("\n✅ 模拟完成")
+    hook_bus.emit(
+        "on_simulation_end",
+        config=CONFIG,
+        agents=agents,
+        agents_by_id=agents_by_id,
+        city_map=city_map,
+        city_map_text=city_map_text,
+        schedules=schedules,
+        actions=actions,
+        state_history=state_history,
+        extension_state=extension_state,
+    )
     visualize_social_network(agents)
     save_state_history(state_history)
     visualize_agent_state_changes(state_history, agent_names, metrics=state_metrics)

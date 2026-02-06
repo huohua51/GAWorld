@@ -111,4 +111,18 @@ CONFIG = {
         "max_chars": 2000,
         "user_agent": "GAWorld/1.0",
     },
+    # Optional extension hooks for custom functions.
+    # Each item uses "module:function" import path.
+    "extensions": {
+        "strict": False,
+        "hooks": {
+            "on_simulation_start": [],
+            "on_day_start": [],
+            "on_time_tick": [],
+            "on_agent_pre_step": [],
+            "on_agent_post_step": [],
+            "on_day_end": [],
+            "on_simulation_end": [],
+        },
+    },
 }

@@ -25,6 +25,8 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - `citymap.md` village map (hubs + nearby locations).
 - `generate_citymap.py` city map generator (from text descriptions).
 - `output/` simulation artifacts (logs, memory, plots, CSVs).
+- `extensibility.py` hook dispatcher for custom lifecycle functions.
+- `custom_hooks.py` example custom hook functions.
 
 ## Quickstart
 1) Install deps:
@@ -119,6 +121,32 @@ All runtime settings live in `config.py`.
 - `daily_chance`: probability an agent reads news each day.
 - `max_reads_per_day`: max reads per agent per day.
 - `timeout`, `max_chars`, `user_agent`: fetch controls.
+
+### Extensibility hooks
+`extensions` allows adding new functions without editing the core simulation loop.
+- Configure `CONFIG["extensions"]["hooks"]` with lifecycle phases.
+- Each hook entry is a `module:function` path importable by Python.
+- Set `extensions.strict=true` to fail fast when a hook raises an error.
+
+Supported phases:
+- `on_simulation_start`
+- `on_day_start`
+- `on_time_tick`
+- `on_agent_pre_step`
+- `on_agent_post_step`
+- `on_day_end`
+- `on_simulation_end`
+
+Minimal example in `config.py`:
+```python
+"extensions": {
+    "strict": False,
+    "hooks": {
+        "on_day_start": ["custom_hooks:increase_weekend_mobility"],
+        "on_agent_post_step": ["custom_hooks:annotate_low_emotion"],
+    },
+}
+```
 
 ## Outputs
 Simulation output is written under `output/`:
