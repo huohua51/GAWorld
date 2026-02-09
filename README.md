@@ -27,6 +27,8 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - `output/` simulation artifacts (logs, memory, plots, CSVs).
 - `extensibility.py` hook dispatcher for custom lifecycle functions.
 - `custom_hooks.py` example custom hook functions.
+- `experience_store.py` structured episodic memory persistence.
+- `human_realism.py` behavior realism helpers (needs/habits/intentions/consolidation).
 
 ## Quickstart
 1) Install deps:
@@ -106,6 +108,18 @@ All runtime settings live in `config.py`.
 - `require_clean_reset_on_memory_model_change`: if true, simulator blocks run until `reset` is executed after a version change.
 - `vector_db_path`: sqlite vector store for memory + logs (with `vector_db_dim`, `vector_db_top_k`, `vector_db_max_chars`).
 
+### Human realism
+`human_realism` enables day-to-day experience accumulation and more human-like behavior:
+- `enabled`: toggle realism enhancements.
+- `llm.max_extra_calls_per_agent_day`: cap extra LLM calls for intentions + consolidation.
+- `memory.max_episodes_per_agent`: cap per-agent episodic memory entries.
+- `memory.daily_consolidation_top_k`: number of salient episodes used for day-end consolidation.
+- `memory.salience_threshold`: threshold for high-salience episode selection.
+- `memory.decay_half_life_days`: salience decay half-life for older episodes.
+- `behavior.habit_learning_rate`: rate of habit strengthening.
+- `behavior.inertia_weight`: repeated action/activity inertia bonus.
+- `behavior.need_weights`: weights for `energy`, `hunger`, and `social_need` in action choice.
+
 ### Policy events
 `policy_events` is a list of `{day, time, name, description}`. Effects are inferred via LLM and applied to agent state.
 
@@ -154,10 +168,14 @@ Minimal example in `config.py`:
 Simulation output is written under `output/`:
 - `output/logs/agent_<id>.log` event-by-event logs.
 - `output/memory/agent_<id>.json` long-term memory.
+- `output/memory/agent_<id>_episodes.jsonl` structured episodic memory entries.
 - `output/memory/agent_<id>_schedule.json` cached schedules.
 - `output/memory/agent_<id>_actions.json` cached action space.
 - `output/memory/agent_<id>_locations.json` cached locations.
 - `output/memory/agent_<id>_location_action_bias.json` cached location action bias.
+- `output/memory/agent_<id>_habits.json` learned context-action preferences.
+- `output/memory/agent_<id>_intentions.json` day-level intentions.
+- `output/memory/agent_<id>_relationships.json` relationship closeness/trust snapshots.
 - `output/memory/sim_state.json` last simulated day for stateful runs.
 - `output/memory/vector_db.sqlite` vector memory store (logs + summaries).
 - `output/network/social_network.png` social graph snapshot.

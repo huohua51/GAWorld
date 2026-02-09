@@ -4,6 +4,7 @@ import random
 import numpy as np
 import re
 import json
+import uuid
 import requests
 from collections import defaultdict
 import os
@@ -16,6 +17,30 @@ from config import CONFIG
 from extensibility import HookBus
 from environment import EnvironmentSystem
 from llm_providers import call_llm
+from experience_store import (
+    append_agent_episode,
+    load_agent_episodes,
+    load_agent_habits,
+    load_agent_intentions,
+    load_agent_relationships,
+    prune_and_decay_episodes,
+    save_agent_habits,
+    save_agent_intentions,
+    save_agent_relationships,
+)
+from human_realism import (
+    build_context_key,
+    build_daily_intentions,
+    compute_episode_salience,
+    consolidate_day,
+    infer_episode_tags,
+    infer_interaction_signal,
+    intention_text,
+    relationship_update,
+    relationship_weight,
+    update_habits_from_episode,
+    update_needs,
+)
 from memory_store import (
     append_agent_log,
     load_agent_actions,
@@ -450,6 +475,8 @@ MEMORY_MODEL_VERSION = int(CONFIG.get("memory_model_version", 1))
 REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE = bool(
     CONFIG.get("require_clean_reset_on_memory_model_change", False)
 )
+HUMAN_REALISM_CONFIG = CONFIG.get("human_realism", {})
+HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
 ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
 ROUTINE_CHANGE_ENABLED = bool(ROUTINE_CHANGE_CONFIG.get("enabled", True))
@@ -1049,6 +1076,7 @@ def generate_daily_routine(agent, base_schedule, day=None):
     )
     memory_hits = retrieve_relevant_memories(agent, "日程安排 今日计划", max_items=VECTOR_DB_TOP_K)
     memory_hint = _format_memory_hint(memory_hits)
+    intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
     prompt = f"""
 你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
 角色资料：
@@ -1056,6 +1084,7 @@ def generate_daily_routine(agent, base_schedule, day=None):
 基础日程（作为框架，可在时间点上做 0-60 分钟内的微调）：
 {base_text}
 可参考的近期记忆：{memory_hint}
+今日行为意图：{intent_hint}
 要求：
 1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
 2) 时间点需保持顺序，可在基础时间上做小幅调整（0-60 分钟），不要大幅偏离。
@@ -1409,14 +1438,10 @@ def ensure_action_space_for_activity(agent, action_space, activity):
     action_space[activity] = acts
     return True
 
-def choose_action(agent, activity, action_space, context=None, location_bias=None):
+def choose_action(agent, activity, action_space, context=None, location_bias=None, location=None, time_str=None):
     if is_sleep_activity(activity):
         return "睡觉"
     options = action_space.get(activity, [])
-
-    # === 关键兜底：防止空动作空间 ===
-    #if not options:
-    #    return "继续当前活动"
 
     if not options:
         return fallback_action(activity)
@@ -1434,6 +1459,20 @@ def choose_action(agent, activity, action_space, context=None, location_bias=Non
     bias = (location_bias or {}).get(activity, {})
     prefer_set = set(bias.get("prefer", [])) if isinstance(bias, dict) else set()
     avoid_set = set(bias.get("avoid", [])) if isinstance(bias, dict) else set()
+    habits = agent.get("habits", {}) if HUMAN_REALISM_ENABLED else {}
+    behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
+    inertia_weight = float(behavior_cfg.get("inertia_weight", 0.25))
+    need_weights = behavior_cfg.get("need_weights", {}) if isinstance(behavior_cfg, dict) else {}
+    energy_w = float(need_weights.get("energy", 0.45))
+    hunger_w = float(need_weights.get("hunger", 0.30))
+    social_w = float(need_weights.get("social_need", 0.25))
+    context_key = build_context_key(time_str or "", location or "", activity)
+    habit_entry = habits.get(context_key, {}) if isinstance(habits, dict) else {}
+    preferred_habit_action = str(habit_entry.get("preferred_action", ""))
+    habit_strength = float(habit_entry.get("strength", 0.0))
+    energy = float(s.get("energy", 0.75))
+    hunger = float(s.get("hunger", 0.25))
+    social_need = float(s.get("social_need", 0.4))
 
     for act in options:
         w = 1.0
@@ -1464,6 +1503,25 @@ def choose_action(agent, activity, action_space, context=None, location_bias=Non
             w += 1.0
         if act in avoid_set:
             w -= 0.6
+
+        # 人类行为惯性与习惯
+        if HUMAN_REALISM_ENABLED:
+            if act == preferred_habit_action:
+                w += habit_strength * 0.9
+            if agent.get("last_activity") == activity:
+                w += inertia_weight
+            if agent.get("last_action") == act:
+                w += inertia_weight * 0.6
+
+            # 需求驱动
+            if energy < 0.35 and any(k in act for k in ["休息", "放松", "回家", "睡", "午休"]):
+                w += (0.35 - energy) * 2.2 * energy_w
+            if hunger > 0.65 and any(k in act for k in ["吃", "买菜", "做饭", "餐", "饭"]):
+                w += (hunger - 0.65) * 2.2 * hunger_w
+            if social_need > 0.65 and any(k in act for k in ["聊天", "联系", "社交", "聚会", "拜访"]):
+                w += (social_need - 0.65) * 2.2 * social_w
+            if social_need < 0.25 and any(k in act for k in ["独处", "安静", "放空"]):
+                w += (0.25 - social_need) * 1.8 * social_w
 
         weights.append(max(w, 0.01))  # 防止权重为 0
 
@@ -1506,9 +1564,23 @@ def infer_event_effect(agent, event_desc, event_type="event"):
 # =========================================================
 def get_social_context(agent, agents_by_id):
     neighbors = agent["social_neighbors"]
+    agent["_recent_social_partners"] = []
     if not neighbors:
         return "今天几乎没有与熟人互动。"
-    sampled = random.sample(neighbors, min(3, len(neighbors)))
+    k = min(3, len(neighbors))
+    if HUMAN_REALISM_ENABLED:
+        sampled = []
+        pool = list(neighbors)
+        for _ in range(k):
+            weights = [max(0.01, relationship_weight(agent, n)) for n in pool]
+            pick = random.choices(pool, weights=weights, k=1)[0]
+            sampled.append(pick)
+            pool = [n for n in pool if n != pick]
+            if not pool:
+                break
+    else:
+        sampled = random.sample(neighbors, k)
+    agent["_recent_social_partners"] = sampled
     names = [agents_by_id[n]["name"] for n in sampled]
     return "、".join(names) + "等熟人的近况对你产生影响。"
 
@@ -1532,10 +1604,12 @@ def planning(agent, perception_text):
         history_blocks = load_recent_log_blocks(agent["id"], max_blocks=2, max_chars=380)
         if history_blocks:
             history_hint = "\n---\n".join(history_blocks)
+    intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
     prompt = f"""
 你是{agent['name']}。
 你的感知是：{perception_text}
 你的近期经验：{memory_hint}
+你今天的行为意图：{intent_hint}
 你的近期历史片段：
 {history_hint}
 
@@ -1626,7 +1700,17 @@ def social_influence(agent, agents_by_id):
     neighbors = agent["social_neighbors"]
     if not neighbors:
         return
-    avg_emotion = sum(agents_by_id[n]["state"]["emotion"] for n in neighbors) / len(neighbors)
+    if HUMAN_REALISM_ENABLED:
+        weights = [max(0.01, relationship_weight(agent, n)) for n in neighbors]
+        total = sum(weights)
+        if total <= 0:
+            avg_emotion = sum(agents_by_id[n]["state"]["emotion"] for n in neighbors) / len(neighbors)
+        else:
+            avg_emotion = sum(
+                agents_by_id[n]["state"]["emotion"] * w for n, w in zip(neighbors, weights)
+            ) / total
+    else:
+        avg_emotion = sum(agents_by_id[n]["state"]["emotion"] for n in neighbors) / len(neighbors)
     agent["state"]["emotion"] += 0.1 * (avg_emotion - agent["state"]["emotion"])
 
 # =========================================================
@@ -1639,6 +1723,10 @@ def update_state(agent):
     s.setdefault("risk_preference", 0.5)
     s.setdefault("voice_propensity", 0.5)
     s.setdefault("mobility_intent", 0.5)
+    if HUMAN_REALISM_ENABLED:
+        s.setdefault("energy", 0.75)
+        s.setdefault("hunger", 0.25)
+        s.setdefault("social_need", 0.40)
 
     s["emotion"] += 0.05 * s["econ_security"] - 0.07 * s["stress"] + random.uniform(-0.02, 0.02)
     s["stress"] += 0.03 * (1 - s["econ_security"]) + random.uniform(-0.02, 0.03)
@@ -1649,6 +1737,10 @@ def update_state(agent):
     s["risk_preference"] += 0.02 * (s["emotion"] - s["stress"]) + random.uniform(-0.01, 0.01)
     s["voice_propensity"] += 0.02 * (s["city_identity"] - 0.5) + 0.01 * (s["emotion"] - 0.5) + random.uniform(-0.01, 0.01)
     s["mobility_intent"] += 0.03 * (s["stress"] - s["city_identity"]) + random.uniform(-0.01, 0.01)
+    if HUMAN_REALISM_ENABLED:
+        s["energy"] += random.uniform(-0.01, 0.01)
+        s["hunger"] += random.uniform(-0.01, 0.01)
+        s["social_need"] += random.uniform(-0.01, 0.01)
 
     for k in s:
         s[k] = float(np.clip(s[k], 0, 1))
@@ -1736,6 +1828,17 @@ def build_master_timeline(schedules, step_minutes=None):
         times.update(t for t, _ in sch)
     return sorted(times)
 
+def _enforce_memory_model_compat(sim_state):
+    if not REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE:
+        return
+    current_version = sim_state.get("memory_model_version")
+    if current_version != MEMORY_MODEL_VERSION:
+        raise RuntimeError(
+            "Memory model version changed. "
+            "Please run `python generative_city_sim.py reset` once, "
+            "then rerun simulation."
+        )
+
 def run_simulation():
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
@@ -1748,14 +1851,7 @@ def run_simulation():
     start_day = 1
     if STATEFUL:
         sim_state = load_sim_state()
-        if REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE:
-            current_version = sim_state.get("memory_model_version")
-            if current_version != MEMORY_MODEL_VERSION:
-                raise RuntimeError(
-                    "Memory model version changed. "
-                    "Please run `python generative_city_sim.py reset` once, "
-                    "then rerun simulation."
-                )
+        _enforce_memory_model_compat(sim_state)
         # Resume day count for persistent simulations.
         last_day = sim_state.get("last_day", 0)
         if isinstance(last_day, int) and last_day >= 0:
@@ -1764,10 +1860,32 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
             seed_vector_db_from_memory(agent)
+            if HUMAN_REALISM_ENABLED:
+                agent["episodes"] = load_agent_episodes(agent["id"])
+                agent["habits"] = load_agent_habits(agent["id"])
+                agent["intentions"] = load_agent_intentions(agent["id"])
+                agent["relationships"] = load_agent_relationships(agent["id"])
+                state = agent.setdefault("state", {})
+                state.setdefault("energy", 0.75)
+                state.setdefault("hunger", 0.25)
+                state.setdefault("social_need", 0.40)
+                agent.setdefault("last_activity", "")
+                agent.setdefault("last_action", "")
     else:
         for agent in agents:
             agent["memory"] = []
             reset_agent_memory(agent["id"])
+            if HUMAN_REALISM_ENABLED:
+                agent["episodes"] = []
+                agent["habits"] = {}
+                agent["intentions"] = {}
+                agent["relationships"] = {}
+                state = agent.setdefault("state", {})
+                state.setdefault("energy", 0.75)
+                state.setdefault("hunger", 0.25)
+                state.setdefault("social_need", 0.40)
+                agent.setdefault("last_activity", "")
+                agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
     state_metrics = list(agents[0]["state"].keys()) if agents else []
@@ -1795,6 +1913,18 @@ def run_simulation():
     social_net = build_social_network(agents)
     for a in agents:
         a["social_neighbors"] = social_net[a["id"]]
+        if HUMAN_REALISM_ENABLED:
+            rel = a.setdefault("relationships", {})
+            for n in a["social_neighbors"]:
+                key = str(n)
+                rel.setdefault(
+                    key,
+                    {
+                        "closeness": 0.5,
+                        "trust": 0.5,
+                        "last_interaction_day": 0,
+                    },
+                )
 
     for a in agents:
         if not a.get("locations"):
@@ -1860,10 +1990,34 @@ def run_simulation():
     for day in range(start_day, start_day + SIM_DAYS):
         print(f"\n================= Day {day} =================")
         daily_logs = defaultdict(str)
+        llm_budget_by_agent = {}
         daily_schedules = {}
         daily_routine_texts = {}
         daily_wake_times = {}
         daily_routine_logged = {}
+        if HUMAN_REALISM_ENABLED:
+            max_extra = int(
+                HUMAN_REALISM_CONFIG.get("llm", {}).get("max_extra_calls_per_agent_day", 2)
+            )
+            for agent in agents:
+                agent["current_day"] = day
+                budget = {"remaining": max(0, max_extra)}
+                llm_budget_by_agent[agent["id"]] = budget
+                episodes = sorted(
+                    agent.get("episodes", []),
+                    key=lambda x: float(x.get("decayed_salience", x.get("salience", 0.0))),
+                    reverse=True,
+                )
+                intentions = build_daily_intentions(
+                    agent,
+                    episodes,
+                    HUMAN_REALISM_CONFIG,
+                    budget,
+                )
+                intentions["day"] = day
+                agent["intentions"] = intentions
+                if STATEFUL:
+                    save_agent_intentions(agent["id"], intentions)
         for agent in agents:
             agent_id = agent["id"]
             daily_schedule = generate_daily_routine(agent, base_schedule_map[agent_id], day=day)
@@ -1986,6 +2140,7 @@ def run_simulation():
                 policy_desc = None
                 if policy:
                     policy_desc = policy.get("description") or policy.get("name")
+                state_before = dict(agent.get("state", {}))
                 step_ctx = {
                     "scheduled_activity": scheduled_activity,
                     "activity": scheduled_activity,
@@ -2056,9 +2211,13 @@ def run_simulation():
                     actions[agent_id],
                     context=f"{activity} {perc}",
                     location_bias=location_bias,
+                    location=location,
+                    time_str=time_str,
                 )
                 outcome = f"在【{activity}】中执行了【{act}】"
                 refl = reflection(agent, outcome)
+                if HUMAN_REALISM_ENABLED:
+                    update_needs(agent, time_str, activity)
 
                 if env_events:
                     for ev in env_events:
@@ -2073,6 +2232,76 @@ def run_simulation():
 
                 social_influence(agent, agents_by_id)
                 update_state(agent)
+                if HUMAN_REALISM_ENABLED:
+                    partners = list(agent.get("_recent_social_partners", []))
+                    signal = infer_interaction_signal(refl)
+                    for pid in partners:
+                        relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
+                    state_after = dict(agent.get("state", {}))
+                    delta = {}
+                    for key, before_v in state_before.items():
+                        after_v = state_after.get(key)
+                        if isinstance(before_v, (int, float)) and isinstance(after_v, (int, float)):
+                            delta[key] = float(after_v) - float(before_v)
+                    event_intensity = min(1.0, 0.2 * len(env_events) + (0.2 if policy else 0.0))
+                    recent_actions = [
+                        e.get("action", "")
+                        for e in agent.get("episodes", [])[-20:]
+                        if isinstance(e, dict)
+                    ]
+                    novelty = 1.0 if act not in recent_actions else 0.2
+                    priorities = agent.get("intentions", {}).get("priorities", [])
+                    goal_relevance = 0.2
+                    for p in priorities:
+                        if p and (p in activity or p in plan or p in refl):
+                            goal_relevance = 0.8
+                            break
+                    salience = compute_episode_salience(
+                        delta.get("stress", 0.0),
+                        event_intensity,
+                        novelty,
+                        goal_relevance,
+                    )
+                    tags = infer_episode_tags(
+                        activity,
+                        act,
+                        refl,
+                        env_events=[ev.get("description", ev.get("name", "")) for ev in env_events],
+                        policy_event=policy_desc if policy else "",
+                    )
+                    episode = {
+                        "episode_id": str(uuid.uuid4()),
+                        "day": day,
+                        "time": time_str,
+                        "scheduled_activity": scheduled_activity,
+                        "final_activity": activity,
+                        "action": act,
+                        "location": location,
+                        "env_events": [ev.get("description", ev.get("name", "")) for ev in env_events],
+                        "policy_event": policy_desc if policy else "",
+                        "social_partners": partners,
+                        "perception": perc,
+                        "plan": plan,
+                        "outcome": outcome,
+                        "reflection": refl,
+                        "state_before": state_before,
+                        "state_after": state_after,
+                        "delta": delta,
+                        "tags": tags,
+                        "salience": salience,
+                        "valence": float(np.clip(delta.get("emotion", 0.0), -1.0, 1.0)),
+                        "created_at_day": day,
+                    }
+                    agent.setdefault("episodes", []).append(episode)
+                    update_habits_from_episode(agent, episode, HUMAN_REALISM_CONFIG)
+                    append_agent_episode(agent_id, episode)
+                    episode_text = (
+                        f"Day {day} {time_str} {activity}/{act} @ {location} "
+                        f"tags={','.join(tags)} salience={salience:.2f} reflection={refl}"
+                    )
+                    vector_db_add_entry(agent_id, "episode", episode_text, sim_day=day, sim_time=time_str)
+                    agent["last_activity"] = activity
+                    agent["last_action"] = act
                 for metric in state_history[agent["id"]]:
                     state_history[agent["id"]][metric].append(agent["state"][metric])
 
@@ -2135,6 +2364,35 @@ Reflection: {refl}
             time.sleep(sleep_step)
 
         for agent in agents:
+            if HUMAN_REALISM_ENABLED:
+                agent_id = agent["id"]
+                budget = llm_budget_by_agent.get(agent_id, {"remaining": 0})
+                day_eps = [
+                    ep for ep in agent.get("episodes", [])
+                    if int(ep.get("day", 0) or 0) == day
+                ]
+                consolidated = consolidate_day(
+                    agent,
+                    day,
+                    day_eps,
+                    HUMAN_REALISM_CONFIG,
+                    budget,
+                )
+                agent["intentions"] = consolidated.get("intentions", agent.get("intentions", {}))
+                if STATEFUL:
+                    save_agent_intentions(agent_id, agent.get("intentions", {}))
+                    save_agent_habits(agent_id, agent.get("habits", {}))
+                    save_agent_relationships(agent_id, agent.get("relationships", {}))
+                    mem_cfg = dict(HUMAN_REALISM_CONFIG.get("memory", {}))
+                    mem_cfg["current_day"] = day
+                    prune_and_decay_episodes(agent_id, mem_cfg)
+                    agent["episodes"] = load_agent_episodes(agent_id)
+                memory_text = consolidated.get("memory_text", "").strip()
+                if memory_text:
+                    agent["memory"].append(memory_text)
+                    save_agent_memory(agent)
+                    vector_db_add_entry(agent_id, "memory", memory_text, sim_day=day, sim_time="consolidation")
+                    print(f"🧩 {agent['name']} 的经验整合：{memory_text}")
             mem = daily_summary(agent, daily_logs[agent["id"]], day=day)
             print(f"🧠 {agent['name']} 的今日长期记忆：{mem}")
         hook_bus.emit(

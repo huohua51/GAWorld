@@ -115,6 +115,28 @@ CONFIG = {
         "max_chars": 2000,
         "user_agent": "GAWorld/1.0",
     },
+    # Human realism (experience accumulation + habit/need dynamics)
+    "human_realism": {
+        "enabled": True,
+        "llm": {
+            "max_extra_calls_per_agent_day": 2,
+        },
+        "memory": {
+            "max_episodes_per_agent": 2000,
+            "daily_consolidation_top_k": 12,
+            "salience_threshold": 0.35,
+            "decay_half_life_days": 14,
+        },
+        "behavior": {
+            "habit_learning_rate": 0.08,
+            "inertia_weight": 0.25,
+            "need_weights": {
+                "energy": 0.45,
+                "hunger": 0.30,
+                "social_need": 0.25,
+            },
+        },
+    },
     # Optional extension hooks for custom functions.
     # Each item uses "module:function" import path.
     "extensions": {
