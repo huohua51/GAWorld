@@ -102,6 +102,8 @@ All runtime settings live in `config.py`.
 - `stateful`: if true, preserves memory and schedules across runs.
 - `memory_dir`: JSON memory/schedule/action/locations per agent.
 - `log_dir`: per-agent logs.
+- `memory_model_version`: memory schema version marker used for compatibility checks.
+- `require_clean_reset_on_memory_model_change`: if true, simulator blocks run until `reset` is executed after a version change.
 - `vector_db_path`: sqlite vector store for memory + logs (with `vector_db_dim`, `vector_db_top_k`, `vector_db_max_chars`).
 
 ### Policy events

@@ -296,6 +296,10 @@ def reset_simulation():
     for output_dir in ["output/state", "output/network"]:
         if output_dir not in (memory_dir, log_dir):
             _clear_dir(output_dir)
+    save_sim_state({
+        "last_day": 0,
+        "memory_model_version": MEMORY_MODEL_VERSION,
+    })
 
 def visualize_social_network(
     agents,
@@ -442,6 +446,10 @@ STATEFUL = CONFIG["stateful"]
 MAP_PATH = CONFIG.get("map_path", "citymap.md")
 PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
 BACKGROUND = CONFIG.get("background", "")
+MEMORY_MODEL_VERSION = int(CONFIG.get("memory_model_version", 1))
+REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE = bool(
+    CONFIG.get("require_clean_reset_on_memory_model_change", False)
+)
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
 ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
 ROUTINE_CHANGE_ENABLED = bool(ROUTINE_CHANGE_CONFIG.get("enabled", True))
@@ -1739,8 +1747,16 @@ def run_simulation():
         print_agent_profiles([a["id"] for a in agents])
     start_day = 1
     if STATEFUL:
-        # Resume day count for persistent simulations.
         sim_state = load_sim_state()
+        if REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE:
+            current_version = sim_state.get("memory_model_version")
+            if current_version != MEMORY_MODEL_VERSION:
+                raise RuntimeError(
+                    "Memory model version changed. "
+                    "Please run `python generative_city_sim.py reset` once, "
+                    "then rerun simulation."
+                )
+        # Resume day count for persistent simulations.
         last_day = sim_state.get("last_day", 0)
         if isinstance(last_day, int) and last_day >= 0:
             start_day = last_day + 1
@@ -2136,7 +2152,10 @@ Reflection: {refl}
             extension_state=extension_state,
         )
         if STATEFUL:
-            save_sim_state({"last_day": day})
+            save_sim_state({
+                "last_day": day,
+                "memory_model_version": MEMORY_MODEL_VERSION,
+            })
 
     print("\n✅ 模拟完成")
     hook_bus.emit(

@@ -57,6 +57,10 @@ CONFIG = {
     "stateful": True,
     "memory_dir": "output/memory",
     "log_dir": "output/logs",
+    # Memory model compatibility gate.
+    # When version changes and stateful mode is enabled, run `reset` once.
+    "memory_model_version": 2,
+    "require_clean_reset_on_memory_model_change": True,
     # Vector DB (memory + logs)
     "vector_db_path": "output/memory/vector_db.sqlite",
     "vector_db_dim": 256,
