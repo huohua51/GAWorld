@@ -1,19 +1,19 @@
 {
   "morning|home|起床、洗漱": {
     "action_counts": {
-      "继续当前活动": 11
+      "继续当前活动": 12
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.6403263599028326,
-    "last_updated_day": 16
+    "strength": 0.669100251110606,
+    "last_updated_day": 17
   },
   "morning|home|查阅演出信息、社交媒体": {
     "action_counts": {
-      "继续当前活动": 14
+      "继续当前活动": 15
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.719926452540017,
-    "last_updated_day": 16
+    "strength": 0.7423323363368156,
+    "last_updated_day": 17
   },
   "morning|home|排练舞台剧": {
     "action_counts": {
@@ -22,19 +22,20 @@
       "用手势和表情表达情感，增强舞台表现力": 1,
       "反复练习高难度的动作": 1,
       "配合其他演员，进行互动": 1,
-      "进行角色分析，深入理解角色的内心世界": 1
+      "进行角色分析，深入理解角色的内心世界": 1,
+      "在舞台上走动，熟悉场地和路线": 1
     },
     "preferred_action": "用手势和表情表达情感",
-    "strength": 0.26381917921476605,
-    "last_updated_day": 15
+    "strength": 0.2532664120461754,
+    "last_updated_day": 17
   },
   "afternoon|home|午餐、与剧组讨论": {
     "action_counts": {
-      "继续当前活动": 15
+      "继续当前活动": 16
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.7423323363368156,
-    "last_updated_day": 16
+    "strength": 0.7629457494298704,
+    "last_updated_day": 17
   },
   "afternoon|public|唱歌练习": {
     "action_counts": {
@@ -61,11 +62,11 @@
   },
   "evening|home|准备睡觉": {
     "action_counts": {
-      "睡觉": 13
+      "睡觉": 14
     },
     "preferred_action": "睡觉",
-    "strength": 0.6955722310217576,
-    "last_updated_day": 16
+    "strength": 0.719926452540017,
+    "last_updated_day": 17
   },
   "evening|public|睡觉": {
     "action_counts": {
@@ -98,7 +99,7 @@
       "调整音准，注意节奏": 1,
       "调整音准，注意节奏和气息的控制": 1,
       "录制练习片段，自我评估": 1,
-      "用手机app辅助练习，检查音高和节奏": 1,
+      "用手机app辅助练习，检查音高和节奏": 2,
       "反复练习高音部分，挑战音域": 1,
       "对着镜子练习表情控制，配合歌曲情感": 1,
       "在空旷的地方大声歌唱，释放激情": 3,
@@ -108,8 +109,8 @@
       "热身，进行 vocal warm-up，舒展嗓音": 1
     },
     "preferred_action": "在空旷的地方大声歌唱，释放激情",
-    "strength": 0.22881084193320145,
-    "last_updated_day": 16
+    "strength": 0.21965840825587338,
+    "last_updated_day": 17
   },
   "night|home|睡觉": {
     "action_counts": {
@@ -121,11 +122,11 @@
   },
   "night|public|睡觉": {
     "action_counts": {
-      "睡觉": 4
+      "睡觉": 5
     },
     "preferred_action": "睡觉",
-    "strength": 0.355246336,
-    "last_updated_day": 16
+    "strength": 0.40682662912,
+    "last_updated_day": 17
   },
   "morning|public|排练舞台剧": {
     "action_counts": {
@@ -163,11 +164,12 @@
       "关注论坛话题，参与互动": 1,
       "与他人交流，分享经验": 1,
       "关注论坛话题，参与互动讨论": 1,
-      "偶尔会激动地挥手示意，表达热情": 1
+      "偶尔会激动地挥手示意，表达热情": 1,
+      "在论坛后拍照留念，方便日后回顾": 1
     },
     "preferred_action": "与感兴趣的人交换联系方式",
-    "strength": 0.12924896623460352,
-    "last_updated_day": 16
+    "strength": 0.12407900758521938,
+    "last_updated_day": 17
   },
   "morning|work|排练舞台剧": {
     "action_counts": {
