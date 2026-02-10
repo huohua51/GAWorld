@@ -113,6 +113,7 @@ CONFIG = {
         "max_reads_per_day": 5,
         "timeout": 8,
         "max_chars": 2000,
+        "memory_excerpt_chars": 600,
         "user_agent": "GAWorld/1.0",
     },
     # Human realism (experience accumulation + habit/need dynamics)

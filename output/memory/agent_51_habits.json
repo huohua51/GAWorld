@@ -1,0 +1,204 @@
+{
+  "morning|home|起床、洗漱": {
+    "action_counts": {
+      "继续当前活动": 11
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.6403263599028326,
+    "last_updated_day": 16
+  },
+  "morning|home|查阅演出信息、社交媒体": {
+    "action_counts": {
+      "继续当前活动": 14
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.719926452540017,
+    "last_updated_day": 16
+  },
+  "morning|home|排练舞台剧": {
+    "action_counts": {
+      "按照导演指示，调整动作": 1,
+      "用手势和表情表达情感": 3,
+      "用手势和表情表达情感，增强舞台表现力": 1,
+      "反复练习高难度的动作": 1,
+      "配合其他演员，进行互动": 1,
+      "进行角色分析，深入理解角色的内心世界": 1
+    },
+    "preferred_action": "用手势和表情表达情感",
+    "strength": 0.26381917921476605,
+    "last_updated_day": 15
+  },
+  "afternoon|home|午餐、与剧组讨论": {
+    "action_counts": {
+      "继续当前活动": 15
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.7423323363368156,
+    "last_updated_day": 16
+  },
+  "afternoon|public|唱歌练习": {
+    "action_counts": {
+      "对着镜子练习表情控制": 1,
+      "用歌词和音乐表达情感": 1
+    },
+    "preferred_action": "对着镜子练习表情控制",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 12
+  },
+  "evening|home|参加艺术论坛讨论": {
+    "action_counts": {
+      "认真聆听，记录关键观点和细节": 1,
+      "与他人交流，分享经验": 2,
+      "用社交媒体分享论坛内容": 1,
+      "认真聆听，记录要点": 1,
+      "用充满激情的声音发言": 1,
+      "在论坛后拍照留念": 1,
+      "用手机记录精彩瞬间，分享到社交媒体": 1
+    },
+    "preferred_action": "与他人交流，分享经验",
+    "strength": 0.197591592641495,
+    "last_updated_day": 15
+  },
+  "evening|home|准备睡觉": {
+    "action_counts": {
+      "睡觉": 13
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.6955722310217576,
+    "last_updated_day": 16
+  },
+  "evening|public|睡觉": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "morning|public|起床、洗漱": {
+    "action_counts": {
+      "继续当前活动": 5
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.40682662912,
+    "last_updated_day": 13
+  },
+  "afternoon|home|排练舞台剧": {
+    "action_counts": {
+      "在排练间隙，补充水分，保持体力": 2,
+      "在舞台上走动，熟悉场地": 1
+    },
+    "preferred_action": "在排练间隙，补充水分，保持体力",
+    "strength": 0.2287104,
+    "last_updated_day": 14
+  },
+  "afternoon|home|唱歌练习": {
+    "action_counts": {
+      "反复练习高音部分": 1,
+      "调整音准，注意节奏": 1,
+      "调整音准，注意节奏和气息的控制": 1,
+      "录制练习片段，自我评估": 1,
+      "用手机app辅助练习，检查音高和节奏": 1,
+      "反复练习高音部分，挑战音域": 1,
+      "对着镜子练习表情控制，配合歌曲情感": 1,
+      "在空旷的地方大声歌唱，释放激情": 3,
+      "用歌词和音乐表达情感": 1,
+      "模仿喜欢的歌手，学习技巧": 1,
+      "在空旷的地方大声歌唱": 1,
+      "热身，进行 vocal warm-up，舒展嗓音": 1
+    },
+    "preferred_action": "在空旷的地方大声歌唱，释放激情",
+    "strength": 0.22881084193320145,
+    "last_updated_day": 16
+  },
+  "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 8
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.5381030141761945,
+    "last_updated_day": 15
+  },
+  "night|public|睡觉": {
+    "action_counts": {
+      "睡觉": 4
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.355246336,
+    "last_updated_day": 16
+  },
+  "morning|public|排练舞台剧": {
+    "action_counts": {
+      "配合其他演员，进行互动": 1,
+      "按照导演指示，调整动作": 1,
+      "反复练习台词，注意语调": 1,
+      "进行即兴表演，锻炼反应": 1
+    },
+    "preferred_action": "配合其他演员，进行互动",
+    "strength": 0.15217459200000003,
+    "last_updated_day": 16
+  },
+  "evening|public|准备睡觉": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 5
+  },
+  "morning|public|查阅演出信息、社交媒体": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 9
+  },
+  "evening|public|参加艺术论坛讨论": {
+    "action_counts": {
+      "与感兴趣的人交换联系方式": 1,
+      "积极提问，表达对艺术的看法": 1,
+      "用社交媒体分享论坛内容": 1,
+      "用手机记录精彩瞬间，分享到社交媒体": 1,
+      "关注论坛话题，参与互动": 1,
+      "与他人交流，分享经验": 1,
+      "关注论坛话题，参与互动讨论": 1,
+      "偶尔会激动地挥手示意，表达热情": 1
+    },
+    "preferred_action": "与感兴趣的人交换联系方式",
+    "strength": 0.12924896623460352,
+    "last_updated_day": 16
+  },
+  "morning|work|排练舞台剧": {
+    "action_counts": {
+      "与剧组沟通，解决问题": 1
+    },
+    "preferred_action": "与剧组沟通，解决问题",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 7
+  },
+  "evening|work|准备睡觉": {
+    "action_counts": {
+      "睡觉": 2
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.23824,
+    "last_updated_day": 14
+  },
+  "evening|home|睡觉": {
+    "action_counts": {
+      "睡觉": 3
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.2991808,
+    "last_updated_day": 11
+  },
+  "afternoon|public|午餐、与剧组讨论": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 14
+  }
+}

@@ -12,6 +12,7 @@ import shutil
 import matplotlib.pyplot as plt
 import networkx as nx
 from html import unescape
+from urllib.parse import urlparse
 
 from config import CONFIG
 from extensibility import HookBus
@@ -135,6 +136,83 @@ def _extract_title(text):
     title = _strip_html(match.group(1))
     return re.sub(r"\\s+", " ", title).strip()
 
+def _normalize_text(text):
+    if not text:
+        return ""
+    text = unescape(text)
+    text = re.sub(r"\u00a0", " ", text)
+    text = re.sub(r"\\s+", " ", text)
+    return text.strip()
+
+def _extract_ld_json_article_body(text):
+    if not text:
+        return ""
+    scripts = re.findall(
+        r'(?is)<script[^>]*type=["\']application/ld\\+json["\'][^>]*>(.*?)</script>',
+        text,
+    )
+    for block in scripts:
+        candidate = block.strip()
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        nodes = payload if isinstance(payload, list) else [payload]
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            article_body = node.get("articleBody")
+            if isinstance(article_body, str) and len(article_body.strip()) > 80:
+                return _normalize_text(article_body)
+    return ""
+
+def _extract_article_like_block(text):
+    if not text:
+        return ""
+    candidate_patterns = [
+        r"(?is)<article[^>]*>(.*?)</article>",
+        r"(?is)<main[^>]*>(.*?)</main>",
+        r'(?is)<div[^>]+(?:id|class)=["\'][^"\']*(?:article|content|story|post|entry|news|正文)[^"\']*["\'][^>]*>(.*?)</div>',
+    ]
+    for pattern in candidate_patterns:
+        blocks = re.findall(pattern, text)
+        for block in blocks:
+            paragraphs = re.findall(r"(?is)<p[^>]*>(.*?)</p>", block)
+            parts = [_normalize_text(_strip_html(p)) for p in paragraphs]
+            parts = [p for p in parts if len(p) >= 25]
+            joined = "\n".join(parts)
+            if len(joined) >= 180:
+                return joined
+    return ""
+
+def _extract_paragraph_fallback(text):
+    if not text:
+        return ""
+    paragraphs = re.findall(r"(?is)<p[^>]*>(.*?)</p>", text)
+    cleaned = []
+    blacklist = ("copyright", "subscribe", "登录", "注册", "隐私", "cookie", "版权所有")
+    for p in paragraphs:
+        line = _normalize_text(_strip_html(p))
+        lower = line.lower()
+        if len(line) < 25:
+            continue
+        if any(b in lower for b in blacklist):
+            continue
+        cleaned.append(line)
+    if not cleaned:
+        return ""
+    return "\n".join(cleaned[:16])
+
+def _extract_news_main_content(html_text):
+    # Prefer structured article content, then paragraph extraction, and finally full-page text.
+    for extractor in (_extract_ld_json_article_body, _extract_article_like_block, _extract_paragraph_fallback):
+        content = extractor(html_text)
+        if content and len(content) >= 120:
+            return content
+    return _strip_html(html_text)
+
 def load_news_sources(path):
     if not path or not os.path.exists(path):
         return []
@@ -207,7 +285,7 @@ def fetch_news_excerpt(
     title = ""
     if "text/html" in content_type or "<html" in raw_text.lower():
         title = _extract_title(raw_text)
-        cleaned = _strip_html(raw_text)
+        cleaned = _extract_news_main_content(raw_text)
     else:
         cleaned = re.sub(r"\\s+", " ", raw_text).strip()
     if max_chars and len(cleaned) > max_chars:
@@ -258,6 +336,120 @@ def update_news_cache(path, sources, config=None):
         return existing
     return items
 
+def _extract_interest_keywords(agent, max_items=24):
+    profile_fields = [
+        "job",
+        "personality",
+        "daily_life",
+        "values",
+        "work_style",
+        "living",
+        "residence",
+    ]
+    seed_text = " ".join(str(agent.get(k, "")) for k in profile_fields)
+    tokens = re.findall(r"[A-Za-z]{3,}|[\u4e00-\u9fff]{2,8}", seed_text)
+    stopwords = {
+        "自己", "一些", "这种", "这个", "那个", "他们", "我们", "你们",
+        "以及", "对于", "非常", "比较", "可以", "因为", "所以", "但是",
+        "工作", "生活", "习惯", "日常", "态度", "价值观", "情绪", "性格",
+        "城市", "社会", "公共", "事务", "时候", "进行", "觉得", "喜欢",
+        "about", "into", "with", "from", "that", "this", "have", "their",
+    }
+    counts = defaultdict(int)
+    for raw in tokens:
+        token = raw.lower().strip()
+        if len(token) < 2 or token in stopwords:
+            continue
+        counts[token] += 1
+    ranked = sorted(counts.items(), key=lambda x: (-x[1], -len(x[0]), x[0]))
+    return [k for k, _ in ranked[:max_items]]
+
+def _score_news_relevance(url, title, excerpt, interests):
+    if not interests:
+        return 0.0, []
+    domain = urlparse(url).netloc.lower() if url else ""
+    haystack = " ".join(
+        [
+            str(url or "").lower(),
+            str(domain or "").lower(),
+            str(title or "").lower(),
+            str(excerpt or "").lower(),
+        ]
+    )
+    if not haystack.strip():
+        return 0.0, []
+    matched = []
+    score = 0.0
+    for kw in interests:
+        if kw and kw in haystack:
+            matched.append(kw)
+            score += 1.0 + min(len(kw), 10) * 0.05
+    return score, matched[:8]
+
+def choose_news_for_agent(
+    agent,
+    news_cache,
+    news_sources,
+    use_cache_first=True,
+    seen_urls=None,
+):
+    seen_urls = seen_urls or set()
+    interests = _extract_interest_keywords(agent)
+
+    def _pick_best_from_cache(items):
+        ranked = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url", "")).strip()
+            if not url or url in seen_urls:
+                continue
+            title = str(item.get("title", "")).strip()
+            text = str(item.get("text", "")).strip()
+            score, matched = _score_news_relevance(url, title, text, interests)
+            ranked.append((score + random.random() * 0.05, matched, item))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        top_n = ranked[: min(3, len(ranked))]
+        chosen = random.choice(top_n)
+        return chosen[2], chosen[0], chosen[1]
+
+    if use_cache_first and news_cache:
+        picked = _pick_best_from_cache(news_cache)
+        if picked:
+            item, score, matched = picked
+            return (
+                item.get("url", ""),
+                item.get("text", ""),
+                item.get("title", ""),
+                score,
+                matched,
+            )
+
+    candidate_sources = [u for u in news_sources if u and u not in seen_urls]
+    if candidate_sources:
+        source_ranked = []
+        for source_url in candidate_sources:
+            score, matched = _score_news_relevance(source_url, "", "", interests)
+            source_ranked.append((score + random.random() * 0.05, matched, source_url))
+        source_ranked.sort(key=lambda x: x[0], reverse=True)
+        best_score, best_matched, best_url = source_ranked[0]
+        return best_url, "", "", best_score, best_matched
+
+    if news_cache:
+        picked = _pick_best_from_cache(news_cache)
+        if picked:
+            item, score, matched = picked
+            return (
+                item.get("url", ""),
+                item.get("text", ""),
+                item.get("title", ""),
+                score,
+                matched,
+            )
+    return "", "", "", 0.0, []
+
 def read_news_and_store(agent, source_url, day=None, time_str=None, config=None, excerpt=None, title=None):
     config = config or {}
     if not excerpt:
@@ -292,7 +484,16 @@ def read_news_and_store(agent, source_url, day=None, time_str=None, config=None,
         return None, None
     stamp = f"Day {day} {time_str}" if day and time_str else "NewsRead"
     title_text = f" 标题：{title}" if title else ""
-    memory_entry = f"[{stamp}] 来源：{source_url}{title_text} 反应：{response}"
+    memory_excerpt_chars = int(config.get("memory_excerpt_chars", 600))
+    memory_excerpt = excerpt.strip()
+    if memory_excerpt_chars > 0 and len(memory_excerpt) > memory_excerpt_chars:
+        memory_excerpt = memory_excerpt[:memory_excerpt_chars].rsplit(" ", 1)[0].strip() if " " in memory_excerpt else memory_excerpt[:memory_excerpt_chars]
+        memory_excerpt = f"{memory_excerpt}..."
+    memory_entry = (
+        f"[{stamp}] 来源：{source_url}{title_text}\n"
+        f"内容：{memory_excerpt}\n"
+        f"想法：{response}"
+    )
     agent["memory"].append(memory_entry)
     save_agent_memory(agent)
     vector_db_add_entry(agent["id"], "news", memory_entry, sim_day=day, sim_time=time_str or "news")
@@ -2043,6 +2244,7 @@ def run_simulation():
         timeline = build_master_timeline(daily_schedules, TIME_STEP_MINUTES)
         sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
         news_schedule = {}
+        daily_news_seen = defaultdict(set)
         if NEWS_ENABLED and news_sources and NEWS_MAX_READS_PER_DAY > 0 and timeline:
             for agent in agents:
                 if random.random() > NEWS_DAILY_CHANCE:
@@ -2110,16 +2312,15 @@ def run_simulation():
                     append_agent_log(agent, header + routine_text + "\n")
                     daily_routine_logged[agent_id] = True
                 if time_str in news_schedule.get(agent_id, set()):
-                    source_url = ""
-                    excerpt = ""
-                    title = ""
-                    if NEWS_USE_CACHE_FIRST and news_cache:
-                        item = random.choice(news_cache)
-                        source_url = item.get("url", "")
-                        excerpt = item.get("text", "")
-                        title = item.get("title", "")
-                    else:
-                        source_url = random.choice(news_sources)
+                    source_url, excerpt, title, relevance_score, matched_interests = choose_news_for_agent(
+                        agent,
+                        news_cache,
+                        news_sources,
+                        use_cache_first=NEWS_USE_CACHE_FIRST,
+                        seen_urls=daily_news_seen[agent_id],
+                    )
+                    if not source_url:
+                        continue
                     _, news_log = read_news_and_store(
                         agent,
                         source_url,
@@ -2129,7 +2330,11 @@ def run_simulation():
                         excerpt=excerpt,
                         title=title,
                     )
+                    daily_news_seen[agent_id].add(source_url)
                     if news_log:
+                        if matched_interests:
+                            news_log += f"MatchedInterests: {', '.join(matched_interests)}\n"
+                        news_log += f"RelevanceScore: {relevance_score:.2f}\n"
                         print(news_log)
                         daily_logs[agent_id] += news_log
                         append_agent_log(agent, news_log)

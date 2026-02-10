@@ -4,31 +4,31 @@
     "activity": "起床、洗漱"
   },
   {
-    "time": "10:00",
+    "time": "09:30",
+    "activity": "查阅演出信息、社交媒体"
+  },
+  {
+    "time": "10:30",
     "activity": "排练舞台剧"
   },
   {
     "time": "13:00",
-    "activity": "午餐、与剧组讨论剧情"
+    "activity": "午餐、与剧组讨论"
   },
   {
     "time": "15:00",
-    "activity": "参加戏剧工作坊"
+    "activity": "唱歌练习"
   },
   {
     "time": "18:00",
-    "activity": "社交媒体互动、回复粉丝"
+    "activity": "参加艺术论坛讨论"
   },
   {
-    "time": "20:00",
-    "activity": "晚餐、观看艺术纪录片"
+    "time": "21:00",
+    "activity": "准备睡觉"
   },
   {
-    "time": "23:00",
-    "activity": "睡前阅读、放松身心"
-  },
-  {
-    "time": "00:00",
+    "time": "22:00",
     "activity": "睡觉"
   }
 ]
