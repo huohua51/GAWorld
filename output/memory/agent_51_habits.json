@@ -1,11 +1,11 @@
 {
   "morning|home|起床、洗漱": {
     "action_counts": {
-      "继续当前活动": 1
+      "继续当前活动": 3
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 1
+    "strength": 0.2991808,
+    "last_updated_day": 3
   },
   "morning|public|练习歌唱": {
     "action_counts": {
@@ -17,50 +17,79 @@
   },
   "morning|home|排练舞台剧": {
     "action_counts": {
-      "反复练习台词，力求完美。": 1
+      "反复练习台词，力求完美。": 1,
+      "与演员进行眼神交流，传递情感。": 1,
+      "在排练间隙，会快速补充水分。": 1
     },
     "preferred_action": "反复练习台词，力求完美。",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 1
+    "strength": 0.15851520000000002,
+    "last_updated_day": 3
   },
   "afternoon|home|午餐、与剧组讨论": {
     "action_counts": {
-      "继续当前活动": 1
+      "继续当前活动": 3
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 1
+    "strength": 0.2991808,
+    "last_updated_day": 3
   },
   "afternoon|home|参加文化论坛讨论": {
     "action_counts": {
-      "在讨论后，会进一步思考相关问题。": 1
+      "在讨论后，会进一步思考相关问题。": 1,
+      "用手机记录论坛讨论的关键信息。": 1,
+      "积极举手提问，表达观点。": 1
     },
     "preferred_action": "在讨论后，会进一步思考相关问题。",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 1
+    "strength": 0.15851520000000002,
+    "last_updated_day": 3
   },
   "evening|home|晚餐、与朋友聚会": {
     "action_counts": {
-      "继续当前活动": 1
+      "继续当前活动": 3
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 1
+    "strength": 0.2991808,
+    "last_updated_day": 3
   },
   "evening|home|睡前阅读": {
     "action_counts": {
-      "睡觉": 1
+      "睡觉": 2
     },
     "preferred_action": "睡觉",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 1
+    "strength": 0.23824,
+    "last_updated_day": 3
   },
   "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 2
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.23824,
+    "last_updated_day": 2
+  },
+  "morning|home|练习歌唱": {
+    "action_counts": {
+      "充满激情地演唱歌曲。": 1,
+      "根据自己的感觉，调整音调和节奏。": 1
+    },
+    "preferred_action": "充满激情地演唱歌曲。",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 3
+  },
+  "night|home|睡前阅读": {
     "action_counts": {
       "睡觉": 1
     },
     "preferred_action": "睡觉",
     "strength": 0.17200000000000001,
-    "last_updated_day": 1
+    "last_updated_day": 2
+  },
+  "night|public|睡觉": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
   }
 }

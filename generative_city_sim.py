@@ -1185,6 +1185,9 @@ INFO_SEEK_CONFIG = NEWS_CONFIG.get("info_seek", NEWS_CONFIG.get("curiosity_searc
 INFO_SEEK_ENABLED = bool(INFO_SEEK_CONFIG.get("enabled", True))
 INFO_SEEK_BASE_CHANCE = float(INFO_SEEK_CONFIG.get("base_daily_chance", 0.55))
 INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_CONFIG.get("max_searches_per_day", 3)))
+DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
+DAILY_PLAN_ANCHOR_MINUTES = max(1, int(DAILY_PLANNING_CONFIG.get("anchor_minutes", 30)))
+DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES = max(0, int(DAILY_PLANNING_CONFIG.get("random_delay_max_minutes", 10)))
 
 # =========================================================
 # 政策事件
@@ -1708,6 +1711,38 @@ def _is_strictly_increasing_times(schedule):
         minutes.append(m)
     return all(a < b for a, b in zip(minutes, minutes[1:]))
 
+def _round_to_anchor(minutes, anchor_step=30):
+    step = max(1, int(anchor_step))
+    return int(round(minutes / step) * step)
+
+def _align_daily_planning_start_time(schedule, anchor_step=30, max_delay=10, min_gap=20):
+    if not schedule:
+        return []
+    minute_points = [_time_str_to_minutes(t) for t, _ in schedule]
+    if any(m is None for m in minute_points):
+        return list(schedule)
+
+    start_idx = 0
+    for idx, (_, activity) in enumerate(schedule):
+        if not is_sleep_activity(activity):
+            start_idx = idx
+            break
+
+    anchor = _round_to_anchor(minute_points[start_idx], anchor_step=anchor_step)
+    target = min(23 * 60 + 59, anchor + random.randint(0, max(0, int(max_delay))))
+
+    lower_bound = 0
+    if start_idx > 0:
+        lower_bound = minute_points[start_idx - 1] + max(1, int(min_gap))
+    upper_bound = 23 * 60 + 59
+    if start_idx + 1 < len(minute_points):
+        upper_bound = minute_points[start_idx + 1] - max(1, int(min_gap))
+
+    if upper_bound < lower_bound:
+        return list(schedule)
+    minute_points[start_idx] = max(lower_bound, min(target, upper_bound))
+    return [(_minutes_to_time_str(m), act) for m, (_, act) in zip(minute_points, schedule)]
+
 def _jitter_schedule_times(base_schedule, max_shift=45, min_gap=20):
     if not base_schedule:
         return []
@@ -1791,9 +1826,19 @@ def generate_daily_routine(agent, base_schedule, day=None):
     if normalized:
         if _schedule_times(normalized) == _schedule_times(base_schedule):
             normalized = _jitter_schedule_times(base_schedule)
-        return ensure_sleep_in_schedule(agent, normalized)
+        normalized = ensure_sleep_in_schedule(agent, normalized)
+        return _align_daily_planning_start_time(
+            normalized,
+            anchor_step=DAILY_PLAN_ANCHOR_MINUTES,
+            max_delay=DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES,
+        )
     jittered = _jitter_schedule_times(base_schedule)
-    return ensure_sleep_in_schedule(agent, jittered)
+    jittered = ensure_sleep_in_schedule(agent, jittered)
+    return _align_daily_planning_start_time(
+        jittered,
+        anchor_step=DAILY_PLAN_ANCHOR_MINUTES,
+        max_delay=DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES,
+    )
 
 def generate_schedule(agent):
     profile_text = "\n".join([
