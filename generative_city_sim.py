@@ -12,7 +12,7 @@ import shutil
 import matplotlib.pyplot as plt
 import networkx as nx
 from html import unescape
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
 from extensibility import HookBus
@@ -450,6 +450,495 @@ def choose_news_for_agent(
             )
     return "", "", "", 0.0, []
 
+def _domain_from_url(url):
+    domain = urlparse(str(url or "")).netloc.lower().strip()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain
+
+def _build_agent_preferred_sites(agent, news_sources=None, news_cache=None, max_sites=6):
+    news_sources = news_sources or []
+    news_cache = news_cache or []
+    interests = _extract_interest_keywords(agent, max_items=18)
+    fallback_domains = [
+        "baidu.com",
+        "bing.com",
+        "google.com",
+        "thepaper.cn",
+        "news.qq.com",
+        "weibo.com",
+        "zhihu.com",
+    ]
+    domain_scores = defaultdict(float)
+    for url in news_sources:
+        domain = _domain_from_url(url)
+        if domain:
+            domain_scores[domain] += 0.6
+            score, _ = _score_news_relevance(url, "", "", interests)
+            domain_scores[domain] += score
+    for item in news_cache:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url", "")).strip()
+        title = str(item.get("title", "")).strip()
+        text = str(item.get("text", "")).strip()
+        domain = _domain_from_url(url)
+        if not domain:
+            continue
+        score, _ = _score_news_relevance(url, title, text, interests)
+        domain_scores[domain] += 0.5 + score
+    for domain in fallback_domains:
+        domain_scores[domain] += 0.2
+    ranked = sorted(domain_scores.items(), key=lambda x: (-x[1], x[0]))
+    return [domain for domain, _ in ranked[:max(1, int(max_sites))]]
+
+def _choose_info_target(
+    agent,
+    news_cache,
+    news_sources,
+    preferred_sites,
+    seen_urls=None,
+    used_queries=None,
+    config=None,
+):
+    config = config or {}
+    seen_urls = seen_urls or set()
+    used_queries = used_queries or set()
+    direct_visit_ratio = float(config.get("prefer_source_visit_ratio", 0.55))
+    interests = _extract_interest_keywords(agent)
+
+    preferred_cache = []
+    for item in news_cache or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url", "")).strip()
+        if not url or url in seen_urls:
+            continue
+        domain = _domain_from_url(url)
+        if preferred_sites and domain not in preferred_sites:
+            continue
+        title = str(item.get("title", "")).strip()
+        text = str(item.get("text", "")).strip()
+        score, matched = _score_news_relevance(url, title, text, interests)
+        preferred_cache.append((score + random.random() * 0.03, matched, url, title, text))
+    preferred_cache.sort(key=lambda x: x[0], reverse=True)
+
+    preferred_sources = []
+    for url in news_sources or []:
+        url = str(url).strip()
+        if not url or url in seen_urls:
+            continue
+        domain = _domain_from_url(url)
+        if preferred_sites and domain not in preferred_sites:
+            continue
+        score, matched = _score_news_relevance(url, "", "", interests)
+        preferred_sources.append((score + random.random() * 0.03, matched, url))
+    preferred_sources.sort(key=lambda x: x[0], reverse=True)
+
+    if random.random() < direct_visit_ratio and preferred_cache:
+        score, matched, url, title, text = preferred_cache[0]
+        return {
+            "mode": "direct_source",
+            "query": "",
+            "engine": "",
+            "url": url,
+            "title": title,
+            "content": text,
+            "score": score,
+            "matched": matched,
+        }
+    if random.random() < direct_visit_ratio and preferred_sources:
+        score, matched, url = preferred_sources[0]
+        text = fetch_news_excerpt(
+            url,
+            timeout=int(config.get("content_timeout", config.get("timeout", 8))),
+            max_chars=int(config.get("content_max_chars", 2000)),
+            user_agent=str(config.get("user_agent", "GAWorld/1.0")),
+        )
+        if text:
+            return {
+                "mode": "direct_source",
+                "query": "",
+                "engine": "",
+                "url": url,
+                "title": "",
+                "content": text,
+                "score": score,
+                "matched": matched,
+            }
+
+    query = _build_search_query(agent, used_queries=used_queries)
+    if preferred_sites and random.random() < 0.85:
+        query = f"{query} site:{random.choice(preferred_sites)}"
+    engine, results = web_search(query, config=config)
+    if not results:
+        return None
+
+    ranked = []
+    timeout = int(config.get("content_timeout", config.get("timeout", 8)))
+    max_chars = int(config.get("content_max_chars", 2000))
+    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
+    for item in results:
+        url = str(item.get("url", "")).strip()
+        if not url or url in seen_urls:
+            continue
+        title = str(item.get("title", "")).strip()
+        snippet = str(item.get("snippet", "")).strip()
+        excerpt = fetch_news_excerpt(url, timeout=timeout, max_chars=max_chars, user_agent=user_agent)
+        content = excerpt or snippet
+        if not content:
+            continue
+        score, matched = _score_news_relevance(url, title, content, interests)
+        if preferred_sites and _domain_from_url(url) in preferred_sites:
+            score += 0.9
+        ranked.append((score + random.random() * 0.03, matched, url, title, content))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    score, matched, url, title, content = ranked[0]
+    return {
+        "mode": "web_search",
+        "query": query,
+        "engine": engine,
+        "url": url,
+        "title": title,
+        "content": content,
+        "score": score,
+        "matched": matched,
+    }
+
+def info_seek_and_store(
+    agent,
+    day=None,
+    time_str=None,
+    news_cache=None,
+    news_sources=None,
+    preferred_sites=None,
+    seen_urls=None,
+    used_queries=None,
+    config=None,
+):
+    config = config or {}
+    target = _choose_info_target(
+        agent=agent,
+        news_cache=news_cache or [],
+        news_sources=news_sources or [],
+        preferred_sites=preferred_sites or [],
+        seen_urls=seen_urls or set(),
+        used_queries=used_queries or set(),
+        config=config,
+    )
+    if not target:
+        return None, None, "", ""
+
+    title = target.get("title", "")
+    url = target.get("url", "")
+    content = str(target.get("content", "")).strip()
+    if not url or not content:
+        return None, None, "", ""
+    mode = target.get("mode", "direct_source")
+    query = target.get("query", "")
+    engine = target.get("engine", "")
+
+    profile_text = "\\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    prompt = f"""
+你是{agent['name']}。
+角色资料：
+{profile_text}
+
+你本次的信息获取方式：{mode}
+检索词：{query or "N/A"}
+来源：{title or "N/A"} ({url})
+内容摘要：
+{content}
+
+请用1-2句写出你为何会关注这条信息，以及你的看法。
+"""
+    thought = call_llm(prompt, task="info_seek_reaction", agent_id=agent["id"]).strip()
+    if not thought:
+        thought = "这条信息符合我近期关注，我会继续观察。"
+
+    memory_excerpt_chars = int(config.get("memory_excerpt_chars", 700))
+    memory_excerpt = content
+    if memory_excerpt_chars > 0 and len(memory_excerpt) > memory_excerpt_chars:
+        memory_excerpt = memory_excerpt[:memory_excerpt_chars].rsplit(" ", 1)[0].strip() if " " in memory_excerpt else memory_excerpt[:memory_excerpt_chars]
+        memory_excerpt = f"{memory_excerpt}..."
+
+    stamp = f"Day {day} {time_str}" if day and time_str else "InfoSeek"
+    preferred_text = ", ".join(preferred_sites or []) if preferred_sites else "N/A"
+    memory_entry = (
+        f"[{stamp}] 信息获取：{mode}\n"
+        f"偏好站点：{preferred_text}\n"
+        f"检索词：{query or 'N/A'}\n"
+        f"来源：{title or 'N/A'} ({url})\n"
+        f"内容：{memory_excerpt}\n"
+        f"想法：{thought}"
+    )
+    agent["memory"].append(memory_entry)
+    save_agent_memory(agent)
+    vector_db_add_entry(agent["id"], "info_seek", memory_entry, sim_day=day, sim_time=time_str or "info_seek")
+
+    log = f"""
+[InfoSeek {agent['name']} @ {time_str}]
+Mode: {mode}
+Query: {query or "N/A"}
+Engine: {engine or "N/A"}
+PreferredSites: {preferred_text}
+Result: {title or "N/A"}
+URL: {url}
+MatchedInterests: {", ".join(target.get("matched", [])) if target.get("matched") else "N/A"}
+RelevanceScore: {float(target.get("score", 0.0)):.2f}
+"""
+    return memory_entry, log, url, query
+
+def _estimate_curiosity(agent):
+    state = agent.get("state", {})
+    platform_dependence = float(state.get("platform_dependence", 0.5))
+    risk_preference = float(state.get("risk_preference", 0.5))
+    text = " ".join(
+        str(agent.get(k, ""))
+        for k in ("personality", "daily_life", "values", "job")
+    )
+    boosts = {
+        "好奇": 0.25,
+        "探索": 0.20,
+        "新鲜": 0.12,
+        "学习": 0.10,
+        "研究": 0.10,
+        "科技": 0.08,
+        "关注": 0.06,
+        "trend": 0.06,
+        "research": 0.10,
+    }
+    dampens = {
+        "保守": 0.12,
+        "封闭": 0.15,
+        "排斥": 0.10,
+        "抗拒": 0.10,
+    }
+    score = 0.20 + 0.45 * platform_dependence + 0.20 * risk_preference
+    for key, value in boosts.items():
+        if key in text.lower() or key in text:
+            score += value
+    for key, value in dampens.items():
+        if key in text:
+            score -= value
+    return max(0.05, min(0.98, score))
+
+def _build_search_query(agent, used_queries=None):
+    used_queries = used_queries or set()
+    interests = _extract_interest_keywords(agent, max_items=16)
+    if not interests:
+        interests = ["本地新闻", "行业动态", "公共政策"]
+    name = agent.get("name", "该居民")
+    job = str(agent.get("job", "")).strip()
+    seeds = []
+    for kw in interests[:8]:
+        seeds.extend(
+            [
+                f"{kw} 最新消息",
+                f"{kw} 今日新闻",
+                f"{kw} 趋势",
+            ]
+        )
+        if job:
+            seeds.append(f"{job} {kw} 资讯")
+    random.shuffle(seeds)
+    for q in seeds:
+        if q not in used_queries:
+            return q
+    return f"{name} 关注话题 今日新闻"
+
+def _extract_google_results(html_text, max_results=5):
+    results = []
+    blocks = re.findall(r'(?is)<a[^>]+href="(/url\?q=[^"]+)"[^>]*>(.*?)</a>', html_text)
+    for href, anchor in blocks:
+        qs = parse_qs(urlparse(href).query)
+        raw_url = (qs.get("q") or [""])[0]
+        raw_url = unquote(raw_url).strip()
+        if not raw_url.startswith("http"):
+            continue
+        title = _normalize_text(_strip_html(anchor))
+        if len(title) < 6:
+            continue
+        results.append({"url": raw_url, "title": title, "snippet": ""})
+        if len(results) >= max_results:
+            break
+    return results
+
+def _extract_baidu_results(html_text, max_results=5):
+    results = []
+    blocks = re.findall(r'(?is)<h3[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>\s*</h3>', html_text)
+    for href, anchor in blocks:
+        url = unquote(href).strip()
+        if not url.startswith("http"):
+            continue
+        title = _normalize_text(_strip_html(anchor))
+        if len(title) < 4:
+            continue
+        results.append({"url": url, "title": title, "snippet": ""})
+        if len(results) >= max_results:
+            break
+    return results
+
+def _extract_bing_results(html_text, max_results=5):
+    results = []
+    blocks = re.findall(r'(?is)<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>.*?</li>', html_text)
+    for block in blocks:
+        link = re.search(r'(?is)<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>\s*</h2>', block)
+        if not link:
+            continue
+        url = unquote(link.group(1)).strip()
+        if not url.startswith("http"):
+            continue
+        title = _normalize_text(_strip_html(link.group(2)))
+        snippet_match = re.search(r'(?is)<p[^>]*>(.*?)</p>', block)
+        snippet = _normalize_text(_strip_html(snippet_match.group(1))) if snippet_match else ""
+        if len(title) < 4:
+            continue
+        results.append({"url": url, "title": title, "snippet": snippet})
+        if len(results) >= max_results:
+            break
+    return results
+
+def _extract_generic_results(html_text, max_results=5):
+    results = []
+    links = re.findall(r'(?is)<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', html_text)
+    for href, anchor in links:
+        title = _normalize_text(_strip_html(anchor))
+        if len(title) < 10:
+            continue
+        results.append({"url": unquote(href).strip(), "title": title, "snippet": ""})
+        if len(results) >= max_results:
+            break
+    return results
+
+def web_search(query, config=None):
+    config = config or {}
+    engines = config.get("engines", ["google", "baidu", "bing"])
+    timeout = int(config.get("timeout", 8))
+    max_results = int(config.get("max_results", 4))
+    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
+    search_urls = {
+        "google": f"https://www.google.com/search?q={quote_plus(query)}&hl=zh-CN",
+        "baidu": f"https://www.baidu.com/s?wd={quote_plus(query)}",
+        "bing": f"https://www.bing.com/search?q={quote_plus(query)}",
+    }
+    extractors = {
+        "google": _extract_google_results,
+        "baidu": _extract_baidu_results,
+        "bing": _extract_bing_results,
+    }
+    headers = {"User-Agent": user_agent}
+    for engine in engines:
+        search_url = search_urls.get(str(engine).lower())
+        if not search_url:
+            continue
+        try:
+            resp = requests.get(search_url, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            html_text = resp.text or ""
+        except requests.RequestException:
+            continue
+        extractor = extractors.get(str(engine).lower(), _extract_generic_results)
+        results = extractor(html_text, max_results=max_results)
+        if not results:
+            results = _extract_generic_results(html_text, max_results=max_results)
+        if results:
+            return engine, results
+    return "", []
+
+def search_web_and_store(agent, query, day=None, time_str=None, config=None, seen_urls=None):
+    config = config or {}
+    seen_urls = seen_urls or set()
+    engine, results = web_search(query, config=config)
+    if not results:
+        return None, None, ""
+    interests = _extract_interest_keywords(agent)
+    timeout = int(config.get("content_timeout", config.get("timeout", 8)))
+    max_chars = int(config.get("content_max_chars", 2000))
+    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
+
+    ranked = []
+    for item in results:
+        url = str(item.get("url", "")).strip()
+        if not url or url in seen_urls:
+            continue
+        title = str(item.get("title", "")).strip()
+        snippet = str(item.get("snippet", "")).strip()
+        excerpt = fetch_news_excerpt(
+            url,
+            timeout=timeout,
+            max_chars=max_chars,
+            user_agent=user_agent,
+        )
+        candidate_text = excerpt or snippet
+        if not candidate_text:
+            continue
+        score, matched = _score_news_relevance(url, title, candidate_text, interests)
+        ranked.append((score + random.random() * 0.03, matched, url, title, candidate_text))
+
+    if not ranked:
+        return None, None, ""
+
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    score, matched, url, title, content = ranked[0]
+    profile_text = "\\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    prompt = f"""
+你是{agent['name']}。
+角色资料：
+{profile_text}
+
+你主动搜索了：{query}
+搜索结果标题：{title}
+内容摘要：
+{content}
+
+请用1-2句写出你为何关注这个信息，以及你的看法。
+"""
+    thought = call_llm(prompt, task="web_search_reaction", agent_id=agent["id"]).strip()
+    if not thought:
+        thought = "这条信息与我关注的话题相关，我会继续跟进。"
+
+    memory_excerpt_chars = int(config.get("memory_excerpt_chars", 700))
+    memory_excerpt = content.strip()
+    if memory_excerpt_chars > 0 and len(memory_excerpt) > memory_excerpt_chars:
+        memory_excerpt = memory_excerpt[:memory_excerpt_chars].rsplit(" ", 1)[0].strip() if " " in memory_excerpt else memory_excerpt[:memory_excerpt_chars]
+        memory_excerpt = f"{memory_excerpt}..."
+
+    stamp = f"Day {day} {time_str}" if day and time_str else "WebSearch"
+    memory_entry = (
+        f"[{stamp}] 主动搜索：{query}\n"
+        f"搜索引擎：{engine or 'unknown'}\n"
+        f"结果：{title} ({url})\n"
+        f"内容：{memory_excerpt}\n"
+        f"想法：{thought}"
+    )
+    agent["memory"].append(memory_entry)
+    save_agent_memory(agent)
+    vector_db_add_entry(agent["id"], "web_search", memory_entry, sim_day=day, sim_time=time_str or "search")
+
+    log = f"""
+[WebSearch {agent['name']} @ {time_str}]
+Query: {query}
+Engine: {engine or "N/A"}
+Result: {title}
+URL: {url}
+MatchedInterests: {", ".join(matched) if matched else "N/A"}
+RelevanceScore: {score:.2f}
+"""
+    return memory_entry, log, url
+
 def read_news_and_store(agent, source_url, day=None, time_str=None, config=None, excerpt=None, title=None):
     config = config or {}
     if not excerpt:
@@ -692,6 +1181,10 @@ NEWS_DAILY_CHANCE = float(NEWS_CONFIG.get("daily_chance", 0.5))
 NEWS_MAX_READS_PER_DAY = int(NEWS_CONFIG.get("max_reads_per_day", 1))
 NEWS_CACHE_PATH = NEWS_CONFIG.get("cache_path", "news_cache.json")
 NEWS_USE_CACHE_FIRST = bool(NEWS_CONFIG.get("use_cache_first", True))
+INFO_SEEK_CONFIG = NEWS_CONFIG.get("info_seek", NEWS_CONFIG.get("curiosity_search", {}))
+INFO_SEEK_ENABLED = bool(INFO_SEEK_CONFIG.get("enabled", True))
+INFO_SEEK_BASE_CHANCE = float(INFO_SEEK_CONFIG.get("base_daily_chance", 0.55))
+INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_CONFIG.get("max_searches_per_day", 3)))
 
 # =========================================================
 # 政策事件
@@ -2106,9 +2599,9 @@ def run_simulation():
         else:
             news_cache = load_news_cache(NEWS_CACHE_PATH)
     if NEWS_ENABLED and not news_sources:
-        print(f"⚠️ 未找到新闻源列表或列表为空：{NEWS_SOURCES_PATH}")
+        print(f"ℹ️ 未找到新闻源列表或列表为空：{NEWS_SOURCES_PATH}，将主要使用 Web 搜索。")
     if NEWS_ENABLED and not news_cache and NEWS_USE_CACHE_FIRST:
-        print(f"⚠️ 新闻缓存为空或未找到：{NEWS_CACHE_PATH}")
+        print(f"ℹ️ 新闻缓存为空或未找到：{NEWS_CACHE_PATH}，将实时抓取网页。")
 
     # === 构建社交网络 ===
     social_net = build_social_network(agents)
@@ -2243,14 +2736,30 @@ def run_simulation():
         schedule_map = build_schedule_map(daily_schedules)
         timeline = build_master_timeline(daily_schedules, TIME_STEP_MINUTES)
         sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
-        news_schedule = {}
-        daily_news_seen = defaultdict(set)
-        if NEWS_ENABLED and news_sources and NEWS_MAX_READS_PER_DAY > 0 and timeline:
+        info_schedule = {}
+        daily_info_seen = defaultdict(set)
+        daily_query_seen = defaultdict(set)
+        preferred_sites_map = {}
+        if NEWS_ENABLED and timeline:
             for agent in agents:
-                if random.random() > NEWS_DAILY_CHANCE:
+                agent_id = agent["id"]
+                preferred_sites = _build_agent_preferred_sites(
+                    agent,
+                    news_sources=news_sources,
+                    news_cache=news_cache,
+                    max_sites=int(INFO_SEEK_CONFIG.get("preferred_sites_per_agent", 6)),
+                )
+                preferred_sites_map[agent_id] = preferred_sites
+                agent["preferred_info_sites"] = preferred_sites
+                curiosity = _estimate_curiosity(agent)
+                if not INFO_SEEK_ENABLED:
                     continue
-                reads = min(NEWS_MAX_READS_PER_DAY, len(timeline))
-                news_schedule[agent["id"]] = set(random.sample(timeline, k=reads))
+                daily_chance = min(0.98, INFO_SEEK_BASE_CHANCE * curiosity + 0.05)
+                if random.random() > daily_chance:
+                    continue
+                max_seeks = max(1, int(round(INFO_SEEK_MAX_PER_DAY * curiosity)))
+                seeks = min(max_seeks, len(timeline))
+                info_schedule[agent_id] = set(random.sample(timeline, k=seeks))
 
         day_header = f"\n================= Day {day} =================\n"
         for agent in agents:
@@ -2311,33 +2820,26 @@ def run_simulation():
                     daily_logs[agent_id] += header + routine_text + "\n"
                     append_agent_log(agent, header + routine_text + "\n")
                     daily_routine_logged[agent_id] = True
-                if time_str in news_schedule.get(agent_id, set()):
-                    source_url, excerpt, title, relevance_score, matched_interests = choose_news_for_agent(
+                if time_str in info_schedule.get(agent_id, set()):
+                    _, info_log, result_url, query = info_seek_and_store(
                         agent,
-                        news_cache,
-                        news_sources,
-                        use_cache_first=NEWS_USE_CACHE_FIRST,
-                        seen_urls=daily_news_seen[agent_id],
-                    )
-                    if not source_url:
-                        continue
-                    _, news_log = read_news_and_store(
-                        agent,
-                        source_url,
                         day=day,
                         time_str=time_str,
-                        config=NEWS_CONFIG,
-                        excerpt=excerpt,
-                        title=title,
+                        news_cache=news_cache,
+                        news_sources=news_sources,
+                        preferred_sites=preferred_sites_map.get(agent_id, []),
+                        seen_urls=daily_info_seen[agent_id],
+                        used_queries=daily_query_seen[agent_id],
+                        config=INFO_SEEK_CONFIG,
                     )
-                    daily_news_seen[agent_id].add(source_url)
-                    if news_log:
-                        if matched_interests:
-                            news_log += f"MatchedInterests: {', '.join(matched_interests)}\n"
-                        news_log += f"RelevanceScore: {relevance_score:.2f}\n"
-                        print(news_log)
-                        daily_logs[agent_id] += news_log
-                        append_agent_log(agent, news_log)
+                    if query:
+                        daily_query_seen[agent_id].add(query)
+                    if result_url:
+                        daily_info_seen[agent_id].add(result_url)
+                    if info_log:
+                        print(info_log)
+                        daily_logs[agent_id] += info_log
+                        append_agent_log(agent, info_log)
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
                 social_context = get_social_context(agent, agents_by_id)

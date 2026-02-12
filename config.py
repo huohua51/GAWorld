@@ -115,6 +115,20 @@ CONFIG = {
         "max_chars": 2000,
         "memory_excerpt_chars": 600,
         "user_agent": "GAWorld/1.0",
+        "info_seek": {
+            "enabled": True,
+            "base_daily_chance": 0.55,
+            "max_seeks_per_day": 3,
+            "preferred_sites_per_agent": 6,
+            "prefer_source_visit_ratio": 0.55,
+            "engines": ["baidu", "google", "bing"],
+            "max_results": 4,
+            "timeout": 8,
+            "content_timeout": 8,
+            "content_max_chars": 2000,
+            "memory_excerpt_chars": 700,
+            "user_agent": "GAWorld/1.0",
+        },
     },
     # Human realism (experience accumulation + habit/need dynamics)
     "human_realism": {
