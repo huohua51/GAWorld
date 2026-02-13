@@ -105,6 +105,55 @@ def _build_time_grid(step_minutes):
     step = max(1, int(step_minutes))
     return [_minutes_to_time_str(m) for m in range(0, 24 * 60, step)]
 
+_WEEKDAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_WEEKDAY_ZH = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+_WEEKDAY_ALIASES = {
+    "mon": "monday",
+    "tue": "tuesday",
+    "wed": "wednesday",
+    "thu": "thursday",
+    "fri": "friday",
+    "sat": "saturday",
+    "sun": "sunday",
+    "周一": "monday",
+    "周二": "tuesday",
+    "周三": "wednesday",
+    "周四": "thursday",
+    "周五": "friday",
+    "周六": "saturday",
+    "周日": "sunday",
+}
+
+def _weekday_to_index(name):
+    key = str(name or "").strip().lower()
+    key = _WEEKDAY_ALIASES.get(key, key)
+    if key not in _WEEKDAY_ORDER:
+        return None
+    return _WEEKDAY_ORDER.index(key)
+
+def _build_weekend_indexes(raw_days):
+    if not isinstance(raw_days, (list, tuple, set)):
+        raw_days = [raw_days]
+    indexes = set()
+    for day_name in raw_days:
+        idx = _weekday_to_index(day_name)
+        if idx is not None:
+            indexes.add(idx)
+    return indexes or {5, 6}
+
+def _resolve_day_context(day_number, start_weekday_idx=0, weekend_indexes=None):
+    safe_day = max(1, int(day_number or 1))
+    idx = (int(start_weekday_idx) + safe_day - 1) % 7
+    weekend_indexes = weekend_indexes or {5, 6}
+    is_weekend = idx in weekend_indexes
+    return {
+        "weekday_index": idx,
+        "weekday_en": _WEEKDAY_ORDER[idx],
+        "weekday_zh": _WEEKDAY_ZH[idx],
+        "day_type": "weekend" if is_weekend else "weekday",
+        "day_type_zh": "周末" if is_weekend else "工作日",
+    }
+
 def _clear_dir(path):
     if not path or not os.path.exists(path):
         return
@@ -1188,6 +1237,11 @@ INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_
 DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
 DAILY_PLAN_ANCHOR_MINUTES = max(1, int(DAILY_PLANNING_CONFIG.get("anchor_minutes", 30)))
 DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES = max(0, int(DAILY_PLANNING_CONFIG.get("random_delay_max_minutes", 10)))
+CALENDAR_CONFIG = CONFIG.get("calendar", {})
+SIM_START_WEEKDAY_INDEX = _weekday_to_index(CALENDAR_CONFIG.get("start_weekday", "monday"))
+if SIM_START_WEEKDAY_INDEX is None:
+    SIM_START_WEEKDAY_INDEX = 0
+SIM_WEEKEND_INDEXES = _build_weekend_indexes(CALENDAR_CONFIG.get("weekend_days", ["saturday", "sunday"]))
 
 # =========================================================
 # 政策事件
@@ -1743,6 +1797,42 @@ def _align_daily_planning_start_time(schedule, anchor_step=30, max_delay=10, min
     minute_points[start_idx] = max(lower_bound, min(target, upper_bound))
     return [(_minutes_to_time_str(m), act) for m, (_, act) in zip(minute_points, schedule)]
 
+def _apply_day_type_activity_adjustments(agent, schedule, day_context=None):
+    if not schedule:
+        return []
+    if not day_context or day_context.get("day_type") != "weekend":
+        return list(schedule)
+
+    is_student, is_retired, _, _ = _schedule_profile_flags(agent)
+    if is_student:
+        trigger_keywords = ["上课", "学习", "实验", "通勤", "课题", "作业", "讲座"]
+        replacement_pool = ["周末复习", "兴趣活动", "社交放松", "外出活动", "个人时间"]
+    elif is_retired:
+        trigger_keywords = ["晨练", "买菜", "散步", "个人时间", "午休"]
+        replacement_pool = ["社区活动", "探访亲友", "休闲散步", "兴趣爱好", "个人时间"]
+    else:
+        trigger_keywords = ["通勤", "工作", "上班", "加班", "会议", "办公", "出差"]
+        replacement_pool = ["睡懒觉", "家务安排", "周末休闲", "探访亲友", "外出活动", "运动放松", "个人时间"]
+
+    adjusted = []
+    replacement_idx = 0
+    changed = False
+    for time_str, activity in schedule:
+        new_activity = activity
+        if any(k in activity for k in trigger_keywords):
+            new_activity = replacement_pool[min(replacement_idx, len(replacement_pool) - 1)]
+            replacement_idx += 1
+            changed = changed or (new_activity != activity)
+        adjusted.append((time_str, new_activity))
+
+    if not changed and adjusted:
+        fallback_idx = next((i for i, (_, act) in enumerate(adjusted) if not is_sleep_activity(act)), 0)
+        fallback_time, _ = adjusted[fallback_idx]
+        fallback_activity = "周末复习" if is_student else "周末休闲"
+        adjusted[fallback_idx] = (fallback_time, fallback_activity)
+
+    return adjusted
+
 def _jitter_schedule_times(base_schedule, max_shift=45, min_gap=20):
     if not base_schedule:
         return []
@@ -1787,9 +1877,21 @@ def normalize_flexible_schedule(base_schedule, candidate_schedule):
         return None
     return sorted_candidate
 
-def generate_daily_routine(agent, base_schedule, day=None):
+def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     if not base_schedule:
         return base_schedule
+    day_context = day_context or _resolve_day_context(
+        day,
+        start_weekday_idx=SIM_START_WEEKDAY_INDEX,
+        weekend_indexes=SIM_WEEKEND_INDEXES,
+    )
+    day_label = f"Day {day}" if day is not None else "当日"
+    weekday_zh = day_context.get("weekday_zh", "周一")
+    day_type_zh = day_context.get("day_type_zh", "工作日")
+    if day_context.get("day_type") == "weekend":
+        day_rule = "今天是周末：安排应与工作日节奏有明显区别；对上班族尽量不安排通勤/工作/加班，多安排休闲、社交、家务或外出。"
+    else:
+        day_rule = "今天是工作日：保持较稳定的工作/学习节奏，可有少量弹性调整。"
     profile_text = "\n".join([
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
@@ -1810,10 +1912,12 @@ def generate_daily_routine(agent, base_schedule, day=None):
 你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
 角色资料：
 {profile_text}
+日期类型：{day_label}，{weekday_zh}，{day_type_zh}
 基础日程（作为框架，可在时间点上做 0-60 分钟内的微调）：
 {base_text}
 可参考的近期记忆：{memory_hint}
 今日行为意图：{intent_hint}
+日程约束：{day_rule}
 要求：
 1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
 2) 时间点需保持顺序，可在基础时间上做小幅调整（0-60 分钟），不要大幅偏离。
@@ -1827,18 +1931,20 @@ def generate_daily_routine(agent, base_schedule, day=None):
         if _schedule_times(normalized) == _schedule_times(base_schedule):
             normalized = _jitter_schedule_times(base_schedule)
         normalized = ensure_sleep_in_schedule(agent, normalized)
-        return _align_daily_planning_start_time(
+        normalized = _align_daily_planning_start_time(
             normalized,
             anchor_step=DAILY_PLAN_ANCHOR_MINUTES,
             max_delay=DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES,
         )
+        return _apply_day_type_activity_adjustments(agent, normalized, day_context=day_context)
     jittered = _jitter_schedule_times(base_schedule)
     jittered = ensure_sleep_in_schedule(agent, jittered)
-    return _align_daily_planning_start_time(
+    jittered = _align_daily_planning_start_time(
         jittered,
         anchor_step=DAILY_PLAN_ANCHOR_MINUTES,
         max_delay=DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES,
     )
+    return _apply_day_type_activity_adjustments(agent, jittered, day_context=day_context)
 
 def generate_schedule(agent):
     profile_text = "\n".join([
@@ -2727,7 +2833,13 @@ def run_simulation():
     )
 
     for day in range(start_day, start_day + SIM_DAYS):
-        print(f"\n================= Day {day} =================")
+        day_context = _resolve_day_context(
+            day,
+            start_weekday_idx=SIM_START_WEEKDAY_INDEX,
+            weekend_indexes=SIM_WEEKEND_INDEXES,
+        )
+        day_desc = f"{day_context.get('weekday_zh', '周一')} {day_context.get('day_type_zh', '工作日')}"
+        print(f"\n================= Day {day} ({day_desc}) =================")
         daily_logs = defaultdict(str)
         llm_budget_by_agent = {}
         daily_schedules = {}
@@ -2759,7 +2871,12 @@ def run_simulation():
                     save_agent_intentions(agent["id"], intentions)
         for agent in agents:
             agent_id = agent["id"]
-            daily_schedule = generate_daily_routine(agent, base_schedule_map[agent_id], day=day)
+            daily_schedule = generate_daily_routine(
+                agent,
+                base_schedule_map[agent_id],
+                day=day,
+                day_context=day_context,
+            )
             daily_schedules[agent_id] = daily_schedule
             # Ensure action space covers any new activities in today's routine.
             updated = False
@@ -2806,7 +2923,7 @@ def run_simulation():
                 seeks = min(max_seeks, len(timeline))
                 info_schedule[agent_id] = set(random.sample(timeline, k=seeks))
 
-        day_header = f"\n================= Day {day} =================\n"
+        day_header = f"\n================= Day {day} ({day_desc}) =================\n"
         for agent in agents:
             daily_logs[agent["id"]] += day_header
             append_agent_log(agent, day_header)
@@ -2857,7 +2974,7 @@ def run_simulation():
                     and daily_wake_times.get(agent_id) == time_str
                 ):
                     header = (
-                        f"\n[TodayRoutine Day {day}] "
+                        f"\n[TodayRoutine Day {day} {day_desc}] "
                         f"{agent.get('name', agent_id)} @ {time_str}\n"
                     )
                     routine_text = daily_routine_texts.get(agent_id, "")

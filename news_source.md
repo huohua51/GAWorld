@@ -1,5 +1,4 @@
-https://www.reuters.com/
-https://apnews.com/
+https://news.baidu.com/
 https://www.bbc.com/news
 https://www.cnn.com/
 https://www.nytimes.com/
@@ -9,6 +8,7 @@ https://www.bloomberg.com/
 https://www.washingtonpost.com/
 https://www.aljazeera.com/
 https://news.ycombinator.com/
-https://www.reddit.com/r/news/
-https://www.reddit.com/r/worldnews/
+https://www.reddit.com/
+https://www.reddit.com/
 https://x.com/
+https://x.com/cnnbrk
