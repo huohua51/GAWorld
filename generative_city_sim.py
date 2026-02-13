@@ -1797,41 +1797,87 @@ def _align_daily_planning_start_time(schedule, anchor_step=30, max_delay=10, min
     minute_points[start_idx] = max(lower_bound, min(target, upper_bound))
     return [(_minutes_to_time_str(m), act) for m, (_, act) in zip(minute_points, schedule)]
 
-def _apply_day_type_activity_adjustments(agent, schedule, day_context=None):
+def _has_workday_signature(schedule):
+    if not schedule:
+        return False
+    keywords = ["通勤", "工作", "上班", "加班", "会议", "办公", "出差", "上课", "实验", "课题"]
+    return any(any(k in str(activity) for k in keywords) for _, activity in schedule)
+
+def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, day=None):
     if not schedule:
         return []
     if not day_context or day_context.get("day_type") != "weekend":
         return list(schedule)
+    if not _has_workday_signature(schedule):
+        return list(schedule)
 
-    is_student, is_retired, _, _ = _schedule_profile_flags(agent)
-    if is_student:
-        trigger_keywords = ["上课", "学习", "实验", "通勤", "课题", "作业", "讲座"]
-        replacement_pool = ["周末复习", "兴趣活动", "社交放松", "外出活动", "个人时间"]
-    elif is_retired:
-        trigger_keywords = ["晨练", "买菜", "散步", "个人时间", "午休"]
-        replacement_pool = ["社区活动", "探访亲友", "休闲散步", "兴趣爱好", "个人时间"]
+    profile_text = "\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"年龄：{agent.get('age', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    routine_text = json.dumps(
+        [{"time": t, "activity": a} for t, a in schedule],
+        ensure_ascii=False,
+        indent=2,
+    )
+    memory_hits = retrieve_relevant_memories(agent, "周末 休息 兴趣 爱好 日程", max_items=VECTOR_DB_TOP_K)
+    memory_hint = _format_memory_hint(memory_hits)
+    intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
+    weekday_zh = day_context.get("weekday_zh", "周末")
+    day_label = f"Day {day}" if day is not None else "当日"
+    weekend_work_possible = any(
+        k in " ".join([
+            agent.get("job", ""),
+            agent.get("daily_life", ""),
+            agent.get("work_style", ""),
+        ])
+        for k in ["轮班", "值班", "夜班", "周末兼职", "周末营业", "周末上班"]
+    )
+    if weekend_work_possible:
+        work_rule = "可保留少量工作/值班活动，但仍需体现周末个人安排。"
     else:
-        trigger_keywords = ["通勤", "工作", "上班", "加班", "会议", "办公", "出差"]
-        replacement_pool = ["睡懒觉", "家务安排", "周末休闲", "探访亲友", "外出活动", "运动放松", "个人时间"]
+        work_rule = "尽量避免通勤/工作/加班等工作日活动。"
 
-    adjusted = []
-    replacement_idx = 0
-    changed = False
-    for time_str, activity in schedule:
-        new_activity = activity
-        if any(k in activity for k in trigger_keywords):
-            new_activity = replacement_pool[min(replacement_idx, len(replacement_pool) - 1)]
-            replacement_idx += 1
-            changed = changed or (new_activity != activity)
-        adjusted.append((time_str, new_activity))
+    prompt = f"""
+你是城市生活模拟器的“周末个性化日程改写器”。
+请根据角色 profile（职业、性格、爱好/习惯）改写周末活动，避免套用通用模板。
+日期：{day_label}，{weekday_zh}（周末）
+角色资料：
+{profile_text}
+当前周末草案：
+{routine_text}
+相关记忆：{memory_hint}
+今日行为意图：{intent_hint}
 
-    if not changed and adjusted:
-        fallback_idx = next((i for i, (_, act) in enumerate(adjusted) if not is_sleep_activity(act)), 0)
-        fallback_time, _ = adjusted[fallback_idx]
-        fallback_activity = "周末复习" if is_student else "周末休闲"
-        adjusted[fallback_idx] = (fallback_time, fallback_activity)
+要求：
+1) 仅改活动文本，时间点必须与输入完全一致。
+2) 至少改写 1 个非睡眠活动，使其体现角色的个体偏好（职业压力、性格、兴趣习惯）。
+3) {work_rule}
+4) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
+5) 仅输出 JSON，不要其他文字。
+"""
+    response = call_llm(prompt, task="weekend_routine", agent_id=agent["id"])
+    candidate = _parse_schedule(response)
+    if not candidate or len(candidate) != len(schedule):
+        return list(schedule)
 
-    return adjusted
+    base_times = [t for t, _ in schedule]
+    by_time = {t: a for t, a in candidate}
+    if all(t in by_time for t in base_times):
+        aligned = [(t, by_time[t]) for t in base_times]
+    else:
+        sorted_candidate = sorted(candidate, key=lambda x: _time_str_to_minutes(x[0]) or 0)
+        aligned = [(t, a) for (t, _), (_, a) in zip(schedule, sorted_candidate)]
+
+    changed = any(
+        (new_act != old_act) and (not is_sleep_activity(new_act))
+        for (_, old_act), (_, new_act) in zip(schedule, aligned)
+    )
+    return aligned if changed else list(schedule)
 
 def _jitter_schedule_times(base_schedule, max_shift=45, min_gap=20):
     if not base_schedule:
@@ -1936,7 +1982,12 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
             anchor_step=DAILY_PLAN_ANCHOR_MINUTES,
             max_delay=DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES,
         )
-        return _apply_day_type_activity_adjustments(agent, normalized, day_context=day_context)
+        return _rewrite_weekend_schedule_from_profile(
+            agent,
+            normalized,
+            day_context=day_context,
+            day=day,
+        )
     jittered = _jitter_schedule_times(base_schedule)
     jittered = ensure_sleep_in_schedule(agent, jittered)
     jittered = _align_daily_planning_start_time(
@@ -1944,7 +1995,12 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
         anchor_step=DAILY_PLAN_ANCHOR_MINUTES,
         max_delay=DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES,
     )
-    return _apply_day_type_activity_adjustments(agent, jittered, day_context=day_context)
+    return _rewrite_weekend_schedule_from_profile(
+        agent,
+        jittered,
+        day_context=day_context,
+        day=day,
+    )
 
 def generate_schedule(agent):
     profile_text = "\n".join([
