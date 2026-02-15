@@ -1,34 +1,42 @@
 [
   {
+    "time": "07:30",
+    "activity": "起床与简单拉伸"
+  },
+  {
+    "time": "08:00",
+    "activity": "早饭与观看社会新闻"
+  },
+  {
     "time": "09:00",
-    "activity": "起床/洗漱"
+    "activity": "彩排与剧本排练"
   },
   {
-    "time": "10:00",
-    "activity": "排练/歌唱练习"
+    "time": "12:30",
+    "activity": "与团队午餐交流"
   },
   {
-    "time": "12:00",
-    "activity": "午餐/与朋友聚餐"
+    "time": "13:30",
+    "activity": "录音与歌曲排练"
   },
   {
-    "time": "14:00",
-    "activity": "参加戏剧工作坊"
+    "time": "16:00",
+    "activity": "参与文化主题小型公共活动"
   },
   {
-    "time": "17:00",
-    "activity": "社交媒体互动/参与线上讨论"
+    "time": "18:30",
+    "activity": "与粉丝在线互动"
   },
   {
     "time": "20:00",
-    "activity": "晚餐/阅读"
+    "activity": "晚餐与休息"
   },
   {
-    "time": "22:00",
-    "activity": "睡前准备/放松"
+    "time": "21:30",
+    "activity": "反思与撰写公开社交内容"
   },
   {
-    "time": "23:00",
-    "activity": "睡觉/睡眠"
+    "time": "23:30",
+    "activity": "睡前冥想与睡眠"
   }
 ]

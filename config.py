@@ -1,3 +1,6 @@
+import json
+import os
+
 CONFIG = {
     # LLM (legacy defaults for compatibility)
     "ollama_url": "http://localhost:11434/api/generate",
@@ -41,7 +44,7 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [51],
+    "agent_ids": [1],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
@@ -172,3 +175,28 @@ CONFIG = {
         },
     },
 }
+
+
+def _deep_update(base, patch):
+    if not isinstance(base, dict) or not isinstance(patch, dict):
+        return base
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_update(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _load_env_override():
+    raw = os.environ.get("GAWORLD_CONFIG_OVERRIDES", "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+_deep_update(CONFIG, _load_env_override())

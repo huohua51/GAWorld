@@ -1,101 +1,82 @@
 {
-  "morning|home|起床/洗漱": {
+  "morning|public|起床与简单拉伸": {
     "action_counts": {
-      "在洗漱时会思考今天需要完成的任务，并制定计划": 1
+      "微笑自我鼓励": 1
     },
-    "preferred_action": "在洗漱时会思考今天需要完成的任务，并制定计划",
+    "preferred_action": "微笑自我鼓励",
     "strength": 0.17200000000000001,
     "last_updated_day": 1
   },
-  "morning|home|排练/歌唱练习": {
+  "morning|home|早饭与观看社会新闻": {
     "action_counts": {
-      "不断调整节奏，力求达到最佳效果": 1,
-      "在排练间隙与演员交流想法": 1
+      "就最新公共话题与家人讨论": 1
     },
-    "preferred_action": "不断调整节奏，力求达到最佳效果",
-    "strength": 0.16512000000000002,
-    "last_updated_day": 2
-  },
-  "afternoon|home|午餐/与朋友聚餐": {
-    "action_counts": {
-      "开玩笑，活跃气氛": 1,
-      "分享自己对社会问题的看法": 1
-    },
-    "preferred_action": "开玩笑，活跃气氛",
-    "strength": 0.16512000000000002,
-    "last_updated_day": 2
-  },
-  "afternoon|home|参加戏剧工作坊": {
-    "action_counts": {
-      "在工作坊中不断尝试新的表演技巧": 1,
-      "认真记录工作坊的重点内容，以便后续运用": 1
-    },
-    "preferred_action": "在工作坊中不断尝试新的表演技巧",
-    "strength": 0.16512000000000002,
-    "last_updated_day": 2
-  },
-  "evening|home|社交媒体互动/参与线上讨论": {
-    "action_counts": {
-      "参与线上话题讨论，表达自己的观点": 1
-    },
-    "preferred_action": "参与线上话题讨论，表达自己的观点",
+    "preferred_action": "就最新公共话题与家人讨论",
     "strength": 0.17200000000000001,
     "last_updated_day": 1
   },
-  "evening|home|晚餐/阅读": {
+  "morning|home|彩排与剧本排练": {
     "action_counts": {
-      "在阅读过程中做笔记，记录重要的信息": 1
+      "对照剧本做人物表演练习": 1
     },
-    "preferred_action": "在阅读过程中做笔记，记录重要的信息",
+    "preferred_action": "对照剧本做人物表演练习",
     "strength": 0.17200000000000001,
     "last_updated_day": 1
   },
-  "evening|public|睡前准备/放松": {
+  "afternoon|home|与团队午餐交流": {
+    "action_counts": {
+      "倾听团队观点并积极回应": 1
+    },
+    "preferred_action": "倾听团队观点并积极回应",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "afternoon|home|录音与歌曲排练": {
+    "action_counts": {
+      "临场记下旋律新点子": 1
+    },
+    "preferred_action": "临场记下旋律新点子",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "afternoon|home|参与文化主题小型公共活动": {
+    "action_counts": {
+      "主动上前与嘉宾合影": 1
+    },
+    "preferred_action": "主动上前与嘉宾合影",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "evening|home|与粉丝在线互动": {
+    "action_counts": {
+      "分享生活小故事": 1
+    },
+    "preferred_action": "分享生活小故事",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "evening|home|晚餐与休息": {
+    "action_counts": {
+      "品味晚餐细腻口感": 1
+    },
+    "preferred_action": "品味晚餐细腻口感",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "evening|work|反思与撰写公开社交内容": {
+    "action_counts": {
+      "编辑公众号/社交账号动态": 1
+    },
+    "preferred_action": "编辑公众号/社交账号动态",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "night|home|睡前冥想与睡眠": {
     "action_counts": {
       "睡觉": 1
     },
     "preferred_action": "睡觉",
     "strength": 0.17200000000000001,
     "last_updated_day": 1
-  },
-  "night|home|睡觉/睡眠": {
-    "action_counts": {
-      "睡觉": 2
-    },
-    "preferred_action": "睡觉",
-    "strength": 0.23824,
-    "last_updated_day": 2
-  },
-  "morning|public|起床/洗漱": {
-    "action_counts": {
-      "在洗漱时会思考今天需要完成的任务": 1
-    },
-    "preferred_action": "在洗漱时会思考今天需要完成的任务",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 2
-  },
-  "afternoon|public|社交媒体互动/参与线上讨论": {
-    "action_counts": {
-      "在社交媒体上与朋友分享有趣的文章或视频，并引发讨论": 1
-    },
-    "preferred_action": "在社交媒体上与朋友分享有趣的文章或视频，并引发讨论",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 2
-  },
-  "evening|public|晚餐/阅读": {
-    "action_counts": {
-      "在阅读过程中时不时地思考剧情": 1
-    },
-    "preferred_action": "在阅读过程中时不时地思考剧情",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 2
-  },
-  "evening|home|睡前准备/放松": {
-    "action_counts": {
-      "睡觉": 1
-    },
-    "preferred_action": "睡觉",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 2
   }
 }

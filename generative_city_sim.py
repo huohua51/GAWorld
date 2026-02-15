@@ -9,6 +9,8 @@ import requests
 from collections import defaultdict
 import os
 import shutil
+import subprocess
+import sys
 import matplotlib.pyplot as plt
 import networkx as nx
 from html import unescape
@@ -1057,7 +1059,7 @@ def reset_simulation():
                 os.remove(vector_db_path)
         except OSError:
             pass
-    for output_dir in ["output/state", "output/network"]:
+    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR]:
         if output_dir not in (memory_dir, log_dir):
             _clear_dir(output_dir)
     save_sim_state({
@@ -1216,6 +1218,9 @@ REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE = bool(
 )
 HUMAN_REALISM_CONFIG = CONFIG.get("human_realism", {})
 HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
+STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
+NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
+RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
 ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
 ROUTINE_CHANGE_ENABLED = bool(ROUTINE_CHANGE_CONFIG.get("enabled", True))
@@ -2741,6 +2746,13 @@ def _enforce_memory_model_compat(sim_state):
         )
 
 def run_simulation():
+    if RANDOM_SEED is not None:
+        try:
+            seed = int(RANDOM_SEED)
+            random.seed(seed)
+            np.random.seed(seed)
+        except (TypeError, ValueError):
+            pass
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
     city_map_text = load_city_map_text(MAP_PATH)
@@ -3353,9 +3365,14 @@ Reflection: {refl}
         state_history=state_history,
         extension_state=extension_state,
     )
-    visualize_social_network(agents)
-    save_state_history(state_history)
-    visualize_agent_state_changes(state_history, agent_names, metrics=state_metrics)
+    visualize_social_network(agents, output_dir=NETWORK_OUTPUT_DIR)
+    save_state_history(state_history, output_dir=STATE_OUTPUT_DIR)
+    visualize_agent_state_changes(
+        state_history,
+        agent_names,
+        output_dir=STATE_OUTPUT_DIR,
+        metrics=state_metrics,
+    )
 
 
 # =========================================================
@@ -3379,6 +3396,269 @@ def _cli_interview_agent(agent_id, questions, context=None):
         agent["memory"] = []
     answers = interview_agent(agent, questions, context=context)
     print(json.dumps(answers, ensure_ascii=False, indent=2))
+
+
+def _sanitize_slug(text):
+    cleaned = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", str(text or "").strip())
+    cleaned = cleaned.strip("_")
+    return cleaned[:40] if cleaned else "event"
+
+
+def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
+    policy_events = [dict(item) for item in CONFIG.get("policy_events", []) if isinstance(item, dict)]
+    if include_event:
+        policy_events.append(dict(event_payload))
+    overrides = {
+        "memory_dir": os.path.join(scenario_dir, "memory"),
+        "log_dir": os.path.join(scenario_dir, "logs"),
+        "vector_db_path": os.path.join(scenario_dir, "memory", "vector_db.sqlite"),
+        "state_output_dir": os.path.join(scenario_dir, "state"),
+        "network_output_dir": os.path.join(scenario_dir, "network"),
+        "policy_events": policy_events,
+        "stateful": True,
+        "random_seed": int(args.seed),
+    }
+    if args.sim_days is not None:
+        overrides["sim_days"] = int(args.sim_days)
+    if args.agent_ids:
+        overrides["agent_ids"] = list(args.agent_ids)
+    return overrides
+
+
+def _run_cli_subprocess(command, env, log_path):
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "w", encoding="utf-8") as f:
+        proc = subprocess.run(
+            command,
+            env=env,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    return proc.returncode
+
+
+def _launch_cli_subprocess(command, env, log_path):
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    f = open(log_path, "w", encoding="utf-8")
+    proc = subprocess.Popen(
+        command,
+        env=env,
+        stdout=f,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return proc, f
+
+
+def _final_metric_snapshot(state_csv_path):
+    if not state_csv_path or not os.path.exists(state_csv_path):
+        return {}
+    try:
+        df = pd.read_csv(state_csv_path)
+    except Exception:
+        return {}
+    required = {"agent_id", "step", "metric", "value"}
+    if df.empty or not required.issubset(set(df.columns)):
+        return {}
+    final_idx = df.groupby(["agent_id", "metric"])["step"].idxmax()
+    final_df = df.loc[final_idx]
+    grouped = final_df.groupby("metric")["value"].mean()
+    return {str(k): float(v) for k, v in grouped.items()}
+
+
+def _mean_metric_snapshot(state_csv_path):
+    if not state_csv_path or not os.path.exists(state_csv_path):
+        return {}
+    try:
+        df = pd.read_csv(state_csv_path)
+    except Exception:
+        return {}
+    required = {"metric", "value"}
+    if df.empty or not required.issubset(set(df.columns)):
+        return {}
+    grouped = df.groupby("metric")["value"].mean()
+    return {str(k): float(v) for k, v in grouped.items()}
+
+
+def _compose_comparison_rows(base_state_csv, event_state_csv):
+    baseline_final = _final_metric_snapshot(base_state_csv)
+    event_final = _final_metric_snapshot(event_state_csv)
+    baseline_mean = _mean_metric_snapshot(base_state_csv)
+    event_mean = _mean_metric_snapshot(event_state_csv)
+    metrics = sorted(set(baseline_final) | set(event_final) | set(baseline_mean) | set(event_mean))
+    rows = []
+    for metric in metrics:
+        b_final = float(baseline_final.get(metric, 0.0))
+        e_final = float(event_final.get(metric, 0.0))
+        b_mean = float(baseline_mean.get(metric, 0.0))
+        e_mean = float(event_mean.get(metric, 0.0))
+        rows.append({
+            "metric": metric,
+            "baseline_final": b_final,
+            "event_final": e_final,
+            "delta_final": e_final - b_final,
+            "baseline_mean": b_mean,
+            "event_mean": e_mean,
+            "delta_mean": e_mean - b_mean,
+        })
+    rows.sort(key=lambda x: abs(x["delta_final"]), reverse=True)
+    return rows
+
+
+def _impact_hint(metric, delta):
+    if abs(delta) < 1e-9:
+        return "几乎无变化"
+    sign = "上升" if delta > 0 else "下降"
+    amount = abs(delta)
+    if metric == "stress":
+        direction = "压力" + sign
+    elif metric == "emotion":
+        direction = "情绪" + sign
+    elif metric == "econ_security":
+        direction = "经济安全感" + sign
+    elif metric == "city_identity":
+        direction = "城市认同" + sign
+    elif metric == "mobility_intent":
+        direction = "流动意愿" + sign
+    else:
+        direction = f"{metric}" + sign
+    return f"{direction}（Δ={amount:.4f}）"
+
+
+def _write_comparison_report(output_root, event_payload, rows):
+    os.makedirs(output_root, exist_ok=True)
+    metrics_csv = os.path.join(output_root, "comparison_metrics.csv")
+    report_md = os.path.join(output_root, "comparison_summary.md")
+    if rows:
+        pd.DataFrame(rows).to_csv(metrics_csv, index=False)
+    else:
+        pd.DataFrame(columns=[
+            "metric",
+            "baseline_final",
+            "event_final",
+            "delta_final",
+            "baseline_mean",
+            "event_mean",
+            "delta_mean",
+        ]).to_csv(metrics_csv, index=False)
+
+    lines = []
+    lines.append("# 事件影响对比报告")
+    lines.append("")
+    lines.append(f"- 事件名称：{event_payload.get('name', '')}")
+    lines.append(f"- 事件时间：Day {event_payload.get('day', '')} {event_payload.get('time', '')}")
+    lines.append(f"- 事件描述：{event_payload.get('description', '')}")
+    lines.append("")
+    if rows:
+        top = rows[:5]
+        lines.append("## 关键差异（按终值绝对差排序）")
+        lines.append("")
+        for item in top:
+            hint = _impact_hint(item["metric"], item["delta_final"])
+            lines.append(
+                f"- `{item['metric']}`: baseline={item['baseline_final']:.4f}, "
+                f"event={item['event_final']:.4f}, Δ={item['delta_final']:.4f}，{hint}"
+            )
+        lines.append("")
+        lines.append("## 估计结论")
+        lines.append("")
+        top_hint = "；".join(_impact_hint(r["metric"], r["delta_final"]) for r in top[:3])
+        lines.append(f"事件对系统的主要影响表现为：{top_hint}。")
+    else:
+        lines.append("未生成有效状态对比数据，请检查两组 simulation 输出。")
+    lines.append("")
+    lines.append(f"- 指标明细：`{metrics_csv}`")
+    with open(report_md, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return report_md, metrics_csv
+
+
+def _cli_compare_event(args):
+    event_payload = {
+        "day": int(args.event_day),
+        "time": str(args.event_time),
+        "name": str(args.event_name),
+        "description": str(args.event_description),
+    }
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    slug = _sanitize_slug(args.event_name)
+    root = os.path.join(args.output_root, f"{ts}_{slug}")
+    baseline_dir = os.path.join(root, "without_event")
+    event_dir = os.path.join(root, "with_event")
+    os.makedirs(baseline_dir, exist_ok=True)
+    os.makedirs(event_dir, exist_ok=True)
+
+    baseline_overrides = _build_compare_overrides(
+        baseline_dir,
+        include_event=False,
+        event_payload=event_payload,
+        args=args,
+    )
+    event_overrides = _build_compare_overrides(
+        event_dir,
+        include_event=True,
+        event_payload=event_payload,
+        args=args,
+    )
+
+    script_path = os.path.abspath(__file__)
+    python_bin = sys.executable
+    base_env = os.environ.copy()
+    env_without = dict(base_env)
+    env_with = dict(base_env)
+    env_without["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(baseline_overrides, ensure_ascii=False)
+    env_with["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(event_overrides, ensure_ascii=False)
+
+    # Clean reset both scenarios before run.
+    reset_without_log = os.path.join(baseline_dir, "reset.log")
+    reset_with_log = os.path.join(event_dir, "reset.log")
+    rc = _run_cli_subprocess([python_bin, script_path, "reset"], env_without, reset_without_log)
+    if rc != 0:
+        raise RuntimeError(f"无事件场景 reset 失败，日志：{reset_without_log}")
+    rc = _run_cli_subprocess([python_bin, script_path, "reset"], env_with, reset_with_log)
+    if rc != 0:
+        raise RuntimeError(f"有事件场景 reset 失败，日志：{reset_with_log}")
+
+    # Run in parallel.
+    run_without_log = os.path.join(baseline_dir, "run.log")
+    run_with_log = os.path.join(event_dir, "run.log")
+    proc_without, file_without = _launch_cli_subprocess(
+        [python_bin, script_path, "run"],
+        env_without,
+        run_without_log,
+    )
+    proc_with, file_with = _launch_cli_subprocess(
+        [python_bin, script_path, "run"],
+        env_with,
+        run_with_log,
+    )
+    code_without = proc_without.wait()
+    code_with = proc_with.wait()
+    file_without.close()
+    file_with.close()
+    if code_without != 0 or code_with != 0:
+        raise RuntimeError(
+            "并行 simulation 运行失败。"
+            f" 无事件日志：{run_without_log}；有事件日志：{run_with_log}"
+        )
+
+    baseline_state_csv = os.path.join(baseline_overrides["state_output_dir"], "agent_state_history.csv")
+    event_state_csv = os.path.join(event_overrides["state_output_dir"], "agent_state_history.csv")
+    rows = _compose_comparison_rows(baseline_state_csv, event_state_csv)
+    report_md, metrics_csv = _write_comparison_report(root, event_payload, rows)
+
+    print("\n✅ 对比 simulation 完成")
+    print(f"输出目录: {root}")
+    print(f"报告文件: {report_md}")
+    print(f"指标文件: {metrics_csv}")
+    if rows:
+        print("\nTop differences:")
+        for item in rows[:5]:
+            print(
+                f"- {item['metric']}: baseline={item['baseline_final']:.4f}, "
+                f"event={item['event_final']:.4f}, delta={item['delta_final']:.4f}"
+            )
 
 def _build_arg_parser():
     import argparse
@@ -3404,6 +3684,34 @@ def _build_arg_parser():
         "--context",
         default=None,
         help="Optional background context for the interview",
+    )
+
+    compare_event = subparsers.add_parser(
+        "compare-event",
+        help="Run two simulations in parallel (with/without a specified event) and compare impact",
+    )
+    compare_event.add_argument("--event-name", required=True, help="Event name")
+    compare_event.add_argument("--event-description", required=True, help="Event description")
+    compare_event.add_argument("--event-day", type=int, required=True, help="Event day index")
+    compare_event.add_argument("--event-time", default="10:00", help="Event time HH:MM")
+    compare_event.add_argument("--sim-days", type=int, default=None, help="Override simulation days")
+    compare_event.add_argument(
+        "--agent-id",
+        type=int,
+        action="append",
+        dest="agent_ids",
+        help="Agent ID to include (can be repeated)",
+    )
+    compare_event.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed shared by both scenarios",
+    )
+    compare_event.add_argument(
+        "--output-root",
+        default="output/comparisons",
+        help="Output root for comparison artifacts",
     )
     return parser
 
@@ -3432,6 +3740,10 @@ def _main():
         if not questions:
             parser.error("Provide at least one --question or a --questions-file.")
         _cli_interview_agent(args.agent_id, questions, context=args.context)
+        return
+
+    if args.command == "compare-event":
+        _cli_compare_event(args)
         return
 
     run_simulation()

@@ -72,6 +72,17 @@ Optional interview context:
 python generative_city_sim.py interview --agent-id 31 --question "Question" --context "Short background context"
 ```
 
+Counterfactual event comparison (parallel with/without event):
+```bash
+python generative_city_sim.py compare-event \
+  --event-name "临时交通限行" \
+  --event-description "主干道限行导致通勤时间上升并影响出行决策" \
+  --event-day 2 \
+  --event-time 09:00 \
+  --sim-days 3 \
+  --seed 42
+```
+
 Generate a new city map from a text description:
 ```bash
 python generate_citymap.py --description "a small city with about 1000 residents, in east china"
