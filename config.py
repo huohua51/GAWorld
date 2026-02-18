@@ -56,6 +56,10 @@ CONFIG = {
         "start_weekday": "monday",
         "weekend_days": ["saturday", "sunday"],
     },
+    # External RAG information (added via CLI/file import).
+    "external_rag": {
+        "top_k": 2,
+    },
     # Simulation background (time/city/societal status prompt)
     "background": "2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。",
     # Data sources

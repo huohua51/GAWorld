@@ -1242,6 +1242,8 @@ INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_
 DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
 DAILY_PLAN_ANCHOR_MINUTES = max(1, int(DAILY_PLANNING_CONFIG.get("anchor_minutes", 30)))
 DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES = max(0, int(DAILY_PLANNING_CONFIG.get("random_delay_max_minutes", 10)))
+EXTERNAL_RAG_CONFIG = CONFIG.get("external_rag", {})
+EXTERNAL_RAG_TOP_K = max(1, int(EXTERNAL_RAG_CONFIG.get("top_k", 2)))
 CALENDAR_CONFIG = CONFIG.get("calendar", {})
 SIM_START_WEEKDAY_INDEX = _weekday_to_index(CALENDAR_CONFIG.get("start_weekday", "monday"))
 if SIM_START_WEEKDAY_INDEX is None:
@@ -1884,6 +1886,26 @@ def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, da
     )
     return aligned if changed else list(schedule)
 
+def _external_rag_hint(agent, query, max_items=EXTERNAL_RAG_TOP_K):
+    hits = retrieve_relevant_memories(
+        agent,
+        query,
+        max_items=max_items,
+        entry_types=["external_info"],
+    )
+    if hits:
+        return _format_memory_hint(hits, max_chars=240)
+    fallback = []
+    if isinstance(agent, dict):
+        for item in reversed(agent.get("memory", [])):
+            text = str(item).strip()
+            if "[额外信息" not in text:
+                continue
+            fallback.append({"type": "external_info", "text": text})
+            if len(fallback) >= max_items:
+                break
+    return _format_memory_hint(list(reversed(fallback)), max_chars=240)
+
 def _jitter_schedule_times(base_schedule, max_shift=45, min_gap=20):
     if not base_schedule:
         return []
@@ -1958,6 +1980,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     )
     memory_hits = retrieve_relevant_memories(agent, "日程安排 今日计划", max_items=VECTOR_DB_TOP_K)
     memory_hint = _format_memory_hint(memory_hits)
+    external_hint = _external_rag_hint(agent, f"{day_type_zh} 日程 计划")
     intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
     prompt = f"""
 你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
@@ -1967,6 +1990,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 基础日程（作为框架，可在时间点上做 0-60 分钟内的微调）：
 {base_text}
 可参考的近期记忆：{memory_hint}
+可参考的额外信息：{external_hint}
 今日行为意图：{intent_hint}
 日程约束：{day_rule}
 要求：
@@ -2018,11 +2042,13 @@ def generate_schedule(agent):
     ])
     memory_hits = retrieve_relevant_memories(agent, "日程安排", max_items=VECTOR_DB_TOP_K)
     memory_hint = _format_memory_hint(memory_hits)
+    external_hint = _external_rag_hint(agent, "长期日程 生活偏好 职业节奏")
     prompt = f"""
 你是城市生活模拟器的日程生成器。请基于角色资料生成一天日程安排。
 角色资料：
 {profile_text}
 可参考的近期记忆：{memory_hint}
+可参考的额外信息：{external_hint}
 要求：
 1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
 2) 6-10 项，时间升序覆盖早中晚，活动为中文短语。
@@ -2505,6 +2531,7 @@ def perception(agent, time_str, social_context, env_context, policy_event):
 def planning(agent, perception_text):
     memory_hits = retrieve_relevant_memories(agent, perception_text, max_items=VECTOR_DB_TOP_K)
     memory_hint = _format_memory_hint(memory_hits)
+    external_hint = _external_rag_hint(agent, perception_text)
     history_hint = "暂无历史"
     if STATEFUL:
         history_blocks = load_recent_log_blocks(agent["id"], max_blocks=2, max_chars=380)
@@ -2515,6 +2542,7 @@ def planning(agent, perception_text):
 你是{agent['name']}。
 你的感知是：{perception_text}
 你的近期经验：{memory_hint}
+可用额外信息：{external_hint}
 你今天的行为意图：{intent_hint}
 你的近期历史片段：
 {history_hint}
@@ -3385,6 +3413,190 @@ def _parse_question_list(value):
         return [str(v).strip() for v in value if str(v).strip()]
     return [v.strip() for v in str(value).splitlines() if v.strip()]
 
+def _sanitize_extra_text(text, max_chars=2000):
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[:max_chars]
+    return cleaned
+
+def _sanitize_timestamp_text(timestamp):
+    if timestamp is None:
+        return ""
+    cleaned = re.sub(r"\s+", " ", str(timestamp)).strip()
+    return cleaned[:64]
+
+def _compose_external_info_text(text, timestamp=None, source=None):
+    body = _sanitize_extra_text(text)
+    if not body:
+        return ""
+    ts = _sanitize_timestamp_text(timestamp)
+    src = _sanitize_extra_text(source, max_chars=80) if source else ""
+    tags = ["额外信息"]
+    if ts:
+        tags.append(f"时间:{ts}")
+    if src:
+        tags.append(f"来源:{src}")
+    keyword_tokens = []
+    for chunk in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{3,}", body):
+        token = chunk.strip().lower()
+        if not token:
+            continue
+        if re.match(r"^[\u4e00-\u9fff]{5,}$", token):
+            for i in range(len(token) - 1):
+                keyword_tokens.append(token[i:i + 2])
+        else:
+            keyword_tokens.append(token)
+    deduped = []
+    seen = set()
+    for token in keyword_tokens:
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+        if len(deduped) >= 24:
+            break
+    keyword_hint = f" 关键词: {' '.join(deduped)}" if deduped else ""
+    return f"[{' | '.join(tags)}] {body}{keyword_hint}"
+
+def _upsert_external_info(agent_id, text, timestamp=None, source=None):
+    payload = _compose_external_info_text(text, timestamp=timestamp, source=source)
+    if not payload:
+        return ""
+    sim_time = _sanitize_timestamp_text(timestamp) or "external"
+    vector_db_add_entry(agent_id, "external_info", payload, sim_day=None, sim_time=sim_time)
+    existing = load_agent_memory(agent_id)
+    existing.append(payload)
+    save_agent_memory({"id": agent_id, "memory": existing})
+    return payload
+
+def _parse_timestamped_line(text):
+    line = str(text or "").strip()
+    if not line:
+        return "", ""
+    patterns = [
+        r"^\[(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)\]\s*(.+)$",
+        r"^(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)\s*[|｜,，]\s*(.+)$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, line)
+        if match:
+            return match.group(2).strip(), match.group(1).strip()
+    return line, ""
+
+def _normalize_external_item(item):
+    if isinstance(item, str):
+        text, ts = _parse_timestamped_line(item)
+        return {"text": text, "timestamp": ts}
+    if isinstance(item, dict):
+        text = ""
+        for key in ("text", "content", "info", "knowledge", "message"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                break
+        if not text:
+            text = _sanitize_extra_text(item)
+        ts = ""
+        for key in ("timestamp", "time", "date", "ts"):
+            value = item.get(key)
+            if value is not None and str(value).strip():
+                ts = _sanitize_timestamp_text(value)
+                break
+        return {"text": text, "timestamp": ts}
+    text, ts = _parse_timestamped_line(str(item))
+    return {"text": text, "timestamp": ts}
+
+def _parse_external_text_blob(blob):
+    raw = str(blob or "")
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", raw) if b.strip()]
+    if len(blocks) > 1:
+        return [_normalize_external_item(block) for block in blocks]
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    return [_normalize_external_item(line) for line in lines]
+
+def _load_external_items_from_file(file_path):
+    if not os.path.exists(file_path):
+        return []
+    ext = os.path.splitext(file_path)[1].lower()
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except OSError:
+        return []
+    if not raw.strip():
+        return []
+
+    if ext == ".json":
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return _parse_external_text_blob(raw)
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
+            data = data.get("items")
+        if isinstance(data, list):
+            return [_normalize_external_item(item) for item in data]
+        return [_normalize_external_item(data)]
+
+    if ext in (".jsonl", ".ndjson"):
+        items = []
+        for line in raw.splitlines():
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                item = json.loads(text)
+            except json.JSONDecodeError:
+                item = text
+            items.append(_normalize_external_item(item))
+        return items
+
+    return _parse_external_text_blob(raw)
+
+def _cli_rag_add(agent_id, text, timestamp=None, source="cli"):
+    payload = _upsert_external_info(agent_id, text, timestamp=timestamp, source=source)
+    if not payload:
+        raise ValueError("额外信息为空，未写入。")
+    print("✅ 已写入额外 RAG 信息")
+    print(json.dumps({
+        "agent_id": int(agent_id),
+        "entry_type": "external_info",
+        "timestamp": _sanitize_timestamp_text(timestamp) or None,
+        "source": source,
+        "text": payload,
+    }, ensure_ascii=False, indent=2))
+
+def _cli_rag_import(agent_id, file_path, source=None, default_timestamp=None):
+    items = _load_external_items_from_file(file_path)
+    if not items:
+        raise ValueError(f"文件未解析到有效信息：{file_path}")
+    src = source or os.path.basename(file_path)
+    inserted = 0
+    preview = []
+    for item in items:
+        text = _sanitize_extra_text(item.get("text", ""))
+        if not text:
+            continue
+        timestamp = item.get("timestamp") or default_timestamp
+        payload = _upsert_external_info(agent_id, text, timestamp=timestamp, source=src)
+        if not payload:
+            continue
+        inserted += 1
+        if len(preview) < 5:
+            preview.append({
+                "timestamp": _sanitize_timestamp_text(timestamp) or None,
+                "text": payload,
+            })
+    if inserted <= 0:
+        raise ValueError(f"文件存在内容但无有效条目写入：{file_path}")
+    print("✅ 已批量导入额外 RAG 信息")
+    print(json.dumps({
+        "agent_id": int(agent_id),
+        "file": file_path,
+        "source": src,
+        "inserted": inserted,
+        "preview": preview,
+    }, ensure_ascii=False, indent=2))
+
 def _cli_interview_agent(agent_id, questions, context=None):
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
@@ -3402,6 +3614,43 @@ def _sanitize_slug(text):
     cleaned = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", str(text or "").strip())
     cleaned = cleaned.strip("_")
     return cleaned[:40] if cleaned else "event"
+
+
+def _extract_run_failure_hint(log_path, max_lines=80):
+    if not log_path or not os.path.exists(log_path):
+        return "日志不存在"
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = [line.rstrip("\n") for line in f]
+    except OSError:
+        return "日志读取失败"
+    if not lines:
+        return "日志为空"
+    tail = lines[-max_lines:]
+    joined = "\n".join(tail)
+    hint_lines = []
+    traceback_start = None
+    for idx, line in enumerate(tail):
+        if line.startswith("Traceback (most recent call last):"):
+            traceback_start = idx
+            break
+    if traceback_start is not None:
+        hint_lines.extend(tail[traceback_start:])
+    else:
+        error_markers = ["RuntimeError", "ConnectionError", "ValueError", "KeyError", "Exception"]
+        for line in reversed(tail):
+            if any(marker in line for marker in error_markers):
+                hint_lines = [line]
+                break
+    if not hint_lines:
+        hint_lines = tail[-8:]
+    snippet = "\n".join(hint_lines[-20:])
+    if "localhost" in joined and "11434" in joined and "Connection refused" in joined:
+        snippet += (
+            "\n建议：当前配置正在请求本地 Ollama（localhost:11434），"
+            "请先启动 Ollama，或在 compare-event 命令中显式指定可用 provider（--llm-provider）。"
+        )
+    return snippet
 
 
 def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
@@ -3422,6 +3671,18 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
         overrides["sim_days"] = int(args.sim_days)
     if args.agent_ids:
         overrides["agent_ids"] = list(args.agent_ids)
+    if getattr(args, "llm_provider", None):
+        routing = CONFIG.get("llm", {}).get("routing", {})
+        task_map = routing.get("tasks", {})
+        forced_tasks = {}
+        if isinstance(task_map, dict):
+            forced_tasks = {str(k): str(args.llm_provider) for k in task_map.keys()}
+        overrides["llm"] = {
+            "routing": {
+                "default": str(args.llm_provider),
+                "tasks": forced_tasks,
+            }
+        }
     return overrides
 
 
@@ -3638,9 +3899,12 @@ def _cli_compare_event(args):
     file_without.close()
     file_with.close()
     if code_without != 0 or code_with != 0:
+        without_hint = _extract_run_failure_hint(run_without_log)
+        with_hint = _extract_run_failure_hint(run_with_log)
         raise RuntimeError(
             "并行 simulation 运行失败。"
-            f" 无事件日志：{run_without_log}；有事件日志：{run_with_log}"
+            f"\n无事件日志：{run_without_log}\n{without_hint}\n"
+            f"\n有事件日志：{run_with_log}\n{with_hint}"
         )
 
     baseline_state_csv = os.path.join(baseline_overrides["state_output_dir"], "agent_state_history.csv")
@@ -3686,6 +3950,40 @@ def _build_arg_parser():
         help="Optional background context for the interview",
     )
 
+    rag_add = subparsers.add_parser(
+        "rag-add",
+        help="Add one external RAG info item for an agent",
+    )
+    rag_add.add_argument("--agent-id", type=int, required=True, help="Agent ID")
+    rag_add.add_argument("--text", required=True, help="External info text")
+    rag_add.add_argument(
+        "--timestamp",
+        default=None,
+        help="Optional timestamp for this info (e.g. 2026-02-18 09:30)",
+    )
+    rag_add.add_argument(
+        "--source",
+        default="cli",
+        help="Source tag for this info",
+    )
+
+    rag_import = subparsers.add_parser(
+        "rag-import",
+        help="Import external RAG info from a file for an agent",
+    )
+    rag_import.add_argument("--agent-id", type=int, required=True, help="Agent ID")
+    rag_import.add_argument("--file", required=True, help="Input file path (.txt/.md/.json/.jsonl)")
+    rag_import.add_argument(
+        "--source",
+        default=None,
+        help="Optional source tag (defaults to file name)",
+    )
+    rag_import.add_argument(
+        "--default-timestamp",
+        default=None,
+        help="Fallback timestamp for items without timestamp",
+    )
+
     compare_event = subparsers.add_parser(
         "compare-event",
         help="Run two simulations in parallel (with/without a specified event) and compare impact",
@@ -3707,6 +4005,11 @@ def _build_arg_parser():
         type=int,
         default=42,
         help="Random seed shared by both scenarios",
+    )
+    compare_event.add_argument(
+        "--llm-provider",
+        default=None,
+        help="Force both scenarios to use the same provider name (e.g., openai_gpt, ollama_local)",
     )
     compare_event.add_argument(
         "--output-root",
@@ -3740,6 +4043,24 @@ def _main():
         if not questions:
             parser.error("Provide at least one --question or a --questions-file.")
         _cli_interview_agent(args.agent_id, questions, context=args.context)
+        return
+
+    if args.command == "rag-add":
+        _cli_rag_add(
+            args.agent_id,
+            args.text,
+            timestamp=args.timestamp,
+            source=args.source,
+        )
+        return
+
+    if args.command == "rag-import":
+        _cli_rag_import(
+            args.agent_id,
+            args.file,
+            source=args.source,
+            default_timestamp=args.default_timestamp,
+        )
         return
 
     if args.command == "compare-event":

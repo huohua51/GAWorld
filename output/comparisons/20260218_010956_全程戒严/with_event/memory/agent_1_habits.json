@@ -1,0 +1,111 @@
+{
+  "morning|work|起床": {
+    "action_counts": {
+      "检查手机消息，快速浏览。": 1
+    },
+    "preferred_action": "检查手机消息，快速浏览。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "morning|public|准备早餐/外卖": {
+    "action_counts": {
+      "清理餐具": 2
+    },
+    "preferred_action": "清理餐具",
+    "strength": 0.23824,
+    "last_updated_day": 3
+  },
+  "morning|work|通勤上班": {
+    "action_counts": {
+      "乘坐地铁/公交，避开高峰期。": 2,
+      "回复工作消息": 1
+    },
+    "preferred_action": "乘坐地铁/公交，避开高峰期。",
+    "strength": 0.2287104,
+    "last_updated_day": 3
+  },
+  "afternoon|public|午餐": {
+    "action_counts": {
+      "与同事简短闲聊，避免深入交流。": 1
+    },
+    "preferred_action": "与同事简短闲聊，避免深入交流。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "evening|work|下班": {
+    "action_counts": {
+      "规划晚饭": 1,
+      "深呼吸，放松肩膀，缓解一天的紧张。": 1
+    },
+    "preferred_action": "规划晚饭",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 2
+  },
+  "evening|work|个人技术学习": {
+    "action_counts": {
+      "运行代码示例，动手实践。": 1,
+      "构建小型项目，巩固所学。": 1
+    },
+    "preferred_action": "运行代码示例，动手实践。",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 2
+  },
+  "night|home|睡前准备": {
+    "action_counts": {
+      "睡觉": 3
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.2991808,
+    "last_updated_day": 3
+  },
+  "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 3
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.2991808,
+    "last_updated_day": 3
+  },
+  "morning|public|起床": {
+    "action_counts": {
+      "拉开窗帘": 1,
+      "整理床铺": 1
+    },
+    "preferred_action": "拉开窗帘",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 3
+  },
+  "morning|home|准备早餐/外卖": {
+    "action_counts": {
+      "等待外卖送达，关注订单状态。": 1
+    },
+    "preferred_action": "等待外卖送达，关注订单状态。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 2
+  },
+  "afternoon|work|午餐": {
+    "action_counts": {
+      "浏览社交媒体": 1,
+      "点外卖": 1
+    },
+    "preferred_action": "浏览社交媒体",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 3
+  },
+  "evening|public|下班": {
+    "action_counts": {
+      "查看外卖订单": 1
+    },
+    "preferred_action": "查看外卖订单",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  },
+  "evening|public|个人技术学习": {
+    "action_counts": {
+      "构建小型项目": 1
+    },
+    "preferred_action": "构建小型项目",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  }
+}

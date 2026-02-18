@@ -1,0 +1,116 @@
+{
+  "morning|work|起床、洗漱": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "morning|work|在家吃早餐，查看工作邮件": {
+    "action_counts": {
+      "继续处理手头工作": 3
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.2991808,
+    "last_updated_day": 3
+  },
+  "morning|work|通勤上班": {
+    "action_counts": {
+      "查看实时地铁/公交信息": 2,
+      "刷手机": 1
+    },
+    "preferred_action": "查看实时地铁/公交信息",
+    "strength": 0.2287104,
+    "last_updated_day": 3
+  },
+  "afternoon|public|午餐外卖": {
+    "action_counts": {
+      "收到外卖，快速拆包": 1
+    },
+    "preferred_action": "收到外卖，快速拆包",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "evening|work|工作，项目开发": {
+    "action_counts": {
+      "继续处理手头工作": 2
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.23824,
+    "last_updated_day": 2
+  },
+  "evening|public|下班，回家": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 1
+  },
+  "night|home|睡前放松，阅读/刷手机": {
+    "action_counts": {
+      "睡觉": 2
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.23824,
+    "last_updated_day": 2
+  },
+  "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 3
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.2991808,
+    "last_updated_day": 3
+  },
+  "morning|public|起床、洗漱": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 3
+  },
+  "afternoon|work|午餐外卖": {
+    "action_counts": {
+      "用筷子夹菜": 1,
+      "浏览菜单": 1
+    },
+    "preferred_action": "用筷子夹菜",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 3
+  },
+  "evening|home|下班，回家": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 2
+  },
+  "evening|public|工作，项目开发": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  },
+  "evening|work|下班，回家": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  },
+  "night|work|睡前放松，阅读/刷手机": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  }
+}

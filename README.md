@@ -80,6 +80,7 @@ python generative_city_sim.py compare-event \
   --event-day 2 \
   --event-time 09:00 \
   --sim-days 3 \
+  --llm-provider openai_gpt \
   --seed 42
 ```
 
