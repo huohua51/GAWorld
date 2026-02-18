@@ -6,10 +6,12 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - Agent construction from CSV state seeds + Markdown profiles.
 - Multi-backend LLM routing (Ollama / OpenAI / Anthropic-compatible).
 - Daily schedule generation, action selection, and reflection loops.
+- Weekday/weekend-aware daily routine generation with behavior differences.
 - Policy events with inferred effects on agent state.
 - Environment event system (natural + social events).
 - Social network creation and emotion diffusion.
 - Stateful memory and logs across runs.
+- External RAG info injection (timestamped), ingestible from CLI or files.
 - Location-aware actions with per-agent, per-location LLM biasing.
 - Time-aware location resolution (home at night, workplace during day with flexibility).
 - City map generation from natural language descriptions.
@@ -72,6 +74,27 @@ Optional interview context:
 python generative_city_sim.py interview --agent-id 31 --question "Question" --context "Short background context"
 ```
 
+Add one external RAG info item (supports optional timestamp):
+```bash
+python generative_city_sim.py rag-add \
+  --agent-id 31 \
+  --text "周末更倾向于骑行和逛书店" \
+  --timestamp "2026-02-18 09:30" \
+  --source "manual"
+```
+
+Import external RAG info from file (`.txt/.md/.json/.jsonl`):
+```bash
+python generative_city_sim.py rag-import \
+  --agent-id 31 \
+  --file output/test_extra_info.txt \
+  --source "profile_notes"
+```
+
+`txt/md` examples (one per line or blank-line blocks):
+- `[2026-02-10 18:00] 工作日晚上偏好在家做饭`
+- `2026-02-12 10:00 | 周末会和朋友去河边慢跑`
+
 Counterfactual event comparison (parallel with/without event):
 ```bash
 python generative_city_sim.py compare-event \
@@ -106,6 +129,13 @@ All runtime settings live in `config.py`.
 - `print_agent_profile`: print each agent profile at startup.
 - `time_step_minutes`: optional timeline granularity (e.g., `10`, `120`, `2h`). If unset, uses schedule times only.
 - `background`: background context injected into environment descriptions.
+- `calendar.start_weekday`: weekday name for Day 1 (`monday` ... `sunday`).
+- `calendar.weekend_days`: which weekdays count as weekend (default `["saturday","sunday"]`).
+
+### External RAG info
+- `external_rag.top_k`: number of external info hits injected into prompts.
+- Imported/added external info is stored as `entry_type="external_info"` in vector DB and appended into agent memory.
+- Timestamp is optional but recommended for time-sensitive facts.
 
 ### Data sources
 - `csv_path`: seed state values.
@@ -201,6 +231,8 @@ Simulation output is written under `output/`:
 
 ## Notes on behavior
 - Schedule/action generation is LLM-driven with a heuristic fallback.
+- Daily routine prompts include weekday/weekend context; weekend routines are profile-driven (job/personality/habits).
+- Planning and scheduling prompts retrieve `external_info` entries as additional context.
 - Agent state updates blend deterministic rules with small random noise.
 - Social influence shifts emotion toward neighbors’ average.
 - Location assignment uses `citymap.md` hubs + heuristic role matching and time-aware biasing.
