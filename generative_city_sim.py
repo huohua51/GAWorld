@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import date, datetime, timedelta
 import matplotlib.pyplot as plt
 import networkx as nx
 from html import unescape
@@ -143,12 +144,37 @@ def _build_weekend_indexes(raw_days):
             indexes.add(idx)
     return indexes or {5, 6}
 
-def _resolve_day_context(day_number, start_weekday_idx=0, weekend_indexes=None):
+def _parse_sim_start_date(value):
+    if value is None:
+        return date.today()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text or text.lower() == "today":
+        return date.today()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return date.today()
+
+def _resolve_day_context(day_number, start_weekday_idx=0, weekend_indexes=None, start_date=None):
     safe_day = max(1, int(day_number or 1))
-    idx = (int(start_weekday_idx) + safe_day - 1) % 7
+    sim_date = None
+    if isinstance(start_date, date):
+        sim_date = start_date + timedelta(days=safe_day - 1)
+        idx = sim_date.weekday()
+    else:
+        idx = (int(start_weekday_idx) + safe_day - 1) % 7
     weekend_indexes = weekend_indexes or {5, 6}
     is_weekend = idx in weekend_indexes
     return {
+        "sim_date": sim_date.isoformat() if sim_date else "",
+        "sim_date_zh": (
+            f"{sim_date.year}年{sim_date.month:02d}月{sim_date.day:02d}日"
+            if sim_date else ""
+        ),
         "weekday_index": idx,
         "weekday_en": _WEEKDAY_ORDER[idx],
         "weekday_zh": _WEEKDAY_ZH[idx],
@@ -1245,6 +1271,7 @@ DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES = max(0, int(DAILY_PLANNING_CONFIG.get("rand
 EXTERNAL_RAG_CONFIG = CONFIG.get("external_rag", {})
 EXTERNAL_RAG_TOP_K = max(1, int(EXTERNAL_RAG_CONFIG.get("top_k", 2)))
 CALENDAR_CONFIG = CONFIG.get("calendar", {})
+SIM_START_DATE = _parse_sim_start_date(CALENDAR_CONFIG.get("start_date", "today"))
 SIM_START_WEEKDAY_INDEX = _weekday_to_index(CALENDAR_CONFIG.get("start_weekday", "monday"))
 if SIM_START_WEEKDAY_INDEX is None:
     SIM_START_WEEKDAY_INDEX = 0
@@ -1835,6 +1862,7 @@ def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, da
     memory_hint = _format_memory_hint(memory_hits)
     intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
     weekday_zh = day_context.get("weekday_zh", "周末")
+    sim_date_text = day_context.get("sim_date", "")
     day_label = f"Day {day}" if day is not None else "当日"
     weekend_work_possible = any(
         k in " ".join([
@@ -1852,7 +1880,7 @@ def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, da
     prompt = f"""
 你是城市生活模拟器的“周末个性化日程改写器”。
 请根据角色 profile（职业、性格、爱好/习惯）改写周末活动，避免套用通用模板。
-日期：{day_label}，{weekday_zh}（周末）
+日期：{day_label}，{sim_date_text}，{weekday_zh}（周末）
 角色资料：
 {profile_text}
 当前周末草案：
@@ -1957,8 +1985,10 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
         day,
         start_weekday_idx=SIM_START_WEEKDAY_INDEX,
         weekend_indexes=SIM_WEEKEND_INDEXES,
+        start_date=SIM_START_DATE,
     )
     day_label = f"Day {day}" if day is not None else "当日"
+    sim_date_text = day_context.get("sim_date", "")
     weekday_zh = day_context.get("weekday_zh", "周一")
     day_type_zh = day_context.get("day_type_zh", "工作日")
     if day_context.get("day_type") == "weekend":
@@ -1986,7 +2016,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
 角色资料：
 {profile_text}
-日期类型：{day_label}，{weekday_zh}，{day_type_zh}
+日期类型：{day_label}，{sim_date_text}，{weekday_zh}，{day_type_zh}
 基础日程（作为框架，可在时间点上做 0-60 分钟内的微调）：
 {base_text}
 可参考的近期记忆：{memory_hint}
@@ -2933,8 +2963,13 @@ def run_simulation():
             day,
             start_weekday_idx=SIM_START_WEEKDAY_INDEX,
             weekend_indexes=SIM_WEEKEND_INDEXES,
+            start_date=SIM_START_DATE,
         )
-        day_desc = f"{day_context.get('weekday_zh', '周一')} {day_context.get('day_type_zh', '工作日')}"
+        day_desc = (
+            f"{day_context.get('sim_date', '')} "
+            f"{day_context.get('weekday_zh', '周一')} "
+            f"{day_context.get('day_type_zh', '工作日')}"
+        ).strip()
         print(f"\n================= Day {day} ({day_desc}) =================")
         daily_logs = defaultdict(str)
         llm_budget_by_agent = {}

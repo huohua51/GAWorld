@@ -129,6 +129,7 @@ All runtime settings live in `config.py`.
 - `print_agent_profile`: print each agent profile at startup.
 - `time_step_minutes`: optional timeline granularity (e.g., `10`, `120`, `2h`). If unset, uses schedule times only.
 - `background`: background context injected into environment descriptions.
+- `calendar.start_date`: simulation start date (`YYYY-MM-DD` or `today`), default `today`.
 - `calendar.start_weekday`: weekday name for Day 1 (`monday` ... `sunday`).
 - `calendar.weekend_days`: which weekdays count as weekend (default `["saturday","sunday"]`).
 

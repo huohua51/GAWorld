@@ -1,0 +1,133 @@
+{
+  "morning|home|起床、洗漱": {
+    "action_counts": {
+      "继续当前活动": 3
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.2991808,
+    "last_updated_day": 4
+  },
+  "morning|public|准备早餐、查看新闻": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 4
+  },
+  "morning|work|通勤上班": {
+    "action_counts": {
+      "乘坐地铁/公交": 1,
+      "查看时间": 1,
+      "佩戴耳机": 1
+    },
+    "preferred_action": "乘坐地铁/公交",
+    "strength": 0.15851520000000002,
+    "last_updated_day": 4
+  },
+  "afternoon|work|午餐外卖": {
+    "action_counts": {
+      "选择餐厅": 1
+    },
+    "preferred_action": "选择餐厅",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 2
+  },
+  "evening|work|工作": {
+    "action_counts": {
+      "调试代码": 1
+    },
+    "preferred_action": "调试代码",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 2
+  },
+  "evening|home|下班": {
+    "action_counts": {
+      "关闭显示器": 1,
+      "备份重要文件": 1
+    },
+    "preferred_action": "关闭显示器",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 3
+  },
+  "night|public|睡前放松、阅读": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 2
+  },
+  "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 3
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.2991808,
+    "last_updated_day": 4
+  },
+  "morning|home|准备早餐、查看新闻": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  },
+  "afternoon|home|午餐外卖": {
+    "action_counts": {
+      "选择支付方式": 1
+    },
+    "preferred_action": "选择支付方式",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  },
+  "afternoon|work|工作": {
+    "action_counts": {
+      "撰写技术报告": 1
+    },
+    "preferred_action": "撰写技术报告",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  },
+  "night|work|睡前放松、阅读": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 3
+  },
+  "afternoon|public|午餐外卖": {
+    "action_counts": {
+      "打开外卖APP": 1
+    },
+    "preferred_action": "打开外卖APP",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 4
+  },
+  "evening|home|工作": {
+    "action_counts": {
+      "阅读文档": 1
+    },
+    "preferred_action": "阅读文档",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 4
+  },
+  "evening|public|下班": {
+    "action_counts": {
+      "整理电脑文件": 1
+    },
+    "preferred_action": "整理电脑文件",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 4
+  },
+  "night|home|睡前放松、阅读": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 4
+  }
+}

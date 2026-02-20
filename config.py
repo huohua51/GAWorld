@@ -53,6 +53,7 @@ CONFIG = {
     "time_step_minutes": None,
     # Calendar settings for weekday/weekend simulation.
     "calendar": {
+        "start_date": "today",
         "start_weekday": "monday",
         "weekend_days": ["saturday", "sunday"],
     },
