@@ -1,0 +1,99 @@
+{
+  "external_environment_service": {
+    "enabled": false,
+    "base_url": "http://127.0.0.1:8765",
+    "timeout": 6,
+    "fallback_to_empty": true
+  },
+  "environment_server": {
+    "host": "0.0.0.0",
+    "port": 8765,
+    "state_path": "output/environment/server_state.json",
+    "use_llm": true
+  },
+  "environment": {
+    "enabled": true,
+    "event_chance": 0.6,
+    "max_events_per_tick": 2,
+    "natural_events": [
+      "Light rain in the afternoon",
+      "Cold front arrives, temperature drops",
+      "Dense fog in the morning",
+      "Heat wave alert",
+      "Poor air quality warning"
+    ],
+    "social_events": [
+      "Traffic congestion on main roads",
+      "Public transit delay",
+      "City marathon causing road closures",
+      "Neighborhood market fair",
+      "Minor protest near city center"
+    ]
+  },
+  "external_environment": {
+    "enabled": true,
+    "seed": 42,
+    "max_events_per_tick": 3,
+    "generator": {
+      "mode": "llm",
+      "history_days": 3,
+      "description": "中国东部省会城市，服务业与平台经济占比较高，天气季节性明显；宏观经济温和波动，政策调整频繁，科技应用迭代快，居民对就业与生活成本敏感。"
+    },
+    "natural": {
+      "enabled": true,
+      "daily_weather_chance": 0.95,
+      "extreme_chance": 0.08,
+      "weather_states": [
+        {"name": "晴朗", "weight": 0.28},
+        {"name": "多云", "weight": 0.24},
+        {"name": "小雨", "weight": 0.22},
+        {"name": "中雨", "weight": 0.12},
+        {"name": "高温", "weight": 0.08},
+        {"name": "寒潮", "weight": 0.06}
+      ],
+      "extreme_events": [
+        "短时强降雨预警",
+        "空气质量恶化预警",
+        "局地雷暴大风预警"
+      ]
+    },
+    "economic": {
+      "enabled": true,
+      "daily_market_volatility": 0.012,
+      "daily_market_drift": 0.0005,
+      "market_news_threshold_pct": 0.6,
+      "macro_event_chance": 0.12,
+      "macro_events": [
+        "社会消费数据走弱",
+        "就业市场边际改善",
+        "居民通胀预期上升",
+        "制造业景气回落"
+      ]
+    },
+    "political": {
+      "enabled": true,
+      "daily_policy_chance": 0.1,
+      "policy_events": [
+        "地方政府发布民生服务优化通知",
+        "就业促进政策细则更新",
+        "平台用工合规检查启动"
+      ]
+    },
+    "technology": {
+      "enabled": true,
+      "daily_tech_chance": 0.12,
+      "tech_events": [
+        "主流平台推荐算法更新",
+        "本地智慧交通服务升级",
+        "新型办公工具在企业扩散"
+      ]
+    },
+    "intraday": {
+      "enabled": true,
+      "natural_shock_chance": 0.06,
+      "economic_shock_chance": 0.05,
+      "political_shock_chance": 0.03,
+      "technology_shock_chance": 0.04
+    }
+  }
+}

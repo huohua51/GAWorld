@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
 from extensibility import HookBus
-from environment import EnvironmentSystem
+from environment import EnvironmentSystem, RemoteEnvironmentClient
 from llm_providers import call_llm
 from experience_store import (
     append_agent_episode,
@@ -107,6 +107,16 @@ def _minutes_to_time_str(minutes):
 def _build_time_grid(step_minutes):
     step = max(1, int(step_minutes))
     return [_minutes_to_time_str(m) for m in range(0, 24 * 60, step)]
+
+def _format_external_env_event(ev):
+    if not isinstance(ev, dict):
+        return str(ev)
+    etype = str(ev.get("type", "event"))
+    topic = str(ev.get("topic", "")).strip()
+    severity = float(ev.get("severity", 0.0))
+    description = str(ev.get("description", ev.get("name", ""))).strip()
+    topic_part = f"/{topic}" if topic else ""
+    return f"{etype}{topic_part}({severity:.2f}) {description}".strip()
 
 _WEEKDAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 _WEEKDAY_ZH = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -1085,7 +1095,7 @@ def reset_simulation():
                 os.remove(vector_db_path)
         except OSError:
             pass
-    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR]:
+    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR, ENV_OUTPUT_DIR]:
         if output_dir not in (memory_dir, log_dir):
             _clear_dir(output_dir)
     save_sim_state({
@@ -1224,6 +1234,13 @@ def save_state_history(state_history, output_dir="output/state"):
     df = pd.DataFrame(rows)
     df.to_csv(os.path.join(output_dir, "agent_state_history.csv"), index=False)
 
+def append_jsonl(path, row):
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
 
 # =========================================================
 # 参数
@@ -1246,6 +1263,7 @@ HUMAN_REALISM_CONFIG = CONFIG.get("human_realism", {})
 HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
+ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
 ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
@@ -2866,7 +2884,18 @@ def run_simulation():
         }
         for a in agents
     }
-    env_system = EnvironmentSystem(CONFIG.get("environment", {}), llm_fn=call_llm)
+    env_service_cfg = CONFIG.get("external_environment_service", {})
+    if isinstance(env_service_cfg, dict) and env_service_cfg.get("enabled", False):
+        env_system = RemoteEnvironmentClient(env_service_cfg)
+    else:
+        env_system = EnvironmentSystem(CONFIG, llm_fn=call_llm)
+    os.makedirs(ENV_OUTPUT_DIR, exist_ok=True)
+    env_timeline_path = os.path.join(ENV_OUTPUT_DIR, "timeline.jsonl")
+    if os.path.exists(env_timeline_path):
+        try:
+            os.remove(env_timeline_path)
+        except OSError:
+            pass
     background_text = str(BACKGROUND).strip()
     news_sources = load_news_sources(NEWS_SOURCES_PATH) if NEWS_ENABLED else []
     news_cache = []
@@ -2972,6 +3001,32 @@ def run_simulation():
         ).strip()
         print(f"\n================= Day {day} ({day_desc}) =================")
         daily_logs = defaultdict(str)
+        day_env_events = env_system.start_day(day, day_context=day_context, agents=agents)
+        day_env_context = env_system.get_day_context_text()
+        append_jsonl(
+            env_timeline_path,
+            {
+                "scope": "day",
+                "day": int(day),
+                "date": day_context.get("sim_date", ""),
+                "summary": day_env_context,
+                "events": day_env_events,
+            },
+        )
+        if day_env_events:
+            env_lines = "\n".join(f"- {_format_external_env_event(ev)}" for ev in day_env_events)
+            env_header = f"\n[ExternalEnvironment Day {day} {day_desc}]\n{env_lines}\n"
+            print(env_header.strip())
+            for agent in agents:
+                daily_logs[agent["id"]] += env_header
+                append_agent_log(agent, env_header)
+                vector_db_add_entry(
+                    agent["id"],
+                    "external_env",
+                    env_header.strip(),
+                    sim_day=day,
+                    sim_time="day_start",
+                )
         llm_budget_by_agent = {}
         daily_schedules = {}
         daily_routine_texts = {}
@@ -3070,6 +3125,8 @@ def run_simulation():
             actions=actions,
             timeline=timeline,
             daily_logs=daily_logs,
+            env_events=day_env_events,
+            env_context=day_env_context,
             extension_state=extension_state,
         )
 
@@ -3078,6 +3135,17 @@ def run_simulation():
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
+            if env_events:
+                append_jsonl(
+                    env_timeline_path,
+                    {
+                        "scope": "tick",
+                        "day": int(day),
+                        "date": day_context.get("sim_date", ""),
+                        "time": str(time_str),
+                        "events": env_events,
+                    },
+                )
             if background_text:
                 env_context = f"背景：{background_text} 当前环境事件：{env_context}"
             hook_bus.emit(
@@ -3133,6 +3201,15 @@ def run_simulation():
                         print(info_log)
                         daily_logs[agent_id] += info_log
                         append_agent_log(agent, info_log)
+                if env_events:
+                    for ev in env_events:
+                        vector_db_add_entry(
+                            agent_id,
+                            "external_env",
+                            f"[ExternalEnvironment Day {day} {time_str}] {_format_external_env_event(ev)}",
+                            sim_day=day,
+                            sim_time=time_str,
+                        )
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
                 social_context = get_social_context(agent, agents_by_id)
@@ -3698,6 +3775,7 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
         "vector_db_path": os.path.join(scenario_dir, "memory", "vector_db.sqlite"),
         "state_output_dir": os.path.join(scenario_dir, "state"),
         "network_output_dir": os.path.join(scenario_dir, "network"),
+        "environment_output_dir": os.path.join(scenario_dir, "environment"),
         "policy_events": policy_events,
         "stateful": True,
         "random_seed": int(args.seed),

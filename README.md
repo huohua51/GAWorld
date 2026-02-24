@@ -9,6 +9,7 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - Weekday/weekend-aware daily routine generation with behavior differences.
 - Policy events with inferred effects on agent state.
 - Environment event system (natural + social events).
+- External dynamic environment simulation (natural/economic/political/technology).
 - Social network creation and emotion diffusion.
 - Stateful memory and logs across runs.
 - External RAG info injection (timestamped), ingestible from CLI or files.
@@ -22,6 +23,8 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - `generative_city_sim.py` main simulator + CLI entrypoint.
 - `config.py` runtime configuration (LLM routing, sim params, data paths, events).
 - `environment.py` environment event generator.
+- `environment_config.json` environment and external environment configuration.
+- `external_environment_server.py` standalone HTTP backend for shared external environment state.
 - `hangzhou_agents_state_init.csv` seed state values per agent.
 - `hangzhou_profiles_with_names.md` detailed agent profiles.
 - `citymap.md` village map (hubs + nearby locations).
@@ -112,6 +115,16 @@ Generate a new city map from a text description:
 python generate_citymap.py --description "a small city with about 1000 residents, in east china"
 ```
 
+Run external environment backend server (shared by multiple simulations / machines):
+```bash
+python external_environment_server.py --host 0.0.0.0 --port 8765
+```
+Override LLM generation mode when needed:
+```bash
+python external_environment_server.py --no-llm
+python external_environment_server.py --use-llm
+```
+
 ## Configuration guide
 All runtime settings live in `config.py`.
 
@@ -170,6 +183,33 @@ All runtime settings live in `config.py`.
 `environment` enables randomized natural/social events per tick:
 - `enabled`, `event_chance`, `max_events_per_tick`
 - `natural_events` and `social_events` lists
+- Environment settings are loaded from `/Users/cw/dev/GAWorld/environment_config.json` by default.
+
+### External dynamic environment
+`external_environment` simulates broader external context with structured events:
+- `enabled`, `seed`, `max_events_per_tick`
+- `generator.mode`: `llm` or `rules` (fallback). In `llm` mode, environment is generated from description, not fixed templates.
+- `generator.description`: scenario description used by LLM to synthesize daily environment and evolution rules.
+- `generator.history_days`: how many recent day summaries are fed back for temporal evolution.
+- `natural`: daily weather + extreme weather alerts
+- `economic`: market volatility + macro events
+- `political`: policy/governance announcements
+- `technology`: platform/tech diffusion events
+- `intraday`: short-term shocks for each domain
+
+Generated events are written to `output/environment/timeline.jsonl` and injected into runtime context.
+If LLM generation fails or returns invalid JSON, the system automatically falls back to rule-based generation.
+You can switch environment config file via `CONFIG["environment_config_path"]` in `/Users/cw/dev/GAWorld/config.py`.
+
+### Remote environment service
+To decouple environment simulation from agent simulation, enable remote mode in `environment_config.json`:
+- `external_environment_service.enabled`: `true`
+- `external_environment_service.base_url`: e.g. `http://10.0.0.8:8765`
+- `external_environment_service.timeout`: request timeout seconds
+- `environment_server.use_llm`: default LLM mode for backend server (can be overridden by CLI flags)
+
+When enabled, `generative_city_sim.py` fetches day/tick environment state from the server instead of generating it locally.
+This allows multiple agent simulators (including on different machines) to share one dynamic environment timeline.
 
 ### News / social media
 `news` enables optional web reading and memory capture:
@@ -221,6 +261,7 @@ Simulation output is written under `output/`:
 - `output/memory/agent_<id>_relationships.json` relationship closeness/trust snapshots.
 - `output/memory/sim_state.json` last simulated day for stateful runs.
 - `output/memory/vector_db.sqlite` vector memory store (logs + summaries).
+- `output/environment/timeline.jsonl` day/tick external environment timeline.
 - `output/network/social_network.png` social graph snapshot.
 - `output/state/agent_state_over_time.png` state evolution plot.
 - `output/state/agent_state_history.csv` time series data.

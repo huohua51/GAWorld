@@ -1,29 +1,30 @@
 {
   "morning|home|起床、洗漱": {
     "action_counts": {
+      "继续当前活动": 4
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.355246336,
+    "last_updated_day": 5
+  },
+  "morning|public|准备早餐、查看新闻": {
+    "action_counts": {
       "继续当前活动": 3
     },
     "preferred_action": "继续当前活动",
     "strength": 0.2991808,
-    "last_updated_day": 4
-  },
-  "morning|public|准备早餐、查看新闻": {
-    "action_counts": {
-      "继续当前活动": 2
-    },
-    "preferred_action": "继续当前活动",
-    "strength": 0.23824,
-    "last_updated_day": 4
+    "last_updated_day": 5
   },
   "morning|work|通勤上班": {
     "action_counts": {
       "乘坐地铁/公交": 1,
       "查看时间": 1,
-      "佩戴耳机": 1
+      "佩戴耳机": 1,
+      "查看地图": 1
     },
     "preferred_action": "乘坐地铁/公交",
-    "strength": 0.15851520000000002,
-    "last_updated_day": 4
+    "strength": 0.15217459200000003,
+    "last_updated_day": 5
   },
   "afternoon|work|午餐外卖": {
     "action_counts": {
@@ -35,28 +36,30 @@
   },
   "evening|work|工作": {
     "action_counts": {
-      "调试代码": 1
+      "调试代码": 1,
+      "撰写技术报告": 1
     },
     "preferred_action": "调试代码",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 2
+    "strength": 0.16512000000000002,
+    "last_updated_day": 5
   },
   "evening|home|下班": {
     "action_counts": {
       "关闭显示器": 1,
-      "备份重要文件": 1
+      "备份重要文件": 1,
+      "调整外套": 1
     },
     "preferred_action": "关闭显示器",
-    "strength": 0.16512000000000002,
-    "last_updated_day": 3
+    "strength": 0.15851520000000002,
+    "last_updated_day": 5
   },
   "night|public|睡前放松、阅读": {
     "action_counts": {
-      "睡觉": 1
+      "睡觉": 2
     },
     "preferred_action": "睡觉",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 2
+    "strength": 0.23824,
+    "last_updated_day": 5
   },
   "night|home|睡觉": {
     "action_counts": {
@@ -100,11 +103,12 @@
   },
   "afternoon|public|午餐外卖": {
     "action_counts": {
-      "打开外卖APP": 1
+      "打开外卖APP": 1,
+      "下单": 1
     },
     "preferred_action": "打开外卖APP",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 4
+    "strength": 0.16512000000000002,
+    "last_updated_day": 5
   },
   "evening|home|工作": {
     "action_counts": {
@@ -129,5 +133,13 @@
     "preferred_action": "睡觉",
     "strength": 0.17200000000000001,
     "last_updated_day": 4
+  },
+  "night|public|睡觉": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 5
   }
 }

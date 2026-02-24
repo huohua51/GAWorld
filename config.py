@@ -70,6 +70,20 @@ CONFIG = {
     "stateful": True,
     "memory_dir": "output/memory",
     "log_dir": "output/logs",
+    "environment_output_dir": "output/environment",
+    "environment_config_path": "environment_config.json",
+    "external_environment_service": {
+        "enabled": False,
+        "base_url": "http://127.0.0.1:8765",
+        "timeout": 6,
+        "fallback_to_empty": True,
+    },
+    "environment_server": {
+        "host": "0.0.0.0",
+        "port": 8765,
+        "state_path": "output/environment/server_state.json",
+        "use_llm": True,
+    },
     # Memory model compatibility gate.
     # When version changes and stateful mode is enabled, run `reset` once.
     "memory_model_version": 2,
@@ -88,26 +102,6 @@ CONFIG = {
             "description": "Increase social security coverage and wage transparency, strengthen platform labor oversight."
         }
     ],
-    # Environment system
-    "environment": {
-        "enabled": True,
-        "event_chance": 0.6,
-        "max_events_per_tick": 2,
-        "natural_events": [
-            "Light rain in the afternoon",
-            "Cold front arrives, temperature drops",
-            "Dense fog in the morning",
-            "Heat wave alert",
-            "Poor air quality warning"
-        ],
-        "social_events": [
-            "Traffic congestion on main roads",
-            "Public transit delay",
-            "City marathon causing road closures",
-            "Neighborhood market fair",
-            "Minor protest near city center"
-        ]
-    },
     # Routine change (chance to deviate from schedule during the day)
     "routine_change": {
         "enabled": True,
@@ -203,5 +197,35 @@ def _load_env_override():
         return {}
     return payload if isinstance(payload, dict) else {}
 
+def _load_environment_config(path):
+    if not path:
+        return {}
+    target = str(path).strip()
+    if not target:
+        return {}
+    if not os.path.isabs(target):
+        target = os.path.join(os.path.dirname(__file__), target)
+    if not os.path.exists(target):
+        return {}
+    try:
+        with open(target, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    allowed = {}
+    if isinstance(payload.get("environment"), dict):
+        allowed["environment"] = payload["environment"]
+    if isinstance(payload.get("external_environment"), dict):
+        allowed["external_environment"] = payload["external_environment"]
+    if isinstance(payload.get("external_environment_service"), dict):
+        allowed["external_environment_service"] = payload["external_environment_service"]
+    if isinstance(payload.get("environment_server"), dict):
+        allowed["environment_server"] = payload["environment_server"]
+    return allowed
 
-_deep_update(CONFIG, _load_env_override())
+_OVERRIDES = _load_env_override()
+_deep_update(CONFIG, _OVERRIDES)
+_deep_update(CONFIG, _load_environment_config(CONFIG.get("environment_config_path")))
+_deep_update(CONFIG, _OVERRIDES)
