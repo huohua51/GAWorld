@@ -1,6 +1,39 @@
 # GAWorld
 
-GAWorld is a generative agent-based city simulation. It builds agents from profile data, generates daily schedules and actions with LLMs, simulates perceptions/plans/reflections across a timeline, applies policy and environment events, and logs state changes over time.
+GAWorld 是一个面向“城市社会行为实验”的生成式多智能体仿真项目。
+它将人物画像、社会网络、环境扰动、政策事件与 LLM 决策过程结合起来，
+用于观察个体行为、群体状态和长期演化的变化轨迹。
+
+## 项目介绍
+
+GAWorld 的核心目标不是“随机跑一群 Agent”，而是构建一个可对照、可回放、可扩展的社会实验场：
+
+- 你可以定义事件（如限行、平台新规、就业冲击）并观察其影响。
+- 你可以让同一批 Agent 在“有事件/无事件”两种场景并行运行，再做结果比较。
+- 你可以保留跨天记忆，让 Agent 的行为逐步体现经验累积、习惯形成和关系变化。
+
+该项目适合用于：
+
+- 城市治理与政策影响的快速仿真验证
+- 社会行为、风险传播、舆情响应的机制探索
+- AI 社会模拟、复杂系统课程或研究演示
+- Agent 记忆架构与行为一致性的工程实验
+
+## What It Simulates
+
+At runtime, each agent repeatedly goes through:
+
+1. perception (context awareness)
+2. planning (short-horizon intent)
+3. action selection (state + memory + location + habit bias)
+4. reflection (experience update)
+
+Across days, GAWorld accumulates:
+
+- episodic memories (structured events)
+- long-term summaries
+- habit strengths by time/location/activity context
+- social relationship strength shifts
 
 ## Features
 - Agent construction from CSV state seeds + Markdown profiles.
@@ -12,6 +45,7 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - External dynamic environment simulation (natural/economic/political/technology).
 - Social network creation and emotion diffusion.
 - Stateful memory and logs across runs.
+- Pluggable economy module (currency, income/expense, savings/assets, wealth pursuit).
 - External RAG info injection (timestamped), ingestible from CLI or files.
 - Location-aware actions with per-agent, per-location LLM biasing.
 - Time-aware location resolution (home at night, workplace during day with flexibility).
@@ -30,10 +64,12 @@ GAWorld is a generative agent-based city simulation. It builds agents from profi
 - `citymap.md` village map (hubs + nearby locations).
 - `generate_citymap.py` city map generator (from text descriptions).
 - `output/` simulation artifacts (logs, memory, plots, CSVs).
+- `site/` static project-intro website (`index.html`, `styles.css`).
 - `extensibility.py` hook dispatcher for custom lifecycle functions.
 - `custom_hooks.py` example custom hook functions.
 - `experience_store.py` structured episodic memory persistence.
 - `human_realism.py` behavior realism helpers (needs/habits/intentions/consolidation).
+- `economy_module.py` pluggable economy/wealth system via lifecycle hooks.
 
 ## Quickstart
 1) Install deps:
@@ -49,6 +85,13 @@ pip install -r requirements.txt
 3) Run the simulation:
 ```bash
 python generative_city_sim.py run
+```
+
+4) Open the static intro site (optional):
+```bash
+cd site
+python -m http.server 8080
+# then open http://localhost:8080
 ```
 
 ## CLI usage
@@ -176,6 +219,27 @@ All runtime settings live in `config.py`.
 - `behavior.inertia_weight`: repeated action/activity inertia bonus.
 - `behavior.need_weights`: weights for `energy`, `hunger`, and `social_need` in action choice.
 
+### Economy module
+`economy` adds a currency/property layer for each agent:
+- `enabled`: toggle the module.
+- `currency`: currency symbol/code (default `CNY`).
+- `output_dir`: output folder for economy ledgers.
+- `hours_per_step`: simulated hours for each timeline step (auto-derived from `time_step_minutes` when present).
+- `initial_savings_months_min/max`: initialize savings using monthly-income multiples.
+- `rent_income_ratio`, `daily_utilities_cost`, `base_living_cost_per_hour`: baseline housing/living costs.
+- `income_volatility`, `min_hourly_income`, `target_work_hours_per_day`: dynamic income controls.
+- `asset_safety_days`, `income_seek_threshold`: how strongly low assets trigger income-seeking behavior.
+- `income_seek_activities`: preferred activities when a high wealth-drive agent seeks more income.
+- `expense_ranges`: category spending ranges (`food`, `clothing`, `housing`, `transport`, etc.).
+
+The module is attached through extension hooks by default:
+- `on_simulation_start`
+- `on_day_start`
+- `on_agent_pre_step`
+- `on_agent_post_step`
+- `on_day_end`
+- `on_simulation_end`
+
 ### Policy events
 `policy_events` is a list of `{day, time, name, description}`. Effects are inferred via LLM and applied to agent state.
 
@@ -261,6 +325,8 @@ Simulation output is written under `output/`:
 - `output/memory/agent_<id>_relationships.json` relationship closeness/trust snapshots.
 - `output/memory/sim_state.json` last simulated day for stateful runs.
 - `output/memory/vector_db.sqlite` vector memory store (logs + summaries).
+- `output/economy/daily_ledger.csv` daily income/expense/balance ledger.
+- `output/economy/wealth_snapshot.csv` end-of-run wealth snapshot by agent.
 - `output/environment/timeline.jsonl` day/tick external environment timeline.
 - `output/network/social_network.png` social graph snapshot.
 - `output/state/agent_state_over_time.png` state evolution plot.

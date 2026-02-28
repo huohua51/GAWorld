@@ -1,0 +1,83 @@
+{
+  "morning|public|远程办公/项目沟通": {
+    "action_counts": {
+      "利用在线协作工具，提高工作效率": 1,
+      "与团队成员进行沟通，解决问题": 1
+    },
+    "preferred_action": "利用在线协作工具，提高工作效率",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 17
+  },
+  "morning|public|阅读设计资讯/灵感收集": {
+    "action_counts": {
+      "关注设计趋势，了解行业动态，保持竞争力。": 1
+    },
+    "preferred_action": "关注设计趋势，了解行业动态，保持竞争力。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "morning|work|远程办公/项目沟通": {
+    "action_counts": {
+      "与团队成员进行沟通，解决问题": 1
+    },
+    "preferred_action": "与团队成员进行沟通，解决问题",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "afternoon|work|午餐/轻度社交": {
+    "action_counts": {
+      "和同事一起讨论设计方案，解决难题": 1
+    },
+    "preferred_action": "和同事一起讨论设计方案，解决难题",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "afternoon|work|项目工作/设计": {
+    "action_counts": {
+      "使用设计软件，进行设计制作": 1
+    },
+    "preferred_action": "使用设计软件，进行设计制作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "evening|home|夜跑": {
+    "action_counts": {
+      "跑步后，喝一杯热茶，补充水分。": 1
+    },
+    "preferred_action": "跑步后，喝一杯热茶，补充水分。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "evening|public|晚餐/放松": {
+    "action_counts": {
+      "和朋友一起看电影，放松身心": 1
+    },
+    "preferred_action": "和朋友一起看电影，放松身心",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "evening|work|看展/艺术活动": {
+    "action_counts": {
+      "在展览中，感受艺术带来的启发和思考": 1
+    },
+    "preferred_action": "在展览中，感受艺术带来的启发和思考",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "night|home|睡前阅读/放松": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  },
+  "night|public|睡觉/睡眠": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 17
+  }
+}

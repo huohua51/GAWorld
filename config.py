@@ -44,7 +44,7 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [1],
+    "agent_ids": [2],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
@@ -159,18 +159,52 @@ CONFIG = {
             },
         },
     },
+    # Economy module (currency, income/expense, assets, wealth pursuit)
+    "economy": {
+        "enabled": True,
+        "currency": "CNY",
+        "output_dir": "output/economy",
+        # Fixed simulation hours represented by one time step.
+        # If `time_step_minutes` is set, module will derive from it.
+        "hours_per_step": 1.0,
+        "initial_savings_months_min": 1.0,
+        "initial_savings_months_max": 6.0,
+        "rent_income_ratio": 0.22,
+        "daily_utilities_cost": 12.0,
+        "base_living_cost_per_hour": 6.0,
+        "min_hourly_income": 8.0,
+        "income_volatility": 0.25,
+        "target_work_hours_per_day": 7.0,
+        # Safety margin for asset buffer and behavior trigger.
+        "asset_safety_days": 18.0,
+        "income_seek_threshold": 0.56,
+        "income_seek_probability_scale": 0.9,
+        "wealth_drive_seek_threshold": 0.65,
+        "income_growth_when_deficit": 0.08,
+        "income_seek_activities": ["工作", "兼职", "接单", "技能提升"],
+        "expense_ranges": {
+            "food": [8.0, 26.0],
+            "clothing": [18.0, 120.0],
+            "transport": [3.0, 28.0],
+            "housing": [0.0, 0.0],
+            "leisure": [8.0, 70.0],
+            "education": [10.0, 60.0],
+            "healthcare": [12.0, 90.0],
+            "misc": [4.0, 22.0],
+        },
+    },
     # Optional extension hooks for custom functions.
     # Each item uses "module:function" import path.
     "extensions": {
         "strict": False,
         "hooks": {
-            "on_simulation_start": [],
-            "on_day_start": [],
+            "on_simulation_start": ["economy_module:on_simulation_start"],
+            "on_day_start": ["economy_module:on_day_start"],
             "on_time_tick": [],
-            "on_agent_pre_step": [],
-            "on_agent_post_step": [],
-            "on_day_end": [],
-            "on_simulation_end": [],
+            "on_agent_pre_step": ["economy_module:on_agent_pre_step"],
+            "on_agent_post_step": ["economy_module:on_agent_post_step"],
+            "on_day_end": ["economy_module:on_day_end"],
+            "on_simulation_end": ["economy_module:on_simulation_end"],
         },
     },
 }

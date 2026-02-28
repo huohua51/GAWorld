@@ -1,73 +1,89 @@
 {
   "morning|home|起床、洗漱": {
     "action_counts": {
-      "继续当前活动": 4
+      "继续当前活动": 7
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.355246336,
-    "last_updated_day": 5
+    "strength": 0.497938058887168,
+    "last_updated_day": 13
   },
   "morning|public|准备早餐、查看新闻": {
     "action_counts": {
-      "继续当前活动": 3
+      "继续当前活动": 6
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.2991808,
-    "last_updated_day": 5
+    "strength": 0.4542804987904,
+    "last_updated_day": 13
   },
   "morning|work|通勤上班": {
     "action_counts": {
       "乘坐地铁/公交": 1,
       "查看时间": 1,
-      "佩戴耳机": 1,
-      "查看地图": 1
+      "佩戴耳机": 4,
+      "查看地图": 2,
+      "准备好工作用品": 2,
+      "出门": 1,
+      "调整坐姿": 1,
+      "回复工作消息": 1
     },
-    "preferred_action": "乘坐地铁/公交",
-    "strength": 0.15217459200000003,
-    "last_updated_day": 5
+    "preferred_action": "佩戴耳机",
+    "strength": 0.3384348159617377,
+    "last_updated_day": 14
   },
   "afternoon|work|午餐外卖": {
     "action_counts": {
-      "选择餐厅": 1
+      "选择餐厅": 2,
+      "查看配送进度": 1,
+      "确认外卖是否正确": 2
     },
     "preferred_action": "选择餐厅",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 2
+    "strength": 0.21680062464,
+    "last_updated_day": 13
   },
   "evening|work|工作": {
     "action_counts": {
       "调试代码": 1,
-      "撰写技术报告": 1
+      "撰写技术报告": 1,
+      "运行代码": 1,
+      "打开电脑": 1,
+      "打开代码编辑器": 1,
+      "与同事沟通": 1,
+      "编写代码": 1
     },
     "preferred_action": "调试代码",
-    "strength": 0.16512000000000002,
-    "last_updated_day": 5
+    "strength": 0.134634339827712,
+    "last_updated_day": 14
   },
   "evening|home|下班": {
     "action_counts": {
-      "关闭显示器": 1,
+      "关闭显示器": 2,
       "备份重要文件": 1,
-      "调整外套": 1
+      "调整外套": 1,
+      "规划回家路线": 1,
+      "查看项目进度": 1,
+      "整理电脑文件": 1,
+      "起身伸展": 1,
+      "调整座椅姿势": 1
     },
     "preferred_action": "关闭显示器",
-    "strength": 0.15851520000000002,
-    "last_updated_day": 5
+    "strength": 0.19263704893583522,
+    "last_updated_day": 14
   },
   "night|public|睡前放松、阅读": {
-    "action_counts": {
-      "睡觉": 2
-    },
-    "preferred_action": "睡觉",
-    "strength": 0.23824,
-    "last_updated_day": 5
-  },
-  "night|home|睡觉": {
     "action_counts": {
       "睡觉": 3
     },
     "preferred_action": "睡觉",
     "strength": 0.2991808,
-    "last_updated_day": 4
+    "last_updated_day": 8
+  },
+  "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 10
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.6090503911987311,
+    "last_updated_day": 14
   },
   "morning|home|准备早餐、查看新闻": {
     "action_counts": {
@@ -79,19 +95,21 @@
   },
   "afternoon|home|午餐外卖": {
     "action_counts": {
-      "选择支付方式": 1
+      "选择支付方式": 1,
+      "选择餐厅": 1
     },
     "preferred_action": "选择支付方式",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 3
+    "strength": 0.16512000000000002,
+    "last_updated_day": 9
   },
   "afternoon|work|工作": {
     "action_counts": {
-      "撰写技术报告": 1
+      "撰写技术报告": 1,
+      "与同事沟通": 1
     },
     "preferred_action": "撰写技术报告",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 3
+    "strength": 0.16512000000000002,
+    "last_updated_day": 13
   },
   "night|work|睡前放松、阅读": {
     "action_counts": {
@@ -104,11 +122,13 @@
   "afternoon|public|午餐外卖": {
     "action_counts": {
       "打开外卖APP": 1,
-      "下单": 1
+      "下单": 1,
+      "选择菜品": 1,
+      "选择餐厅": 1
     },
     "preferred_action": "打开外卖APP",
-    "strength": 0.16512000000000002,
-    "last_updated_day": 5
+    "strength": 0.15217459200000003,
+    "last_updated_day": 14
   },
   "evening|home|工作": {
     "action_counts": {
@@ -120,26 +140,267 @@
   },
   "evening|public|下班": {
     "action_counts": {
-      "整理电脑文件": 1
+      "整理电脑文件": 2
     },
     "preferred_action": "整理电脑文件",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 4
+    "strength": 0.23824,
+    "last_updated_day": 8
   },
   "night|home|睡前放松、阅读": {
     "action_counts": {
-      "睡觉": 1
+      "睡觉": 7
     },
     "preferred_action": "睡觉",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 4
+    "strength": 0.497938058887168,
+    "last_updated_day": 14
   },
   "night|public|睡觉": {
+    "action_counts": {
+      "睡觉": 2
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.23824,
+    "last_updated_day": 8
+  },
+  "morning|work|起床、洗漱": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 7
+  },
+  "morning|work|准备早餐、查看新闻": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 8
+  },
+  "night|work|睡觉": {
     "action_counts": {
       "睡觉": 1
     },
     "preferred_action": "睡觉",
     "strength": 0.17200000000000001,
-    "last_updated_day": 5
+    "last_updated_day": 7
+  },
+  "morning|public|起床、洗漱": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 9
+  },
+  "evening|public|工作": {
+    "action_counts": {
+      "撰写技术报告": 1,
+      "编写代码": 1
+    },
+    "preferred_action": "撰写技术报告",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 11
+  },
+  "morning|public|起床，进行一套简易的拉伸运动，唤醒身体，并快速浏览技术博客，关注最新的算法趋势。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 10
+  },
+  "morning|work|准备早餐，同时听一段精心挑选的氛围音乐，避免过度关注新闻，减少焦虑。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 10
+  },
+  "morning|work|利用通勤时间，回顾昨天工作中的关键技术点，并思考如何优化代码效率。避免与他人闲聊。": {
+    "action_counts": {
+      "继续处理手头工作": 5
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.40682662912,
+    "last_updated_day": 16
+  },
+  "afternoon|work|午餐外卖，同时观看一个关于人工智能伦理的短视频，思考技术发展带来的社会影响。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 10
+  },
+  "afternoon|public|专注于完成当前技术报告的初稿，力求逻辑清晰、细节准确，并预留时间进行代码审查。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 10
+  },
+  "evening|home|下班后，进行30分钟的轻度瑜伽或冥想，放松身心，缓解工作压力。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 10
+  },
+  "night|home|阅读一本关于量子计算的书籍，或者在技术论坛上参与讨论，保持对技术的热情。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 10
+  },
+  "morning|work|下班后，进行30分钟的轻度瑜伽或冥想，放松身心，缓解工作压力。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 11
+  },
+  "afternoon|work|下班后，进行30分钟的轻度瑜伽或冥想，放松身心，缓解工作压力。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 12
+  },
+  "evening|work|睡前放松、阅读": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 12
+  },
+  "evening|work|下班": {
+    "action_counts": {
+      "检查邮件": 1
+    },
+    "preferred_action": "检查邮件",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 13
+  },
+  "morning|work|通勤途中，回顾昨天代码，思考优化方向。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 15
+  },
+  "morning|public|研究最新的算法论文，尝试解决一个长期困扰我的技术难题。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 15
+  },
+  "afternoon|work|在社区集市闲逛，寻找设计感强的物件或有趣的市集小吃，放松心情。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 15
+  },
+  "evening|public|完成技术报告初稿，重点优化核心算法部分。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 15
+  },
+  "evening|home|下班后，整理报告，并为明天的工作做计划。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 15
+  },
+  "night|work|听一些氛围音乐，或者尝试一些轻度编程相关的在线教程，放松大脑。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 15
+  },
+  "night|public|准备充足睡眠，为明天高效工作做好准备。": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 15
+  },
+  "morning|home|睡前，听舒缓的音乐，或回顾今天完成的工作，为明天做好准备。": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 16
+  },
+  "morning|work|通勤路上，听技术播客，或思考报告中遇到的难题。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 16
+  },
+  "afternoon|work|午餐外卖，利用午休时间快速阅读技术博客，或尝试解决一个算法难题。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 16
+  },
+  "afternoon|work|工作，专注于技术报告的初稿撰写，力求代码简洁高效。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 16
+  },
+  "evening|public|下班后，前往社区集市，寻找设计感强的物件或有趣的工艺品，放松心情。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 16
+  },
+  "night|home|在集市的咖啡馆，整理今天的收获，并尝试将集市的灵感融入到技术报告的细节中。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 16
+  },
+  "night|home|睡前，听舒缓的音乐，或回顾今天完成的工作，为明天做好准备。": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 16
   }
 }

@@ -1,0 +1,26 @@
+{
+  "currency": "CNY",
+  "wealth_drive": 0.6525,
+  "income_skill": 0.55,
+  "base_hourly_income": 92.52453924759996,
+  "hourly_income": 86.9426093982213,
+  "income_volatility": 0.25,
+  "income_target_daily": 730.8166388145742,
+  "monthly_rent": 3197.9511595469444,
+  "balance": 46222.94317598072,
+  "daily_income": 569.5853786532125,
+  "daily_expense": 375.875421273954,
+  "daily_expense_by_category": {
+    "food": 33.49419296455933,
+    "clothing": 0.0,
+    "housing": 118.59837198489815,
+    "transport": 86.66086597891808,
+    "leisure": 31.2711129858622,
+    "education": 54.56548886106139,
+    "healthcare": 0.0,
+    "misc": 51.28538849865482
+  },
+  "lifetime_income": 569.5853786532125,
+  "lifetime_expense": 375.875421273954,
+  "last_location": "Hangzhou Tech Labs"
+}

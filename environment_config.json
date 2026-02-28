@@ -1,6 +1,6 @@
 {
   "external_environment_service": {
-    "enabled": false,
+    "enabled": true,
     "base_url": "http://127.0.0.1:8765",
     "timeout": 6,
     "fallback_to_empty": true
