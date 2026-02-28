@@ -3,6 +3,7 @@ import json
 import os
 import random
 from copy import deepcopy
+from collections import defaultdict
 
 
 DEFAULT_ECONOMY_CONFIG = {
@@ -593,8 +594,37 @@ def on_simulation_end(context):
             )
             writer.writeheader()
             writer.writerows(day_rows)
+        per_agent_rows = defaultdict(list)
+        for row in day_rows:
+            agent_id = row.get("agent_id")
+            if agent_id is None:
+                continue
+            per_agent_rows[int(agent_id)].append(row)
+        agents_dir = os.path.join(output_dir, "agents")
+        os.makedirs(agents_dir, exist_ok=True)
+        for agent_id, rows in per_agent_rows.items():
+            path = os.path.join(agents_dir, f"agent_{agent_id}_ledger.csv")
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "day",
+                        "agent_id",
+                        "income",
+                        "expense",
+                        "net",
+                        "balance",
+                        "wealth_drive",
+                        "hourly_income",
+                        "econ_security",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerows(rows)
 
     snapshot_path = os.path.join(output_dir, "wealth_snapshot.csv")
+    snapshot_json_dir = os.path.join(output_dir, "agents")
+    os.makedirs(snapshot_json_dir, exist_ok=True)
     with open(snapshot_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
@@ -615,16 +645,30 @@ def on_simulation_end(context):
             econ = agent.get("economy", {})
             if not isinstance(econ, dict):
                 continue
-            writer.writerow(
-                {
-                    "agent_id": agent.get("id"),
-                    "currency": econ.get("currency", cfg.get("currency", "CNY")),
-                    "balance": round(_to_float(econ.get("balance", 0.0), 0.0), 4),
-                    "lifetime_income": round(_to_float(econ.get("lifetime_income", 0.0), 0.0), 4),
-                    "lifetime_expense": round(_to_float(econ.get("lifetime_expense", 0.0), 0.0), 4),
-                    "wealth_drive": round(_to_float(econ.get("wealth_drive", 0.0), 0.0), 4),
-                    "base_hourly_income": round(_to_float(econ.get("base_hourly_income", 0.0), 0.0), 4),
-                    "hourly_income": round(_to_float(econ.get("hourly_income", 0.0), 0.0), 4),
-                    "income_target_daily": round(_to_float(econ.get("income_target_daily", 0.0), 0.0), 4),
-                }
-            )
+            agent_row = {
+                "agent_id": agent.get("id"),
+                "currency": econ.get("currency", cfg.get("currency", "CNY")),
+                "balance": round(_to_float(econ.get("balance", 0.0), 0.0), 4),
+                "lifetime_income": round(_to_float(econ.get("lifetime_income", 0.0), 0.0), 4),
+                "lifetime_expense": round(_to_float(econ.get("lifetime_expense", 0.0), 0.0), 4),
+                "wealth_drive": round(_to_float(econ.get("wealth_drive", 0.0), 0.0), 4),
+                "base_hourly_income": round(_to_float(econ.get("base_hourly_income", 0.0), 0.0), 4),
+                "hourly_income": round(_to_float(econ.get("hourly_income", 0.0), 0.0), 4),
+                "income_target_daily": round(_to_float(econ.get("income_target_daily", 0.0), 0.0), 4),
+            }
+            writer.writerow(agent_row)
+            agent_id = agent_row["agent_id"]
+            if agent_id is None:
+                continue
+            json_path = os.path.join(snapshot_json_dir, f"agent_{agent_id}_snapshot.json")
+            with open(json_path, "w", encoding="utf-8") as jf:
+                json.dump(
+                    {
+                        "agent_id": agent_id,
+                        "name": agent.get("name", ""),
+                        "economy": econ,
+                    },
+                    jf,
+                    ensure_ascii=False,
+                    indent=2,
+                )

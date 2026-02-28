@@ -2,6 +2,7 @@ import os
 import random
 import tempfile
 import unittest
+import csv
 from unittest.mock import patch
 
 import economy_module as eco
@@ -134,6 +135,43 @@ class TestEconomyModule(unittest.TestCase):
         eco.on_day_end(end_ctx)
         self.assertGreater(agent["economy"]["base_hourly_income"], base_before)
         self.assertEqual(1, len(ext["economy_module"]["day_rows"]))
+
+    def test_simulation_end_exports_per_agent_files(self):
+        random.seed(31)
+        agent1 = _build_agent(1)
+        agent2 = _build_agent(2)
+        ext = {}
+        start_ctx = {"config": self.config, "agents": [agent1, agent2], "extension_state": ext}
+        eco.on_simulation_start(start_ctx)
+        for agent in (agent1, agent2):
+            agent["economy"]["daily_income"] = 100.0 + agent["id"]
+            agent["economy"]["daily_expense"] = 40.0 + agent["id"]
+        day_ctx = {
+            "config": self.config,
+            "day": 1,
+            "agents": [agent1, agent2],
+            "daily_logs": {1: "", 2: ""},
+            "extension_state": ext,
+        }
+        eco.on_day_end(day_ctx)
+        end_ctx = {"config": self.config, "agents": [agent1, agent2], "extension_state": ext}
+        eco.on_simulation_end(end_ctx)
+
+        self.assertTrue(os.path.exists(os.path.join(self.output_dir, "daily_ledger.csv")))
+        self.assertTrue(os.path.exists(os.path.join(self.output_dir, "wealth_snapshot.csv")))
+        ledger_1 = os.path.join(self.output_dir, "agents", "agent_1_ledger.csv")
+        ledger_2 = os.path.join(self.output_dir, "agents", "agent_2_ledger.csv")
+        snap_1 = os.path.join(self.output_dir, "agents", "agent_1_snapshot.json")
+        snap_2 = os.path.join(self.output_dir, "agents", "agent_2_snapshot.json")
+        self.assertTrue(os.path.exists(ledger_1))
+        self.assertTrue(os.path.exists(ledger_2))
+        self.assertTrue(os.path.exists(snap_1))
+        self.assertTrue(os.path.exists(snap_2))
+
+        with open(ledger_1, "r", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(1, len(rows))
+        self.assertEqual("1", rows[0]["agent_id"])
 
 
 if __name__ == "__main__":

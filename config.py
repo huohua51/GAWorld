@@ -44,7 +44,7 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [2],
+    "agent_ids": [4],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,

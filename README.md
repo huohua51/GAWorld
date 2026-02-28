@@ -327,6 +327,8 @@ Simulation output is written under `output/`:
 - `output/memory/vector_db.sqlite` vector memory store (logs + summaries).
 - `output/economy/daily_ledger.csv` daily income/expense/balance ledger.
 - `output/economy/wealth_snapshot.csv` end-of-run wealth snapshot by agent.
+- `output/economy/agents/agent_<id>_ledger.csv` per-agent daily ledger.
+- `output/economy/agents/agent_<id>_snapshot.json` per-agent final finance snapshot.
 - `output/environment/timeline.jsonl` day/tick external environment timeline.
 - `output/network/social_network.png` social graph snapshot.
 - `output/state/agent_state_over_time.png` state evolution plot.
