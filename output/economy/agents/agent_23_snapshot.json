@@ -1,0 +1,30 @@
+{
+  "agent_id": 23,
+  "name": "何志鹏",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.578,
+    "income_skill": 0.6200000000000001,
+    "base_hourly_income": 88.93686285563847,
+    "hourly_income": 88.93686285563847,
+    "income_volatility": 0.25,
+    "income_target_daily": 622.5580399894693,
+    "monthly_rent": 3063.3983628671726,
+    "balance": 30071.67423429032,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

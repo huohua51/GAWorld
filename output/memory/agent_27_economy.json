@@ -1,0 +1,26 @@
+{
+  "currency": "CNY",
+  "wealth_drive": 0.5874999999999999,
+  "income_skill": 0.611,
+  "base_hourly_income": 32.64134975806991,
+  "hourly_income": 32.64134975806991,
+  "income_volatility": 0.25,
+  "income_target_daily": 228.48944830648935,
+  "monthly_rent": 1225.2920251363967,
+  "balance": 21124.72410280071,
+  "daily_income": 0.0,
+  "daily_expense": 0.0,
+  "daily_expense_by_category": {
+    "food": 0.0,
+    "clothing": 0.0,
+    "housing": 0.0,
+    "transport": 0.0,
+    "leisure": 0.0,
+    "education": 0.0,
+    "healthcare": 0.0,
+    "misc": 0.0
+  },
+  "lifetime_income": 0.0,
+  "lifetime_expense": 0.0,
+  "last_location": ""
+}

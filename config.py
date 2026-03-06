@@ -44,7 +44,7 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [4],
+    "agent_ids": [5],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
@@ -60,6 +60,15 @@ CONFIG = {
     # External RAG information (added via CLI/file import).
     "external_rag": {
         "top_k": 2,
+        "bootstrap": {
+            "enabled": True,
+            "only_when_empty": True,
+            "profile_items": 3,
+            "web_items": 1,
+            "use_web_search": True,
+            "prefer_cached_news": True,
+            "max_chars_per_item": 280,
+        },
     },
     # Simulation background (time/city/societal status prompt)
     "background": "2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。",

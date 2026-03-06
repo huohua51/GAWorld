@@ -1,5 +1,5 @@
 {
-  "latest_day": 17,
+  "latest_day": 19,
   "day_cache": {
     "7": {
       "events": [
@@ -742,6 +742,141 @@
         "weekday_index": 0,
         "weekday_en": "monday",
         "weekday_zh": "周一",
+        "day_type": "weekday",
+        "day_type_zh": "工作日"
+      }
+    },
+    "18": {
+      "events": [
+        {
+          "id": "poliitcal-Policy-18-Day 18 全天-90276",
+          "type": "poliitcal",
+          "topic": "Policy",
+          "name": "平台用工合规检查持续进行",
+          "description": "政府持续加强对平台用工合规的检查力度，企业面临合规风险，可能导致劳动力成本上升。",
+          "severity": 0.6,
+          "scope": "city",
+          "start_time": "Day 18 全天",
+          "end_time": "",
+          "impact_tags": []
+        },
+        {
+          "id": "economic-Market-18-Day 18 全天-54548",
+          "type": "economic",
+          "topic": "Market",
+          "name": "市场风险偏好降低",
+          "description": "宏观经济形势不明朗，市场风险偏好降低，投资和消费意愿受到抑制，企业经营面临挑战。",
+          "severity": 0.5,
+          "scope": "city",
+          "start_time": "Day 18 全天",
+          "end_time": "",
+          "impact_tags": []
+        },
+        {
+          "id": "technoology-Adoption-18-Day 18 全天-45474",
+          "type": "technoology",
+          "topic": "Adoption",
+          "name": "科技应用迭代加速",
+          "description": "人工智能、大数据等技术在城市服务业和平台经济领域的应用持续迭代，提升效率的同时也带来就业结构调整压力。",
+          "severity": 0.4,
+          "scope": "city",
+          "start_time": "Day 18 全天",
+          "end_time": "",
+          "impact_tags": []
+        },
+        {
+          "id": "natural-Weather-18-Day 18 全天-48623",
+          "type": "natural",
+          "topic": "Weather",
+          "name": "春季气温升高",
+          "description": "气温逐渐升高，居民出行意愿增加，但可能带来夏季高温挑战，对能源需求产生影响。",
+          "severity": 0.2,
+          "scope": "city",
+          "start_time": "Day 18 全天",
+          "end_time": "",
+          "impact_tags": []
+        }
+      ],
+      "context": "中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。",
+      "day_context": {
+        "sim_date": "2026-03-17",
+        "sim_date_zh": "2026年03月17日",
+        "weekday_index": 1,
+        "weekday_en": "tuesday",
+        "weekday_zh": "周二",
+        "day_type": "weekday",
+        "day_type_zh": "工作日"
+      }
+    },
+    "19": {
+      "events": [
+        {
+          "id": "political-policy-19-Day 19 全天-79388",
+          "type": "political",
+          "topic": "policy",
+          "name": "平台用工合规检查持续进行",
+          "description": "政府部门持续加强对平台用工合规的检查力度，对平台企业运营带来一定压力。",
+          "severity": 0.6,
+          "scope": "city",
+          "start_time": "Day 19 全天",
+          "end_time": "",
+          "impact_tags": [
+            "mobility",
+            "stress"
+          ]
+        },
+        {
+          "id": "economic-market-19-Day 19 全天-12822",
+          "type": "economic",
+          "topic": "market",
+          "name": "市场风险偏好降低",
+          "description": "宏观经济形势不明朗，市场风险偏好降低，企业投资意愿受到抑制，消费意愿也受到影响。",
+          "severity": 0.5,
+          "scope": "city",
+          "start_time": "Day 19 全天",
+          "end_time": "",
+          "impact_tags": [
+            "economic",
+            "mobility"
+          ]
+        },
+        {
+          "id": "natural-weather-19-Day 19 全天-37209",
+          "type": "natural",
+          "topic": "weather",
+          "name": "春季微风，气温适宜",
+          "description": "春季气温逐渐升高，微风习习，天气适宜出行，但仍需关注突发性天气变化。",
+          "severity": 0.2,
+          "scope": "city",
+          "start_time": "Day 19 全天",
+          "end_time": "",
+          "impact_tags": [
+            "mobility"
+          ]
+        },
+        {
+          "id": "technoology-adoption-19-Day 19 全天-50638",
+          "type": "technoology",
+          "topic": "adoption",
+          "name": "人工智能在城市服务领域的应用加速",
+          "description": "人工智能技术在城市服务领域的应用持续加速，例如智能交通、智能安防等，但同时也带来数据安全和隐私保护方面的挑战。",
+          "severity": 0.4,
+          "scope": "city",
+          "start_time": "Day 19 全天",
+          "end_time": "",
+          "impact_tags": [
+            "mobility",
+            "economic"
+          ]
+        }
+      ],
+      "context": "中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。",
+      "day_context": {
+        "sim_date": "2026-03-20",
+        "sim_date_zh": "2026年03月20日",
+        "weekday_index": 4,
+        "weekday_en": "friday",
+        "weekday_zh": "周五",
         "day_type": "weekday",
         "day_type_zh": "工作日"
       }
@@ -3631,6 +3766,400 @@
         ],
         "context": "日级环境：中国东部省会城市，周一工作日，平台用工合规检查持续进行，市场风险偏好降低，居民对就业和生活成本的担忧依然存在，出行需求略有上升。；当前事件：social/legacy(0.40): Minor protest near city center ; social/legacy(0.40): Traffic congestion on main roads"
       }
+    },
+    "18": {
+      "08:24": {
+        "events": [
+          {
+            "id": "economic-intraday-18-08:24-86657",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "小幅利率调整",
+            "description": "小幅利率调整（08:24）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 18 08:24",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：economic/intraday(0.52): 小幅利率调整（08:24）"
+      },
+      "08:44": {
+        "events": [
+          {
+            "id": "natural-intraday-18-08:44-72062",
+            "type": "natural",
+            "topic": "intraday",
+            "name": "轻微降雨",
+            "description": "轻微降雨（08:44）",
+            "severity": 0.48,
+            "scope": "city",
+            "start_time": "Day 18 08:44",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "stress"
+            ]
+          },
+          {
+            "id": "technology-intraday-18-08:44-72510",
+            "type": "technology",
+            "topic": "intraday",
+            "name": "新兴技术应用案例",
+            "description": "新兴技术应用案例（08:44）",
+            "severity": 0.42,
+            "scope": "city",
+            "start_time": "Day 18 08:44",
+            "end_time": "",
+            "impact_tags": [
+              "platform_dependence",
+              "mobility_intent"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：natural/intraday(0.48): 轻微降雨（08:44） ; technology/intraday(0.42): 新兴技术应用案例（08:44）"
+      },
+      "09:19": {
+        "events": [
+          {
+            "id": "social-legacy---16161",
+            "type": "social",
+            "topic": "legacy",
+            "name": "City marathon causing road closures",
+            "description": "City marathon causing road closures",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          },
+          {
+            "id": "natural-legacy---91482",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Cold front arrives, temperature drops",
+            "description": "Cold front arrives, temperature drops",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：social/legacy(0.40): City marathon causing road closures ; natural/legacy(0.35): Cold front arrives, temperature drops"
+      },
+      "11:09": {
+        "events": [
+          {
+            "id": "social-legacy---60439",
+            "type": "social",
+            "topic": "legacy",
+            "name": "Public transit delay",
+            "description": "Public transit delay",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          },
+          {
+            "id": "natural-legacy---79826",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Heat wave alert",
+            "description": "Heat wave alert",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：social/legacy(0.40): Public transit delay ; natural/legacy(0.35): Heat wave alert"
+      },
+      "13:42": {
+        "events": [
+          {
+            "id": "economic-intraday-18-13:42-96729",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "行业政策调整预警",
+            "description": "行业政策调整预警（13:42）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 18 13:42",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          },
+          {
+            "id": "political-intraday-18-13:42-12308",
+            "type": "political",
+            "topic": "intraday",
+            "name": "平台用工合规政策更新",
+            "description": "平台用工合规政策更新（13:42）",
+            "severity": 0.45,
+            "scope": "city",
+            "start_time": "Day 18 13:42",
+            "end_time": "",
+            "impact_tags": [
+              "policy_sensitivity",
+              "voice_propensity"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：economic/intraday(0.52): 行业政策调整预警（13:42） ; political/intraday(0.45): 平台用工合规政策更新（13:42）"
+      },
+      "14:02": {
+        "events": [
+          {
+            "id": "natural-legacy---63898",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Dense fog in the morning",
+            "description": "Dense fog in the morning",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "social-legacy---16161",
+            "type": "social",
+            "topic": "legacy",
+            "name": "City marathon causing road closures",
+            "description": "City marathon causing road closures",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：natural/legacy(0.35): Dense fog in the morning ; social/legacy(0.40): City marathon causing road closures"
+      },
+      "16:51": {
+        "events": [],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。"
+      },
+      "21:19": {
+        "events": [
+          {
+            "id": "natural-legacy---63898",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Dense fog in the morning",
+            "description": "Dense fog in the morning",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "social-legacy---16161",
+            "type": "social",
+            "topic": "legacy",
+            "name": "City marathon causing road closures",
+            "description": "City marathon causing road closures",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：natural/legacy(0.35): Dense fog in the morning ; social/legacy(0.40): City marathon causing road closures"
+      }
+    },
+    "19": {
+      "07:34": {
+        "events": [
+          {
+            "id": "natural-intraday-19-07:34-77492",
+            "type": "natural",
+            "topic": "intraday",
+            "name": "春季沙尘暴",
+            "description": "春季沙尘暴（07:34）",
+            "severity": 0.48,
+            "scope": "city",
+            "start_time": "Day 19 07:34",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "stress"
+            ]
+          },
+          {
+            "id": "economic-intraday-19-07:34-37359",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "股市波动",
+            "description": "股市波动（07:34）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 19 07:34",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：natural/intraday(0.48): 春季沙尘暴（07:34） ; economic/intraday(0.52): 股市波动（07:34）"
+      },
+      "07:59": {
+        "events": [
+          {
+            "id": "natural-intraday-19-07:59-60609",
+            "type": "natural",
+            "topic": "intraday",
+            "name": "春季沙尘暴",
+            "description": "春季沙尘暴（07:59）",
+            "severity": 0.48,
+            "scope": "city",
+            "start_time": "Day 19 07:59",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "stress"
+            ]
+          },
+          {
+            "id": "economic-intraday-19-07:59-67311",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "股市波动",
+            "description": "股市波动（07:59）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 19 07:59",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：natural/intraday(0.48): 春季沙尘暴（07:59） ; economic/intraday(0.52): 股市波动（07:59）"
+      },
+      "08:56": {
+        "events": [
+          {
+            "id": "natural-legacy---36465",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Heat wave alert",
+            "description": "Heat wave alert",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "social-legacy---55680",
+            "type": "social",
+            "topic": "legacy",
+            "name": "Neighborhood market fair",
+            "description": "Neighborhood market fair",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：natural/legacy(0.35): Heat wave alert ; social/legacy(0.40): Neighborhood market fair"
+      },
+      "12:24": {
+        "events": [],
+        "context": "日级环境：中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。"
+      },
+      "12:44": {
+        "events": [],
+        "context": "日级环境：中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。"
+      },
+      "18:34": {
+        "events": [
+          {
+            "id": "natural-legacy---18695",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Light rain in the afternoon",
+            "description": "Light rain in the afternoon",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "social-legacy---63312",
+            "type": "social",
+            "topic": "legacy",
+            "name": "City marathon causing road closures",
+            "description": "City marathon causing road closures",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          }
+        ],
+        "context": "日级环境：中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。；当前事件：natural/legacy(0.35): Light rain in the afternoon ; social/legacy(0.40): City marathon causing road closures"
+      },
+      "22:19": {
+        "events": [],
+        "context": "日级环境：中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。"
+      }
     }
   },
   "engine_state": {
@@ -3647,7 +4176,9 @@
       "2026年3月13日，周五，晴朗天气下，平台用工合规检查持续进行，经济市场风险偏好降低，居民对就业和生活成本的担忧依然存在，出行需求略有上升。",
       "2026年3月14日，晴朗天气下的周末，平台用工合规检查持续进行，市场风险偏好降低，居民对就业和生活成本的担忧依然存在，出行需求略有上升。",
       "平台用工合规检查持续进行，市场风险偏好降低，居民对就业和生活成本的担忧依然存在，周末出行需求略有上升。",
-      "中国东部省会城市，周一工作日，平台用工合规检查持续进行，市场风险偏好降低，居民对就业和生活成本的担忧依然存在，出行需求略有上升。"
+      "中国东部省会城市，周一工作日，平台用工合规检查持续进行，市场风险偏好降低，居民对就业和生活成本的担忧依然存在，出行需求略有上升。",
+      "中国东部省会城市持续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。",
+      "中国东部省会城市继续面临平台用工合规压力和居民就业生活成本担忧，工作日出行需求略有上升，科技应用迭代持续进行。"
     ]
   }
 }

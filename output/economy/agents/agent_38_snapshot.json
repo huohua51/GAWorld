@@ -1,0 +1,30 @@
+{
+  "agent_id": 38,
+  "name": "唐予晴",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.7025,
+    "income_skill": 0.5185000000000001,
+    "base_hourly_income": 31.57473187280177,
+    "hourly_income": 31.57473187280177,
+    "income_volatility": 0.25,
+    "income_target_daily": 221.02312310961238,
+    "monthly_rent": 1140.9760124981797,
+    "balance": 20033.837644418152,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

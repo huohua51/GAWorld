@@ -1,0 +1,30 @@
+{
+  "agent_id": 18,
+  "name": "蔡静宜",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.618,
+    "income_skill": 0.655,
+    "base_hourly_income": 54.81720847047985,
+    "hourly_income": 54.81720847047985,
+    "income_volatility": 0.25,
+    "income_target_daily": 383.72045929335894,
+    "monthly_rent": 2336.8954421764793,
+    "balance": 11217.211809969716,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

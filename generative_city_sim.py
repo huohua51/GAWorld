@@ -1952,6 +1952,233 @@ def _external_rag_hint(agent, query, max_items=EXTERNAL_RAG_TOP_K):
                 break
     return _format_memory_hint(list(reversed(fallback)), max_chars=240)
 
+def _agent_has_external_rag(agent):
+    if not isinstance(agent, dict):
+        return False
+    for item in agent.get("memory", []):
+        text = str(item).strip()
+        if text.startswith("[额外信息"):
+            return True
+    return False
+
+def _append_external_payload_to_agent(agent, payload):
+    if not payload or not isinstance(agent, dict):
+        return
+    memory = agent.setdefault("memory", [])
+    if payload not in memory:
+        memory.append(payload)
+
+def _heuristic_bootstrap_external_items(agent, max_items=3, max_chars=280):
+    if not isinstance(agent, dict):
+        return []
+    state = agent.get("state", {})
+    items = []
+    living = str(agent.get("living") or agent.get("residence") or agent.get("residence", "")).strip()
+    job = str(agent.get("job", "")).strip()
+    personality = str(agent.get("personality", "")).strip()
+    daily_life = str(agent.get("daily_life", "")).strip()
+    values = str(agent.get("values", "")).strip()
+    if living:
+        items.append(f"长期生活在{living}一带，熟悉周边通勤路径、生活服务与大致消费水平。")
+    if job:
+        items.append(f"对“{job}”相关的工作节奏、收入波动和行业机会有持续关注，会据此调整自己的日常安排。")
+    if daily_life:
+        items.append(f"平时的生活习惯是：{_sanitize_extra_text(daily_life, max_chars=max_chars)}")
+    stress = float(state.get("stress", 0.5))
+    econ_security = float(state.get("econ_security", 0.5))
+    if stress >= 0.6 or econ_security <= 0.45:
+        items.append("最近会更留意收入稳定性、生活成本和能否节省开支。")
+    else:
+        items.append("通常会平衡工作、休息和消费，不会完全被短期经济波动牵着走。")
+    if personality:
+        items.append(f"熟人对其的稳定印象通常是：{_sanitize_extra_text(personality, max_chars=max_chars)}")
+    if values:
+        items.append(f"在公共事务和人生选择上，长期倾向于：{_sanitize_extra_text(values, max_chars=max_chars)}")
+    cleaned = []
+    seen = set()
+    for item in items:
+        text = _sanitize_extra_text(item, max_chars=max_chars)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+        if len(cleaned) >= max(1, int(max_items)):
+            break
+    return cleaned
+
+def _parse_bootstrap_external_items(text, max_items=3):
+    blob = _extract_json_array_block(text)
+    if not blob:
+        return []
+    try:
+        raw = json.loads(blob)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(raw, list):
+        return []
+    parsed = []
+    for item in raw:
+        if isinstance(item, str):
+            cleaned = _sanitize_extra_text(item, max_chars=280)
+        elif isinstance(item, dict):
+            cleaned = ""
+            for key in ("text", "memory", "knowledge", "content"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    cleaned = _sanitize_extra_text(value, max_chars=280)
+                    break
+        else:
+            cleaned = _sanitize_extra_text(str(item), max_chars=280)
+        if cleaned:
+            parsed.append(cleaned)
+        if len(parsed) >= max(1, int(max_items)):
+            break
+    return parsed
+
+def _llm_bootstrap_external_items(agent, max_items=3, max_chars=280):
+    profile_text = "\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"年龄：{agent.get('age', '')}",
+        f"居住情况：{agent.get('living', agent.get('residence', ''))}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    prompt = f"""
+你是城市模拟器的初始化器。请为一个智能体生成 {max_items} 条“可放入 RAG 的背景记忆/知识”。
+
+角色资料：
+{profile_text}
+
+要求：
+1) 内容应当是“合理、模糊但有帮助”的长期背景信息，可被后续计划/访谈/决策引用。
+2) 不要写极端具体、不可验证的重大事件；更像长期经验、偏好、熟悉领域、持续关注主题。
+3) 每条 20-80 字，中文。
+4) 仅输出 JSON 数组，每项是字符串，不能输出其他文字。
+"""
+    response = call_llm(prompt, task="external_rag_bootstrap", agent_id=agent["id"])
+    items = _parse_bootstrap_external_items(response, max_items=max_items)
+    if items:
+        return [_sanitize_extra_text(item, max_chars=max_chars) for item in items]
+    return _heuristic_bootstrap_external_items(agent, max_items=max_items, max_chars=max_chars)
+
+def _summarize_bootstrap_web_item(agent, title, content, url, max_chars=280):
+    profile_text = "\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    prompt = f"""
+你是城市模拟器的初始化器。请把下面一条外部信息转写成适合放入角色 RAG 的“长期背景知识”。
+
+角色资料：
+{profile_text}
+
+标题：{title or "N/A"}
+链接：{url}
+内容摘要：
+{content}
+
+要求：
+1) 输出 1 句中文，20-80 字。
+2) 要体现“这条信息为什么会长期影响/被该角色持续关注”。
+3) 不要出现“根据新闻”“网页显示”等措辞。
+4) 只输出这一句。
+"""
+    response = call_llm(prompt, task="external_rag_bootstrap", agent_id=agent["id"]).strip()
+    cleaned = _sanitize_extra_text(response, max_chars=max_chars)
+    if cleaned:
+        return cleaned
+    title_text = _sanitize_extra_text(title, max_chars=80)
+    excerpt = _sanitize_extra_text(content, max_chars=max_chars)
+    if title_text:
+        return f"持续关注“{title_text}”这类信息，因为它可能影响自己的工作机会、生活成本或公共环境判断。 {excerpt}"
+    return excerpt
+
+def _bootstrap_agent_external_rag(agent, news_cache=None, news_sources=None):
+    bootstrap_cfg = EXTERNAL_RAG_CONFIG.get("bootstrap", {})
+    if not isinstance(bootstrap_cfg, dict) or not bootstrap_cfg.get("enabled", False):
+        return []
+    if bootstrap_cfg.get("only_when_empty", True) and _agent_has_external_rag(agent):
+        return []
+
+    max_chars = int(bootstrap_cfg.get("max_chars_per_item", 280))
+    inserted = []
+    profile_items = _llm_bootstrap_external_items(
+        agent,
+        max_items=int(bootstrap_cfg.get("profile_items", 3)),
+        max_chars=max_chars,
+    )
+    for item in profile_items:
+        payload = _store_external_info_for_agent(
+            agent,
+            item,
+            timestamp=None,
+            source="init_seed_profile",
+            persist=STATEFUL,
+        )
+        if payload:
+            inserted.append(payload)
+
+    if not bootstrap_cfg.get("use_web_search", True):
+        return inserted
+
+    seed_config = dict(INFO_SEEK_CONFIG)
+    seed_config.update({
+        "prefer_source_visit_ratio": 1.0 if bootstrap_cfg.get("prefer_cached_news", True) else 0.0,
+        "max_results": max(2, int(INFO_SEEK_CONFIG.get("max_results", 4))),
+    })
+    preferred_sites = _build_agent_preferred_sites(
+        agent,
+        news_sources=news_sources or [],
+        news_cache=news_cache or [],
+        max_sites=int(INFO_SEEK_CONFIG.get("preferred_sites_per_agent", 6)),
+    )
+    seen_urls = set()
+    used_queries = set()
+    for _ in range(max(0, int(bootstrap_cfg.get("web_items", 1)))):
+        target = _choose_info_target(
+            agent=agent,
+            news_cache=news_cache or [],
+            news_sources=news_sources or [],
+            preferred_sites=preferred_sites,
+            seen_urls=seen_urls,
+            used_queries=used_queries,
+            config=seed_config,
+        )
+        if not target:
+            break
+        url = str(target.get("url", "")).strip()
+        if not url:
+            continue
+        seen_urls.add(url)
+        query = str(target.get("query", "")).strip()
+        if query:
+            used_queries.add(query)
+        content = _sanitize_extra_text(target.get("content", ""), max_chars=900)
+        if not content:
+            continue
+        text = _summarize_bootstrap_web_item(
+            agent,
+            target.get("title", ""),
+            content,
+            url,
+            max_chars=max_chars,
+        )
+        domain = _domain_from_url(url) or "web"
+        payload = _store_external_info_for_agent(
+            agent,
+            text,
+            timestamp=target.get("fetched_at", "") or "",
+            source=f"init_seed_web:{domain}",
+            persist=STATEFUL,
+        )
+        if payload:
+            inserted.append(payload)
+    return inserted
+
 def _jitter_schedule_times(base_schedule, max_shift=45, min_gap=20):
     if not base_schedule:
         return []
@@ -2908,6 +3135,14 @@ def run_simulation():
         print(f"ℹ️ 未找到新闻源列表或列表为空：{NEWS_SOURCES_PATH}，将主要使用 Web 搜索。")
     if NEWS_ENABLED and not news_cache and NEWS_USE_CACHE_FIRST:
         print(f"ℹ️ 新闻缓存为空或未找到：{NEWS_CACHE_PATH}，将实时抓取网页。")
+    for agent in agents:
+        seeded = _bootstrap_agent_external_rag(
+            agent,
+            news_cache=news_cache,
+            news_sources=news_sources,
+        )
+        if seeded:
+            print(f"🧱 {agent['name']} 初始化 RAG 条目：{len(seeded)}")
 
     # === 构建社交网络 ===
     social_net = build_social_network(agents)
@@ -3570,6 +3805,19 @@ def _compose_external_info_text(text, timestamp=None, source=None):
     keyword_hint = f" 关键词: {' '.join(deduped)}" if deduped else ""
     return f"[{' | '.join(tags)}] {body}{keyword_hint}"
 
+def _store_external_info_for_agent(agent, text, timestamp=None, source=None, persist=True):
+    if not isinstance(agent, dict) or "id" not in agent:
+        return ""
+    payload = _compose_external_info_text(text, timestamp=timestamp, source=source)
+    if not payload:
+        return ""
+    sim_time = _sanitize_timestamp_text(timestamp) or "external"
+    vector_db_add_entry(agent["id"], "external_info", payload, sim_day=None, sim_time=sim_time)
+    _append_external_payload_to_agent(agent, payload)
+    if persist:
+        save_agent_memory(agent)
+    return payload
+
 def _upsert_external_info(agent_id, text, timestamp=None, source=None):
     payload = _compose_external_info_text(text, timestamp=timestamp, source=source)
     if not payload:
@@ -3713,11 +3961,18 @@ def _cli_interview_agent(agent_id, questions, context=None):
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
     agent = build_agent(agent_id, df, city_map=city_map)
+    news_sources = load_news_sources(NEWS_SOURCES_PATH) if NEWS_ENABLED else []
+    news_cache = load_news_cache(NEWS_CACHE_PATH) if NEWS_ENABLED else []
     if STATEFUL:
         agent["memory"] = load_agent_memory(agent["id"])
         seed_vector_db_from_memory(agent)
     else:
         agent["memory"] = []
+    _bootstrap_agent_external_rag(
+        agent,
+        news_cache=news_cache,
+        news_sources=news_sources,
+    )
     answers = interview_agent(agent, questions, context=context)
     print(json.dumps(answers, ensure_ascii=False, indent=2))
 

@@ -1,0 +1,30 @@
+{
+  "agent_id": 22,
+  "name": "陆文琴",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.575,
+    "income_skill": 0.647,
+    "base_hourly_income": 26.01469269094567,
+    "hourly_income": 26.01469269094567,
+    "income_volatility": 0.25,
+    "income_target_daily": 182.10284883661967,
+    "monthly_rent": 990.1772522045745,
+    "balance": 8938.219241031073,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

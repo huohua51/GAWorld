@@ -1,0 +1,66 @@
+{
+  "morning|work|起床/洗漱": {
+    "action_counts": {
+      "选择合适的服装，搭配得体，展现个人风格": 1
+    },
+    "preferred_action": "选择合适的服装，搭配得体，展现个人风格",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  },
+  "morning|work|午餐/轻度工作": {
+    "action_counts": {
+      "查看今日工作日程，调整优先级": 1
+    },
+    "preferred_action": "查看今日工作日程，调整优先级",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  },
+  "morning|home|午餐/轻度工作": {
+    "action_counts": {
+      "浏览行业新闻，了解最新趋势": 1
+    },
+    "preferred_action": "浏览行业新闻，了解最新趋势",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  },
+  "afternoon|home|社交媒体内容拍摄/剪辑": {
+    "action_counts": {
+      "选择合适的拍摄地点和背景": 1
+    },
+    "preferred_action": "选择合适的拍摄地点和背景",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  },
+  "afternoon|home|午餐/轻度工作": {
+    "action_counts": {
+      "查看今日工作日程，调整优先级": 1
+    },
+    "preferred_action": "查看今日工作日程，调整优先级",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  },
+  "afternoon|home|数据分析/绩效评估": {
+    "action_counts": {
+      "打开Excel/数据分析软件": 1
+    },
+    "preferred_action": "打开Excel/数据分析软件",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  },
+  "afternoon|work|晚餐/放松/阅读": {
+    "action_counts": {
+      "浏览一些轻松幽默的视频": 1
+    },
+    "preferred_action": "浏览一些轻松幽默的视频",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  },
+  "evening|home|睡前/睡觉/睡眠": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 18
+  }
+}

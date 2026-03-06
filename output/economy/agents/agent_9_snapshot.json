@@ -1,0 +1,30 @@
+{
+  "agent_id": 9,
+  "name": "赵子昂",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.682,
+    "income_skill": 0.5635000000000001,
+    "base_hourly_income": 42.401289605199544,
+    "hourly_income": 42.401289605199544,
+    "income_volatility": 0.25,
+    "income_target_daily": 296.8090272363968,
+    "monthly_rent": 1725.7205872429672,
+    "balance": 13842.426250972369,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

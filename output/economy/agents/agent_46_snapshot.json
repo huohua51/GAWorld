@@ -1,0 +1,30 @@
+{
+  "agent_id": 46,
+  "name": "程婉宁",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.61,
+    "income_skill": 0.7225,
+    "base_hourly_income": 52.77574870633257,
+    "hourly_income": 52.77574870633257,
+    "income_volatility": 0.25,
+    "income_target_daily": 369.430240944328,
+    "monthly_rent": 2287.1238581337407,
+    "balance": 23845.86947987125,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

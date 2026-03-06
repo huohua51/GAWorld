@@ -1,0 +1,30 @@
+{
+  "agent_id": 25,
+  "name": "潘德胜",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.635,
+    "income_skill": 0.5660000000000001,
+    "base_hourly_income": 45.41176461723314,
+    "hourly_income": 45.41176461723314,
+    "income_volatility": 0.25,
+    "income_target_daily": 317.882352320632,
+    "monthly_rent": 1922.5621197586602,
+    "balance": 23202.12012358154,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

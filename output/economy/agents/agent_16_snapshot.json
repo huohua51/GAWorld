@@ -1,0 +1,30 @@
+{
+  "agent_id": 16,
+  "name": "叶嘉宁",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.5825,
+    "income_skill": 0.646,
+    "base_hourly_income": 54.17316766304877,
+    "hourly_income": 54.17316766304877,
+    "income_volatility": 0.25,
+    "income_target_daily": 379.2121736413414,
+    "monthly_rent": 1981.5223870089658,
+    "balance": 13005.405191223426,
+    "daily_income": 0.0,
+    "daily_expense": 0.0,
+    "daily_expense_by_category": {
+      "food": 0.0,
+      "clothing": 0.0,
+      "housing": 0.0,
+      "transport": 0.0,
+      "leisure": 0.0,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 0.0
+    },
+    "lifetime_income": 0.0,
+    "lifetime_expense": 0.0,
+    "last_location": ""
+  }
+}

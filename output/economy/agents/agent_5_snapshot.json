@@ -1,0 +1,30 @@
+{
+  "agent_id": 5,
+  "name": "王思远",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.742,
+    "income_skill": 0.5365000000000001,
+    "base_hourly_income": 81.04952393273433,
+    "hourly_income": 72.9681859889538,
+    "income_volatility": 0.25,
+    "income_target_daily": 657.9519303335439,
+    "monthly_rent": 3420.907692300102,
+    "balance": 48242.70258267602,
+    "daily_income": 389.99499663182223,
+    "daily_expense": 288.89720065796774,
+    "daily_expense_by_category": {
+      "food": 14.531620630392073,
+      "clothing": 0.0,
+      "housing": 126.0302564100034,
+      "transport": 60.13238015516812,
+      "leisure": 55.592343462404166,
+      "education": 0.0,
+      "healthcare": 0.0,
+      "misc": 32.610600000000005
+    },
+    "lifetime_income": 389.99499663182223,
+    "lifetime_expense": 288.89720065796774,
+    "last_location": "Riverside Cinema"
+  }
+}
