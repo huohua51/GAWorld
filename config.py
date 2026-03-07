@@ -44,7 +44,7 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [5],
+    "agent_ids": [1],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
@@ -62,6 +62,7 @@ CONFIG = {
         "top_k": 2,
         "bootstrap": {
             "enabled": True,
+            "use_seed_script": True,
             "only_when_empty": True,
             "profile_items": 3,
             "web_items": 1,

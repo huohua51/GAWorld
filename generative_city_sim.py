@@ -2101,6 +2101,22 @@ def _bootstrap_agent_external_rag(agent, news_cache=None, news_sources=None):
     bootstrap_cfg = EXTERNAL_RAG_CONFIG.get("bootstrap", {})
     if not isinstance(bootstrap_cfg, dict) or not bootstrap_cfg.get("enabled", False):
         return []
+    # Prefer the standalone seed generator for unified bootstrap behavior.
+    if bootstrap_cfg.get("use_seed_script", False):
+        try:
+            import generate_agent_rag_seed as rag_seed_script
+            inserted, status = rag_seed_script.generate_for_runtime_agent(
+                agent=agent,
+                profile_items=int(bootstrap_cfg.get("profile_items", 3)),
+                web_items=int(bootstrap_cfg.get("web_items", 1)),
+                use_web=bool(bootstrap_cfg.get("use_web_search", True)),
+                force=not bool(bootstrap_cfg.get("only_when_empty", True)),
+            )
+            if inserted or status == "skipped_existing":
+                return inserted
+        except Exception:
+            # Fall back to in-module bootstrap to keep simulation resilient.
+            pass
     if bootstrap_cfg.get("only_when_empty", True) and _agent_has_external_rag(agent):
         return []
 

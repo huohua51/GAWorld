@@ -1,0 +1,16 @@
+{
+  "agents": [
+    {
+      "agent_id": 1,
+      "name": "李泽宇",
+      "status": "ok",
+      "inserted": 2,
+      "memory_total": 47
+    }
+  ],
+  "inserted_total": 2,
+  "profile_items": 2,
+  "web_items": 0,
+  "use_web": false,
+  "force": true
+}

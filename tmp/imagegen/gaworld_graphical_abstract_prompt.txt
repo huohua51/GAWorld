@@ -1,0 +1,11 @@
+制作一张适合作为论文 graphical abstract 的 GAWorld 项目总览图。目标是让读者在几秒内理解：这是一个用于研究城市社会行为与事件影响的生成式多智能体仿真系统。
+
+画面组织为从左到右、从上到下都能顺畅阅读的研究叙事：
+- 左侧：城市环境与事件输入。包含简洁城市地图、地点、政策事件、环境扰动、外部信息输入。
+- 中间：一组具有人类属性的 agent，在城市中感知、规划、行动、反思。强调 day-to-day memory accumulation，表现 episodic memory、habit formation、daily intentions、relationship changes。
+- 右侧：counterfactual comparison，清晰展示 with event 与 without event 两条并行 simulation 分支，最后汇聚到 difference analysis / impact estimation。
+- 下方或角落：输出结果，如 behavior trajectories、state evolution、social dynamics、comparison summary。
+
+整体应像顶会论文中的 graphical abstract：比传统系统架构图更具视觉流动性，但仍然清晰、克制、专业。允许少量清晰英文标签：GAWorld, Agents, Memory, Events, Comparison, Outputs。不要长段文本，不要密集小字。
+
+风格要求：clean academic infographic, graphical abstract, white background, elegant blue-teal-gray palette with restrained orange highlight for event shock and impact differences, vector-like, publication quality, subtle depth, no marketing poster, no cartoon, no cyberpunk, no dark theme.

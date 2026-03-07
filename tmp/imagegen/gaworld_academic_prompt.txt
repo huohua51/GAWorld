@@ -1,0 +1,16 @@
+为学术论文或研究展示制作一张 GAWorld 项目总览图，像一页高质量 paper figure 或 graphical abstract。内容重点不是宣传海报，而是清晰解释项目的主要想法和核心组件。画面应为结构化信息图，干净、理性、可信。
+
+核心概念：GAWorld 是一个生成式多智能体城市社会仿真系统，用于研究城市中的个体行为、社会关系、环境事件、政策冲击，以及跨天经验积累如何影响行为演化。
+
+图中明确表达这些组件和关系：
+1. Agent layer：具有 persona、state、daily routine、action、reflection 的人类代理。
+2. Memory layer：episodic memory、habit formation、daily intention、experience consolidation，强调 day-to-day accumulation。
+3. Social layer：social network、relationship strength、emotion or influence diffusion。
+4. Environment/Event layer：city map、locations、policy events、environment shocks、external information。
+5. Simulation loop：perception -> planning -> action -> reflection -> memory update -> next day。
+6. Counterfactual analysis：with event vs without event 两种 simulation 并行运行，最后比较差异以估计事件影响。
+7. Outputs：behavior trajectories、state changes、comparison report、visual analytics。
+
+构图要求：中心为主框图，使用模块方框、箭头、时间轴、简洁图标和小型城市示意图；逻辑关系清晰，层次分明，像顶会论文中的系统架构图。允许少量大而清晰的英文标签，例如 GAWorld, Agents, Memory, Social Network, Events, Counterfactual Comparison, Outputs。不要出现很多密集小字，不要长段落，不要复杂坐标轴，不要花哨装饰。
+
+视觉风格：academic infographic, clean systems diagram, white or very light background, restrained blue-teal-gray palette with subtle orange highlights, vector-like precision, publication quality, no cartoon, no game aesthetic, no cyberpunk, no marketing poster look.

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent 1 RAG Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 20px; color: #1f2937; }
+    h1, h2 { margin: 8px 0 12px; }
+    .meta { color: #4b5563; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; vertical-align: top; text-align: left; font-size: 13px; }
+    th { background: #f9fafb; }
+    .bar { width: 240px; height: 10px; background: #e5e7eb; border-radius: 8px; overflow: hidden; }
+    .bar span { display: block; height: 100%; background: #3b82f6; }
+  </style>
+</head>
+<body>
+  <h1>Agent 1 RAG / Memory Report</h1>
+  <div class="meta">memory_items=47 | rag_entries=798 | generated_at=2026-03-07 13:22:04</div>
+
+  <h2>Entry Type Distribution</h2>
+  <table>
+    <thead><tr><th>Type</th><th>Count</th><th>Visual</th></tr></thead>
+    <tbody>
+      <tr><td>external_env</td><td>151</td><td><div class='bar'><span style='width:100%'></span></div></td></tr><tr><td>action</td><td>120</td><td><div class='bar'><span style='width:79%'></span></div></td></tr><tr><td>episode</td><td>120</td><td><div class='bar'><span style='width:79%'></span></div></td></tr><tr><td>log</td><td>120</td><td><div class='bar'><span style='width:79%'></span></div></td></tr><tr><td>plan</td><td>120</td><td><div class='bar'><span style='width:79%'></span></div></td></tr><tr><td>reflection</td><td>120</td><td><div class='bar'><span style='width:79%'></span></div></td></tr><tr><td>memory</td><td>30</td><td><div class='bar'><span style='width:20%'></span></div></td></tr><tr><td>daily(mem)</td><td>28</td><td><div class='bar'><span style='width:19%'></span></div></td></tr><tr><td>general(mem)</td><td>15</td><td><div class='bar'><span style='width:10%'></span></div></td></tr><tr><td>info_seek</td><td>13</td><td><div class='bar'><span style='width:9%'></span></div></td></tr><tr><td>external_info</td><td>4</td><td><div class='bar'><span style='width:3%'></span></div></td></tr><tr><td>external_info(mem)</td><td>4</td><td><div class='bar'><span style='width:3%'></span></div></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recent RAG Entries (Top 12)</h2>
+  <table>
+    <thead><tr><th>type</th><th>sim_day</th><th>sim_time</th><th>created_at</th><th>text</th></tr></thead>
+    <tbody>
+      <tr><td>external_info</td><td>None</td><td>external</td><td>2026-03-07 13:15:22</td><td>[额外信息 | 来源:seed_profile] 持续关注“互联网企业初级算法工程师，工作日通常上午9:30到公司，晚上9–10点下班，加班在项目节点较为频繁，对绩效考核周期高度敏感。”相关的岗位变化、技能要求与收入波动，并据此调整工作策略。 关键词: 持续关注 互联 联网 网企 企业 业初 初级 级算 算法 法工 工程 程师 工作 作日 日通 通常 常上 上午 到公司 晚上 点下班 加班 班在 在项</td></tr><tr><td>external_info</td><td>None</td><td>external</td><td>2026-03-07 13:15:22</td><td>[额外信息 | 来源:seed_profile] 长期在余杭未来科技城合租公寓活动，对本地通勤、租住成本和生活服务可达性有稳定经验。 关键词: 长期 期在 在余 余杭 杭未 未来 来科 科技 技城 城合 合租 租公 公寓 寓活 活动 对本 本地 地通 通勤 租住 住成 成本 本和 和生</td></tr><tr><td>memory</td><td>16</td><td>end_of_day</td><td>2026-02-28 11:39:07</td><td>今天最重要的经验或感受是：**在持续压力和不确定性的环境下，主动寻求放松和灵感，并将其融入工作，能有效缓解焦虑，提升工作效率。** 具体来说，从今天的内容中可以看出： * **压力下的应对：** 面对平台用工合规检查、经济压力、政策调整传闻等多种压力，仅仅专注于工作容易导致焦虑。 * **放松的重要性：** 前往社区集市，寻找设计感强的物件和有趣的工艺品，能有效放松心情，缓解压力。 * **灵感的来源：** 集市上的体验为技术报告...</td></tr><tr><td>memory</td><td>16</td><td>consolidation</td><td>2026-02-28 11:38:50</td><td>[Day 16 Consolidation] 今天在碎片时间里积极学习技术，并尝试将集市的灵感融入工作，同时注重回顾和总结，为明日工作做准备。</td></tr><tr><td>action</td><td>16</td><td>23:20</td><td>2026-02-28 11:38:46</td><td>在【睡前，听舒缓的音乐，或回顾今天完成的工作，为明天做好准备。】中执行了【睡觉】</td></tr><tr><td>reflection</td><td>16</td><td>23:20</td><td>2026-02-28 11:38:46</td><td>嗯，感觉很放松，睡得很沉。看来睡前回顾工作是个不错的习惯，让思绪更平静，更容易入睡。</td></tr><tr><td>plan</td><td>16</td><td>23:20</td><td>2026-02-28 11:38:46</td><td>此刻，我的短期计划是：完成今天的工作任务，重点是优化代码效率，并与同事交流技术问题，寻求解决当前遇到的难题。同时，我会注意劳逸结合，避免过度思考绩效和裁员传闻，保持积极状态。</td></tr><tr><td>log</td><td>16</td><td>23:20</td><td>2026-02-28 11:38:46</td><td>[李泽宇 @ 23:20] Scheduled: 睡前，听舒缓的音乐，或回顾今天完成的工作，为明天做好准备。 Activity: 睡前，听舒缓的音乐，或回顾今天完成的工作，为明天做好准备。 Location: Central Block Environment: 背景：2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。 当前环境事件：日级环境：日级环境：平台用工合规检查...</td></tr><tr><td>episode</td><td>16</td><td>23:20</td><td>2026-02-28 11:38:46</td><td>Day 16 23:20 睡前，听舒缓的音乐，或回顾今天完成的工作，为明天做好准备。/睡觉 @ Central Block tags=success,work salience=0.30 reflection=嗯，感觉很放松，睡得很沉。看来睡前回顾工作是个不错的习惯，让思绪更平静，更容易入睡。</td></tr><tr><td>external_env</td><td>16</td><td>23:20</td><td>2026-02-28 11:38:33</td><td>[ExternalEnvironment Day 16 23:20] natural/legacy(0.35) Cold front arrives, temperature drops</td></tr><tr><td>external_env</td><td>16</td><td>23:20</td><td>2026-02-28 11:38:33</td><td>[ExternalEnvironment Day 16 23:20] natural/legacy(0.35) Heat wave alert</td></tr><tr><td>action</td><td>16</td><td>22:08</td><td>2026-02-28 11:38:32</td><td>在【在集市的咖啡馆，整理今天的收获，并尝试将集市的灵感融入到技术报告的细节中。】中执行了【继续当前活动】</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recent Memory Items (Top 12)</h2>
+  <table>
+    <thead><tr><th>index</th><th>tag</th><th>text</th></tr></thead>
+    <tbody>
+      <tr><td>46</td><td>external_info(mem)</td><td>[额外信息 | 来源:seed_profile] 持续关注“互联网企业初级算法工程师，工作日通常上午9:30到公司，晚上9–10点下班，加班在项目节点较为频繁，对绩效考核周期高度敏感。”相关的岗位变化、技能要求与收入波动，并据此调整工作策略。 关键词: 持续关注 互联 联网 网企 企业 业初 初级 级算 算法 法工 工程 程师 工作 作日 日通 通常 常上 上午 到公司 晚上 点下班 加班 班在 在项</td></tr><tr><td>45</td><td>external_info(mem)</td><td>[额外信息 | 来源:seed_profile] 长期在余杭未来科技城合租公寓活动，对本地通勤、租住成本和生活服务可达性有稳定经验。 关键词: 长期 期在 在余 余杭 杭未 未来 来科 科技 技城 城合 合租 租公 公寓 寓活 活动 对本 本地 地通 通勤 租住 住成 成本 本和 和生</td></tr><tr><td>44</td><td>general(mem)</td><td>今天最重要的经验或感受是：**在持续压力和不确定性的环境下，主动寻求放松和灵感，并将其融入工作，能有效缓解焦虑，提升工作效率。** 具体来说，从今天的内容中可以看出： * **压力下的应对：** 面对平台用工合规检查、经济压力、政策调整传闻等多种压力，仅仅专注于工作容易导致焦虑。 * **放松的重要性：** 前往社区集市，寻找设计感强的物件和有趣的工艺品，能有效放松心情，缓解压力。 * **灵感的来源：** 集市上的体验为技术报告...</td></tr><tr><td>43</td><td>daily(mem)</td><td>[Day 16 Consolidation] 今天在碎片时间里积极学习技术，并尝试将集市的灵感融入工作，同时注重回顾和总结，为明日工作做准备。</td></tr><tr><td>42</td><td>daily(mem)</td><td>[Day 16 16:52] 信息获取：web_search 偏好站点：reddit.com, x.com, aljazeera.com, bbc.com, bloomberg.com, cnn.com 检索词：度敏感 今日新闻 site:cnn.com 来源：小米手机电池健康度查询 电池健康检查检测代码电池寿命状态 (https://www.zhihu.com/tardis/bd/art/411867307) 内容：先领红包，京...</td></tr><tr><td>41</td><td>daily(mem)</td><td>[Day 16 08:00] 信息获取：direct_source 偏好站点：reddit.com, x.com, aljazeera.com, bbc.com, bloomberg.com, cnn.com 检索词：N/A 来源：Reddit - The heart of the internet (https://www.reddit.com/ http) 内容：Reddit - The heart of the intern...</td></tr><tr><td>40</td><td>general(mem)</td><td>今天最重要的经验或感受是：**在面对持续的社会压力和工作压力时，刻意安排放松和探索的时间，打破重复的模式，对于缓解焦虑、恢复精力至关重要。** 具体来说，李泽宇多次提到想要去社区集市逛逛、听音乐、尝试轻度编程等活动，这表明他意识到单一的工作模式容易导致精神上的疲惫和焦虑。他试图通过这些活动来寻找新的灵感、放松大脑，并暂时摆脱重复性工作带来的压力。这体现了在追求高效工作的同时，关注身心健康和生活平衡的重要性。</td></tr><tr><td>39</td><td>daily(mem)</td><td>[Day 15 Consolidation] 今天在工作和学习之间取得了平衡，既投入时间解决技术难题，也注重放松和心情舒缓。回顾代码和算法论文，为解决长期困扰的技术难题打下基础，同时通过社区集市和音乐放松身心，有助于提高工作效率和创造力。</td></tr><tr><td>38</td><td>general(mem)</td><td>今天最重要的经验或感受是：**需要主动打破重复的模式，避免陷入麻木的状态。** 从日志中可以看出，李泽宇在工作、下班、睡前等多个场景下都表现出重复的动作和习惯（例如：调整座椅姿势、编写代码、睡觉）。这反映出一种工作和生活中的倦怠感，以及对现状的困惑。 他多次在计划中提到要“尝试新的工作方式”、“记录优化尝试”、“尝试更积极的放松方式”，这都表明他意识到问题的存在，并希望主动改变。 因此，今天最重要的经验是，仅仅依靠被动地等待或适应...</td></tr><tr><td>37</td><td>daily(mem)</td><td>[Day 14 Consolidation] 通过通勤时间进行技术回顾和代码效率思考，并专注于工作任务。午餐选择效率较高，下班后关注身体舒适度。</td></tr><tr><td>36</td><td>daily(mem)</td><td>[Day 14 22:58] 信息获取：direct_source 偏好站点：reddit.com, x.com, aljazeera.com, bbc.com, bloomberg.com, cnn.com 检索词：N/A 来源：N/A (https://x.com/ http) 内容：JavaScript is not available. We’ve detected that JavaScript is disabled ...</td></tr><tr><td>35</td><td>general(mem)</td><td>今天最重要的经验或感受是：**我陷入了一种重复的、低效的循环中，需要更深入地分析并优化我的工作和生活模式，避免陷入单调和被动状态。** 具体来说，我意识到： * **重复的流程：** “起床、洗漱”和“工作、下班”等流程过于机械，缺乏思考和优化，导致效率低下。 * **焦虑和压力：** 社会环境和经济压力，以及平台用工合规检查等事件，都加剧了我的焦虑和压力，影响了工作状态和情绪。 * **被动放松：** 睡前阅读等放松方式，有时反...</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>

@@ -1,0 +1,94 @@
+{
+  "morning|home|起床/洗漱": {
+    "action_counts": {
+      "检查直播平台数据，关注直播效果": 1,
+      "整理床铺，营造整洁环境": 1
+    },
+    "preferred_action": "检查直播平台数据，关注直播效果",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 21
+  },
+  "morning|home|直播间准备工作": {
+    "action_counts": {
+      "准备好直播间道具": 1,
+      "设置直播间背景音乐，营造氛围": 1
+    },
+    "preferred_action": "准备好直播间道具",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 21
+  },
+  "morning|public|直播间商品选品": {
+    "action_counts": {
+      "快速搜索平台热门商品关键词": 1
+    },
+    "preferred_action": "快速搜索平台热门商品关键词",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 20
+  },
+  "afternoon|home|直播间准备工作": {
+    "action_counts": {
+      "测试直播间灯光效果，调整亮度": 1,
+      "准备好直播间互动话题": 1,
+      "确认直播间直播设备": 1
+    },
+    "preferred_action": "测试直播间灯光效果，调整亮度",
+    "strength": 0.15851520000000002,
+    "last_updated_day": 21
+  },
+  "afternoon|home|直播开始": {
+    "action_counts": {
+      "实时监控直播间弹幕，及时回应": 1
+    },
+    "preferred_action": "实时监控直播间弹幕，及时回应",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 20
+  },
+  "evening|home|直播间数据分析": {
+    "action_counts": {
+      "分析直播间转化率数据": 1
+    },
+    "preferred_action": "分析直播间转化率数据",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 20
+  },
+  "evening|home|睡前/睡觉/睡眠": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 20
+  },
+  "night|home|睡前放松/阅读": {
+    "action_counts": {
+      "睡觉": 2
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.23824,
+    "last_updated_day": 21
+  },
+  "morning|home|查看直播平台数据": {
+    "action_counts": {
+      "分析直播间点赞、评论、礼物数据": 1
+    },
+    "preferred_action": "分析直播间点赞、评论、礼物数据",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 21
+  },
+  "evening|public|直播间数据分析": {
+    "action_counts": {
+      "分析直播间转化率数据，提升销售额": 1
+    },
+    "preferred_action": "分析直播间转化率数据，提升销售额",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 21
+  },
+  "night|home|睡前/睡觉/睡眠": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 21
+  }
+}

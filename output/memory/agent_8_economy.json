@@ -1,26 +1,26 @@
 {
   "currency": "CNY",
   "wealth_drive": 0.6829999999999999,
-  "income_skill": 0.47350000000000003,
-  "base_hourly_income": 41.44155664572759,
-  "hourly_income": 41.44155664572759,
+  "income_skill": 0.48716000000000004,
+  "base_hourly_income": 41.70991297157752,
+  "hourly_income": 33.75040118736736,
   "income_volatility": 0.25,
-  "income_target_daily": 290.0908965200931,
+  "income_target_daily": 332.5677345919276,
   "monthly_rent": 1532.298523966016,
-  "balance": 22810.20987218511,
-  "daily_income": 0.0,
-  "daily_expense": 0.0,
+  "balance": 22772.526749750563,
+  "daily_income": 132.86608924893045,
+  "daily_expense": 172.02602538940513,
   "daily_expense_by_category": {
     "food": 0.0,
     "clothing": 0.0,
-    "housing": 0.0,
-    "transport": 0.0,
+    "housing": 63.07661746553387,
+    "transport": 61.88930792387126,
     "leisure": 0.0,
     "education": 0.0,
     "healthcare": 0.0,
-    "misc": 0.0
+    "misc": 47.0601
   },
-  "lifetime_income": 0.0,
-  "lifetime_expense": 0.0,
-  "last_location": ""
+  "lifetime_income": 288.2011052311228,
+  "lifetime_expense": 325.884227665683,
+  "last_location": "Willow Grove Park"
 }

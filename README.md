@@ -194,6 +194,7 @@ All runtime settings live in `config.py`.
 - Imported/added external info is stored as `entry_type="external_info"` in vector DB and appended into agent memory.
 - Timestamp is optional but recommended for time-sensitive facts.
 - `external_rag.bootstrap` can seed initial RAG background for a newly initialized agent.
+- `external_rag.bootstrap.use_seed_script`: call `generate_agent_rag_seed.py` runtime method during initialization (fallback to in-module bootstrap on failure).
 - `external_rag.bootstrap.profile_items`: number of profile-derived background memories/knowledge items.
 - `external_rag.bootstrap.web_items`: number of web-selected items to summarize into `external_info`.
 - `external_rag.bootstrap.only_when_empty`: only seed when the agent has no existing `external_info`.
