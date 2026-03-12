@@ -252,7 +252,27 @@ def generate_citymap(description: str, seed: Optional[int] = None) -> str:
     for name in other_hubs:
         hubs.append(_make_simple_hub(name, _public_pool(name, rng)))
 
-    lines = ["# City Map", "", f"- City: {city_name}"]
+    lines = ["# City Map", ""]
+    river_points = ["0.05,0.24", "0.18,0.30", "0.38,0.27", "0.56,0.33", "0.78,0.28", "0.95,0.35"]
+    lines.append(f"@river: {city_name} River | path={';'.join(river_points)} | width=0.08")
+    total = len(hubs)
+    cols = max(3, int(total ** 0.5) + 1)
+    hub_positions = {}
+    for idx, hub in enumerate(hubs):
+        row = idx // cols
+        col = idx % cols
+        x = 2.5 + col * 3.1
+        y = 3.2 + row * 2.6
+        hub_positions[hub["hub"]] = (x, y)
+        category = "residential" if "Block" in hub["hub"] else "transit" if "Station" in hub["hub"] or "Airport" in hub["hub"] else "mixed"
+        lines.append(f"@node: {hub['hub']} | kind=hub | district={hub['hub']} | category={category} | x={x:.1f} | y={y:.1f}")
+    ordered_hubs = [hub["hub"] for hub in hubs]
+    for idx in range(len(ordered_hubs) - 1):
+        lines.append(f"@road: {ordered_hubs[idx]} -> {ordered_hubs[idx + 1]} | type=arterial")
+    if len(ordered_hubs) >= 5:
+        metro_stops = ">".join(ordered_hubs[: min(6, len(ordered_hubs))])
+        lines.append(f"@metro: M1 | color=#8f5bd8 | stops={metro_stops}")
+    lines.extend(["", f"- City: {city_name}"])
     for hub in hubs:
         lines.append(f"  - Hub: {hub['hub']}")
         for item in hub["nearby"]:

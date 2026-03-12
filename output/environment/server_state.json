@@ -5024,6 +5024,254 @@
           }
         ],
         "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。；当前事件：natural/legacy(0.35): Poor air quality warning ; social/legacy(0.40): Neighborhood market fair ; economic/intraday(0.52): 平台用工裁员风波（07:33）"
+      },
+      "09:14": {
+        "events": [
+          {
+            "id": "natural-legacy---89311",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Light rain in the afternoon",
+            "description": "Light rain in the afternoon",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "social-legacy---85661",
+            "type": "social",
+            "topic": "legacy",
+            "name": "Traffic congestion on main roads",
+            "description": "Traffic congestion on main roads",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          },
+          {
+            "id": "economic-intraday-22-09:14-67130",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "消费意愿下降",
+            "description": "消费意愿下降（09:14）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 22 09:14",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          }
+        ],
+        "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。；当前事件：natural/legacy(0.35): Light rain in the afternoon ; social/legacy(0.40): Traffic congestion on main roads ; economic/intraday(0.52): 消费意愿下降（09:14）"
+      },
+      "09:38": {
+        "events": [
+          {
+            "id": "natural-legacy---89311",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Light rain in the afternoon",
+            "description": "Light rain in the afternoon",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "natural-legacy---60485",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Heat wave alert",
+            "description": "Heat wave alert",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          }
+        ],
+        "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。；当前事件：natural/legacy(0.35): Light rain in the afternoon ; natural/legacy(0.35): Heat wave alert"
+      },
+      "12:51": {
+        "events": [
+          {
+            "id": "social-legacy---11129",
+            "type": "social",
+            "topic": "legacy",
+            "name": "Neighborhood market fair",
+            "description": "Neighborhood market fair",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          },
+          {
+            "id": "natural-legacy---65489",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Dense fog in the morning",
+            "description": "Dense fog in the morning",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          }
+        ],
+        "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。；当前事件：social/legacy(0.40): Neighborhood market fair ; natural/legacy(0.35): Dense fog in the morning"
+      },
+      "18:13": {
+        "events": [
+          {
+            "id": "economic-intraday-22-18:13-64973",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "平台用工裁员风波",
+            "description": "平台用工裁员风波（18:13）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 22 18:13",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          }
+        ],
+        "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。；当前事件：economic/intraday(0.52): 平台用工裁员风波（18:13）"
+      },
+      "21:18": {
+        "events": [],
+        "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。"
+      },
+      "22:38": {
+        "events": [
+          {
+            "id": "natural-legacy---89311",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Light rain in the afternoon",
+            "description": "Light rain in the afternoon",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "social-legacy---11129",
+            "type": "social",
+            "topic": "legacy",
+            "name": "Neighborhood market fair",
+            "description": "Neighborhood market fair",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          },
+          {
+            "id": "economic-intraday-22-22:38-38226",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "平台用工裁员风波",
+            "description": "平台用工裁员风波（22:38）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 22 22:38",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          }
+        ],
+        "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。；当前事件：natural/legacy(0.35): Light rain in the afternoon ; social/legacy(0.40): Neighborhood market fair ; economic/intraday(0.52): 平台用工裁员风波（22:38）"
+      },
+      "23:26": {
+        "events": [
+          {
+            "id": "economic-intraday-22-23:26-7637",
+            "type": "economic",
+            "topic": "intraday",
+            "name": "消费意愿下降",
+            "description": "消费意愿下降（23:26）",
+            "severity": 0.52,
+            "scope": "city",
+            "start_time": "Day 22 23:26",
+            "end_time": "",
+            "impact_tags": [
+              "econ_security",
+              "risk_preference",
+              "stress"
+            ]
+          },
+          {
+            "id": "natural-legacy---89311",
+            "type": "natural",
+            "topic": "legacy",
+            "name": "Light rain in the afternoon",
+            "description": "Light rain in the afternoon",
+            "severity": 0.35,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "mobility",
+              "emotion"
+            ]
+          },
+          {
+            "id": "social-legacy---85661",
+            "type": "social",
+            "topic": "legacy",
+            "name": "Traffic congestion on main roads",
+            "description": "Traffic congestion on main roads",
+            "severity": 0.4,
+            "scope": "city",
+            "start_time": "",
+            "end_time": "",
+            "impact_tags": [
+              "stress",
+              "mobility"
+            ]
+          }
+        ],
+        "context": "日级环境：城市继续在高就业生活成本和平台用工合规压力下运营，周末出行需求略有上升，科技应用持续迭代。；当前事件：economic/intraday(0.52): 消费意愿下降（23:26） ; natural/legacy(0.35): Light rain in the afternoon ; social/legacy(0.40): Traffic congestion on main roads"
       }
     }
   },

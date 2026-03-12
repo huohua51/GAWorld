@@ -1,11 +1,11 @@
 {
   "morning|home|起床、洗漱": {
     "action_counts": {
-      "继续当前活动": 7
+      "继续当前活动": 9
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.497938058887168,
-    "last_updated_day": 13
+    "strength": 0.575054773042099,
+    "last_updated_day": 23
   },
   "morning|public|准备早餐、查看新闻": {
     "action_counts": {
@@ -18,41 +18,44 @@
   "morning|work|通勤上班": {
     "action_counts": {
       "乘坐地铁/公交": 1,
-      "查看时间": 1,
+      "查看时间": 2,
       "佩戴耳机": 4,
       "查看地图": 2,
       "准备好工作用品": 2,
-      "出门": 1,
+      "出门": 2,
       "调整坐姿": 1,
-      "回复工作消息": 1
+      "回复工作消息": 2
     },
     "preferred_action": "佩戴耳机",
-    "strength": 0.3384348159617377,
-    "last_updated_day": 14
+    "strength": 0.2994254653347239,
+    "last_updated_day": 24
   },
   "afternoon|work|午餐外卖": {
     "action_counts": {
       "选择餐厅": 2,
       "查看配送进度": 1,
-      "确认外卖是否正确": 2
+      "确认外卖是否正确": 2,
+      "打开外卖APP": 1
     },
     "preferred_action": "选择餐厅",
-    "strength": 0.21680062464,
-    "last_updated_day": 13
+    "strength": 0.20812859965439998,
+    "last_updated_day": 23
   },
   "evening|work|工作": {
     "action_counts": {
-      "调试代码": 1,
+      "调试代码": 2,
       "撰写技术报告": 1,
       "运行代码": 1,
       "打开电脑": 1,
       "打开代码编辑器": 1,
       "与同事沟通": 1,
-      "编写代码": 1
+      "编写代码": 1,
+      "提交代码": 1,
+      "查看代码": 1
     },
     "preferred_action": "调试代码",
-    "strength": 0.134634339827712,
-    "last_updated_day": 14
+    "strength": 0.19095268697840184,
+    "last_updated_day": 24
   },
   "evening|home|下班": {
     "action_counts": {
@@ -71,27 +74,27 @@
   },
   "night|public|睡前放松、阅读": {
     "action_counts": {
-      "睡觉": 3
+      "睡觉": 4
     },
     "preferred_action": "睡觉",
-    "strength": 0.2991808,
-    "last_updated_day": 8
+    "strength": 0.355246336,
+    "last_updated_day": 22
   },
   "night|home|睡觉": {
     "action_counts": {
-      "睡觉": 10
+      "睡觉": 12
     },
     "preferred_action": "睡觉",
-    "strength": 0.6090503911987311,
-    "last_updated_day": 14
+    "strength": 0.669100251110606,
+    "last_updated_day": 24
   },
   "morning|home|准备早餐、查看新闻": {
     "action_counts": {
-      "继续当前活动": 1
+      "继续当前活动": 2
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 3
+    "strength": 0.23824,
+    "last_updated_day": 23
   },
   "afternoon|home|午餐外卖": {
     "action_counts": {
@@ -124,11 +127,13 @@
       "打开外卖APP": 1,
       "下单": 1,
       "选择菜品": 1,
-      "选择餐厅": 1
+      "选择餐厅": 1,
+      "查看评价": 1,
+      "打开外卖": 1
     },
     "preferred_action": "打开外卖APP",
-    "strength": 0.15217459200000003,
-    "last_updated_day": 14
+    "strength": 0.1402441039872,
+    "last_updated_day": 24
   },
   "evening|home|工作": {
     "action_counts": {
@@ -140,27 +145,28 @@
   },
   "evening|public|下班": {
     "action_counts": {
-      "整理电脑文件": 2
+      "整理电脑文件": 2,
+      "调整座椅姿势": 1
     },
     "preferred_action": "整理电脑文件",
-    "strength": 0.23824,
-    "last_updated_day": 8
+    "strength": 0.2287104,
+    "last_updated_day": 22
   },
   "night|home|睡前放松、阅读": {
     "action_counts": {
-      "睡觉": 7
+      "睡觉": 8
     },
     "preferred_action": "睡觉",
-    "strength": 0.497938058887168,
-    "last_updated_day": 14
+    "strength": 0.5381030141761945,
+    "last_updated_day": 23
   },
   "night|public|睡觉": {
     "action_counts": {
-      "睡觉": 2
+      "睡觉": 3
     },
     "preferred_action": "睡觉",
-    "strength": 0.23824,
-    "last_updated_day": 8
+    "strength": 0.2991808,
+    "last_updated_day": 23
   },
   "morning|work|起床、洗漱": {
     "action_counts": {
@@ -188,11 +194,11 @@
   },
   "morning|public|起床、洗漱": {
     "action_counts": {
-      "继续当前活动": 2
+      "继续当前活动": 3
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.23824,
-    "last_updated_day": 9
+    "strength": 0.2991808,
+    "last_updated_day": 24
   },
   "evening|public|工作": {
     "action_counts": {
@@ -285,11 +291,12 @@
   },
   "evening|work|下班": {
     "action_counts": {
-      "检查邮件": 1
+      "检查邮件": 1,
+      "查看项目进度": 1
     },
     "preferred_action": "检查邮件",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 13
+    "strength": 0.16512000000000002,
+    "last_updated_day": 23
   },
   "morning|work|通勤途中，回顾昨天代码，思考优化方向。": {
     "action_counts": {
@@ -357,11 +364,11 @@
   },
   "morning|work|通勤路上，听技术播客，或思考报告中遇到的难题。": {
     "action_counts": {
-      "继续当前活动": 1
+      "继续当前活动": 2
     },
     "preferred_action": "继续当前活动",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 16
+    "strength": 0.23824,
+    "last_updated_day": 22
   },
   "afternoon|work|午餐外卖，利用午休时间快速阅读技术博客，或尝试解决一个算法难题。": {
     "action_counts": {
@@ -402,5 +409,21 @@
     "preferred_action": "睡觉",
     "strength": 0.17200000000000001,
     "last_updated_day": 16
+  },
+  "morning|work|工作": {
+    "action_counts": {
+      "回复邮件": 1
+    },
+    "preferred_action": "回复邮件",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 24
+  },
+  "evening|home|前往Central Block": {
+    "action_counts": {
+      "乘坐metro移动": 2
+    },
+    "preferred_action": "乘坐metro移动",
+    "strength": 0.23824,
+    "last_updated_day": 24
   }
 }

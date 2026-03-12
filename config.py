@@ -81,12 +81,46 @@ CONFIG = {
     "memory_dir": "output/memory",
     "log_dir": "output/logs",
     "environment_output_dir": "output/environment",
+    "visualization": {
+        "enabled": True,
+        "output_dir": "output/visualization",
+        "site_path": "site/simviz/index.html",
+    },
     "environment_config_path": "environment_config.json",
     "external_environment_service": {
         "enabled": False,
         "base_url": "http://127.0.0.1:8765",
         "timeout": 6,
         "fallback_to_empty": True,
+    },
+    # Distributed multi-machine simulation.
+    # Run a relay server and let each node process its own local agent subset.
+    "distributed": {
+        "enabled": False,
+        "cluster": "default",
+        # Leave empty to auto-generate using hostname + pid.
+        "node_id": "",
+        # Optional local subset override for this machine.
+        # If enabled and non-empty, this list overrides CONFIG["agent_ids"].
+        "local_agent_ids": [],
+        # Optional explicit cross-machine peers.
+        # If empty, peers are discovered from relay directory.
+        "peer_agent_ids": [],
+        "send_probability": 0.18,
+        "max_outbound_per_step": 1,
+        "max_inbound_per_step": 3,
+        "message_max_chars": 160,
+        "fail_fast": False,
+        "relay": {
+            "base_url": "http://127.0.0.1:8877",
+            "timeout": 3,
+        },
+        "server": {
+            "host": "0.0.0.0",
+            "port": 8877,
+            "state_path": "output/distributed/relay_state.json",
+            "max_messages": 20000,
+        },
     },
     "environment_server": {
         "host": "0.0.0.0",
@@ -179,6 +213,20 @@ CONFIG = {
         "hours_per_step": 1.0,
         "initial_savings_months_min": 1.0,
         "initial_savings_months_max": 6.0,
+        # Optional inheritance-based initial assets.
+        "inheritance_enabled": True,
+        "inheritance_base_probability": 0.28,
+        "inheritance_age_peak_low": 30,
+        "inheritance_age_peak_high": 55,
+        "inheritance_ratio_min": 0.25,
+        "inheritance_ratio_max": 2.0,
+        "inheritance_hukou_bonus": {
+            "urban": 0.04,
+            "city": 0.04,
+            "town": 0.02,
+            "rural": -0.03,
+            "village": -0.03,
+        },
         "rent_income_ratio": 0.22,
         "daily_utilities_cost": 12.0,
         "base_living_cost_per_hour": 6.0,

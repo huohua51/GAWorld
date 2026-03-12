@@ -15,6 +15,19 @@ DEFAULT_ECONOMY_CONFIG = {
     "hours_per_step": 1.0,
     "initial_savings_months_min": 1.0,
     "initial_savings_months_max": 6.0,
+    "inheritance_enabled": True,
+    "inheritance_base_probability": 0.28,
+    "inheritance_age_peak_low": 30,
+    "inheritance_age_peak_high": 55,
+    "inheritance_ratio_min": 0.25,
+    "inheritance_ratio_max": 2.00,
+    "inheritance_hukou_bonus": {
+        "urban": 0.04,
+        "city": 0.04,
+        "town": 0.02,
+        "rural": -0.03,
+        "village": -0.03,
+    },
     "rent_income_ratio": 0.22,
     "daily_utilities_cost": 12.0,
     "base_living_cost_per_hour": 6.0,
@@ -206,6 +219,51 @@ def _infer_income_skill(agent):
     return _clip(0.55 * age_factor + 0.45 * econ_security, 0.1, 0.98)
 
 
+def _age_inheritance_factor(age, low=30, high=55):
+    years = int(_to_float(age, 30))
+    peak_low = int(_to_float(low, 30))
+    peak_high = int(_to_float(high, 55))
+    if years < peak_low:
+        return max(0.0, years / max(1.0, peak_low))
+    if years <= peak_high:
+        return 1.0
+    decay = 1.0 - ((years - peak_high) / 45.0)
+    return _clip(decay, 0.35, 1.0)
+
+
+def _infer_inheritance_amount(agent, cfg, baseline_monthly_income):
+    if not bool(cfg.get("inheritance_enabled", True)):
+        return 0.0
+    base_prob = _to_float(cfg.get("inheritance_base_probability", 0.28), 0.28)
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    risk_preference = _to_float(state.get("risk_preference", 0.5), 0.5)
+    age = int(_to_float(agent.get("age", 30), 30))
+    age_factor = _age_inheritance_factor(
+        age,
+        low=cfg.get("inheritance_age_peak_low", 30),
+        high=cfg.get("inheritance_age_peak_high", 55),
+    )
+    profile_blob = " ".join(
+        str(agent.get(k, "")) for k in ("hukou", "residence", "living", "values", "daily_life")
+    ).lower()
+    hukou_bonus_cfg = cfg.get("inheritance_hukou_bonus", {})
+    hukou_bonus = 0.0
+    if isinstance(hukou_bonus_cfg, dict):
+        for key, delta in hukou_bonus_cfg.items():
+            if str(key).strip().lower() and str(key).strip().lower() in profile_blob:
+                hukou_bonus += _to_float(delta, 0.0)
+    prob = base_prob * (0.72 + 0.55 * age_factor) + 0.04 * (risk_preference - 0.5) + hukou_bonus
+    prob = _clip(prob, 0.0, 0.92)
+    if random.random() > prob:
+        return 0.0
+    ratio_min = _to_float(cfg.get("inheritance_ratio_min", 0.25), 0.25)
+    ratio_max = _to_float(cfg.get("inheritance_ratio_max", 2.0), 2.0)
+    if ratio_max < ratio_min:
+        ratio_min, ratio_max = ratio_max, ratio_min
+    inheritance_ratio = random.uniform(ratio_min, ratio_max)
+    return max(0.0, baseline_monthly_income * inheritance_ratio)
+
+
 def _empty_daily_categories():
     return {
         "food": 0.0,
@@ -280,7 +338,9 @@ def _init_agent_economy(agent, cfg, context):
         _to_float(cfg.get("initial_savings_months_min", 1.0), 1.0),
         _to_float(cfg.get("initial_savings_months_max", 6.0), 6.0),
     )
-    init_balance = monthly_income * init_months * (0.7 + 0.6 * _to_float(agent.get("state", {}).get("econ_security", 0.5), 0.5))
+    labor_savings = monthly_income * init_months * (0.7 + 0.6 * _to_float(agent.get("state", {}).get("econ_security", 0.5), 0.5))
+    inheritance_assets = _infer_inheritance_amount(agent, cfg, baseline_monthly_income=monthly_income)
+    init_balance = labor_savings + inheritance_assets
     monthly_rent = monthly_income * _to_float(cfg.get("rent_income_ratio", 0.22), 0.22) * random.uniform(0.85, 1.15)
 
     agent["economy"] = {
@@ -293,6 +353,11 @@ def _init_agent_economy(agent, cfg, context):
         "income_target_daily": max(40.0, base_hourly_income * _to_float(cfg.get("target_work_hours_per_day", 7.0), 7.0)),
         "monthly_rent": max(600.0, monthly_rent),
         "balance": max(0.0, init_balance),
+        "initial_assets": {
+            "labor_savings": max(0.0, labor_savings),
+            "inheritance": max(0.0, inheritance_assets),
+            "total": max(0.0, init_balance),
+        },
         "daily_income": 0.0,
         "daily_expense": 0.0,
         "daily_expense_by_category": _empty_daily_categories(),
@@ -405,10 +470,12 @@ def on_simulation_start(context):
             continue
         _init_agent_economy(agent, cfg, context)
         econ = agent.get("economy", {})
+        init_assets = econ.get("initial_assets", {}) if isinstance(econ.get("initial_assets", {}), dict) else {}
         init_line = (
             f"[EconomyInit] balance={econ.get('balance', 0.0):.2f} {econ.get('currency', 'CNY')} "
             f"hourly_income={econ.get('hourly_income', 0.0):.2f} "
-            f"wealth_drive={econ.get('wealth_drive', 0.0):.2f}"
+            f"wealth_drive={econ.get('wealth_drive', 0.0):.2f} "
+            f"inheritance={_to_float(init_assets.get('inheritance', 0.0), 0.0):.2f}"
         )
         _append_agent_log(context, agent["id"], init_line)
 
@@ -638,6 +705,9 @@ def on_simulation_end(context):
                 "base_hourly_income",
                 "hourly_income",
                 "income_target_daily",
+                "initial_labor_savings",
+                "initial_inheritance",
+                "initial_assets_total",
             ],
         )
         writer.writeheader()
@@ -645,6 +715,7 @@ def on_simulation_end(context):
             econ = agent.get("economy", {})
             if not isinstance(econ, dict):
                 continue
+            init_assets = econ.get("initial_assets", {}) if isinstance(econ.get("initial_assets", {}), dict) else {}
             agent_row = {
                 "agent_id": agent.get("id"),
                 "currency": econ.get("currency", cfg.get("currency", "CNY")),
@@ -655,6 +726,9 @@ def on_simulation_end(context):
                 "base_hourly_income": round(_to_float(econ.get("base_hourly_income", 0.0), 0.0), 4),
                 "hourly_income": round(_to_float(econ.get("hourly_income", 0.0), 0.0), 4),
                 "income_target_daily": round(_to_float(econ.get("income_target_daily", 0.0), 0.0), 4),
+                "initial_labor_savings": round(_to_float(init_assets.get("labor_savings", 0.0), 0.0), 4),
+                "initial_inheritance": round(_to_float(init_assets.get("inheritance", 0.0), 0.0), 4),
+                "initial_assets_total": round(_to_float(init_assets.get("total", 0.0), 0.0), 4),
             }
             writer.writerow(agent_row)
             agent_id = agent_row["agent_id"]

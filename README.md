@@ -49,9 +49,12 @@ Across days, GAWorld accumulates:
 - External RAG info injection (timestamped), ingestible from CLI or files.
 - Location-aware actions with per-agent, per-location LLM biasing.
 - Time-aware location resolution (home at night, workplace during day with flexibility).
+- City-scale map model with pseudo lat/lng, road-network distance, transport modes, and travel time.
 - City map generation from natural language descriptions.
 - Reset command to clear stateful caches/logs and restart from day 1.
 - Visualizations for social networks and state evolution.
+- Map playback for agent movement, behavior, and thought traces.
+- Distributed multi-machine mode: each node runs local agent subsets with relay-based inter-agent communication.
 
 ## Project layout
 - `generative_city_sim.py` main simulator + CLI entrypoint.
@@ -59,12 +62,18 @@ Across days, GAWorld accumulates:
 - `environment.py` environment event generator.
 - `environment_config.json` environment and external environment configuration.
 - `external_environment_server.py` standalone HTTP backend for shared external environment state.
+- `distributed_comm.py` relay client for cross-machine agent communication.
+- `distributed_comm_server.py` standalone communication relay server.
 - `hangzhou_agents_state_init.csv` seed state values per agent.
 - `hangzhou_profiles_with_names.md` detailed agent profiles.
 - `citymap.md` village map (hubs + nearby locations).
 - `generate_citymap.py` city map generator (from text descriptions).
+- `city_map_system.py` city coordinate graph, route distance, transport mode, and pixel tile map builder.
+- `simulation_visualizer.py` map layout + trace writer for playback UI.
 - `output/` simulation artifacts (logs, memory, plots, CSVs).
+- `output/visualization/` simulation trace JSON for map playback.
 - `site/` static project-intro website (`index.html`, `styles.css`).
+- `site/simviz/` map playback UI for agent movement, actions, and thinking.
 - `extensibility.py` hook dispatcher for custom lifecycle functions.
 - `custom_hooks.py` example custom hook functions.
 - `experience_store.py` structured episodic memory persistence.
@@ -93,6 +102,29 @@ cd site
 python -m http.server 8080
 # then open http://localhost:8080
 ```
+
+5) Open the simulation map viewer:
+```bash
+python generative_city_sim.py serve-viz --port 8000
+# then open http://127.0.0.1:8000/site/simviz/index.html
+```
+The viewer renders a pixel-style city map and shows per-agent target location, travel mode, route distance, and travel time.
+It also draws river overlay, bridge markers, metro lines, moving vehicle icons, and a day/night tint.
+
+### Explicit city map directives
+`citymap.md` now supports explicit directives in addition to the legacy `Hub/Nearby` list:
+
+```text
+@river: Qiantang River | path=0.04,0.26;0.18,0.31;0.34,0.27 | width=0.09
+@node: Central Block | kind=hub | category=residential | x=5.8 | y=4.5
+@road: Central Block -> City Hall | type=arterial
+@metro: M1 | color=#8f5bd8 | stops=North Block>Central Block>Central Station
+```
+
+- `x/y`: city grid coordinates
+- `kind`: `hub` or `place`
+- `category`: district function for rendering and travel heuristics
+- `type`: road type such as `local`, `collector`, `arterial`
 
 ## CLI usage
 Run a full simulation (default command when no subcommand is provided):
@@ -168,6 +200,36 @@ python external_environment_server.py --no-llm
 python external_environment_server.py --use-llm
 ```
 
+Serve the live/offline simulation map viewer:
+```bash
+python generative_city_sim.py serve-viz --host 127.0.0.1 --port 8000
+```
+
+Run distributed communication relay server:
+```bash
+python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877
+```
+
+Minimal distributed setup (2 machines example):
+```text
+Machine A:
+  config.distributed.enabled = true
+  config.distributed.local_agent_ids = [1,2,3]
+  config.distributed.relay.base_url = "http://<relay-host>:8877"
+
+Machine B:
+  config.distributed.enabled = true
+  config.distributed.local_agent_ids = [4,5,6]
+  config.distributed.relay.base_url = "http://<relay-host>:8877"
+```
+Then run `python generative_city_sim.py run` on both machines.
+Each node will process local agents while exchanging cross-machine messages through the relay.
+
+Open a comparison scenario directly in the viewer by passing a custom data path:
+```text
+http://127.0.0.1:8000/site/simviz/index.html?data=../../output/comparisons/<run>/with_event/visualization/simulation_trace.json
+```
+
 ## Configuration guide
 All runtime settings live in `config.py`.
 
@@ -208,9 +270,24 @@ All runtime settings live in `config.py`.
 - `stateful`: if true, preserves memory and schedules across runs.
 - `memory_dir`: JSON memory/schedule/action/locations per agent.
 - `log_dir`: per-agent logs.
+- `visualization.output_dir`: trace file output for the map playback UI.
 - `memory_model_version`: memory schema version marker used for compatibility checks.
 - `require_clean_reset_on_memory_model_change`: if true, simulator blocks run until `reset` is executed after a version change.
 - `vector_db_path`: sqlite vector store for memory + logs (with `vector_db_dim`, `vector_db_top_k`, `vector_db_max_chars`).
+
+### Distributed multi-machine
+`distributed` enables multi-machine simulation with cross-node communication:
+- `enabled`: toggle distributed mode.
+- `cluster`: cluster namespace; nodes in different clusters do not share messages.
+- `node_id`: optional node identifier (auto-generated if empty).
+- `local_agent_ids`: optional local subset override for this machine.
+- `peer_agent_ids`: optional explicit target agents; if empty, relay directory discovery is used.
+- `send_probability`: chance for each local agent to send a cross-machine update per tick.
+- `max_outbound_per_step`: max outbound messages per local agent each tick.
+- `max_inbound_per_step`: max inbound messages injected into each agent context per tick.
+- `message_max_chars`: max length for each distributed message body.
+- `relay.base_url`, `relay.timeout`: relay endpoint and request timeout.
+- `server.host`, `server.port`, `server.state_path`, `server.max_messages`: relay server defaults for `serve-distributed`.
 
 ### Human realism
 `human_realism` enables day-to-day experience accumulation and more human-like behavior:
@@ -231,6 +308,9 @@ All runtime settings live in `config.py`.
 - `output_dir`: output folder for economy ledgers.
 - `hours_per_step`: simulated hours for each timeline step (auto-derived from `time_step_minutes` when present).
 - `initial_savings_months_min/max`: initialize savings using monthly-income multiples.
+- `inheritance_enabled`: allow inheritance to contribute to initial assets.
+- `inheritance_base_probability`: base probability that an agent receives inheritance at initialization.
+- `inheritance_ratio_min/max`: inheritance amount range in multiples of monthly income.
 - `rent_income_ratio`, `daily_utilities_cost`, `base_living_cost_per_hour`: baseline housing/living costs.
 - `income_volatility`, `min_hourly_income`, `target_work_hours_per_day`: dynamic income controls.
 - `asset_safety_days`, `income_seek_threshold`: how strongly low assets trigger income-seeking behavior.
@@ -332,9 +412,13 @@ Simulation output is written under `output/`:
 - `output/memory/vector_db.sqlite` vector memory store (logs + summaries).
 - `output/economy/daily_ledger.csv` daily income/expense/balance ledger.
 - `output/economy/wealth_snapshot.csv` end-of-run wealth snapshot by agent.
+- `wealth_snapshot.csv` includes `initial_labor_savings`, `initial_inheritance`, `initial_assets_total`.
 - `output/economy/agents/agent_<id>_ledger.csv` per-agent daily ledger.
 - `output/economy/agents/agent_<id>_snapshot.json` per-agent final finance snapshot.
 - `output/environment/timeline.jsonl` day/tick external environment timeline.
+- `output/distributed/relay_state.json` distributed relay persisted state (when server persistence enabled).
+- `output/visualization/simulation_trace.json` map playback frames for live/offline visualization.
+- `output/visualization/latest_frame.json` latest frame snapshot for lightweight polling.
 - `output/network/social_network.png` social graph snapshot.
 - `output/state/agent_state_over_time.png` state evolution plot.
 - `output/state/agent_state_history.csv` time series data.

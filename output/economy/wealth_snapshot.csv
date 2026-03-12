@@ -1,2 +1,2 @@
-agent_id,currency,balance,lifetime_income,lifetime_expense,wealth_drive,base_hourly_income,hourly_income,income_target_daily
-8,CNY,22772.5267,288.2011,325.8842,0.683,41.7099,33.7504,332.5677
+agent_id,currency,balance,lifetime_income,lifetime_expense,wealth_drive,base_hourly_income,hourly_income,income_target_daily,initial_labor_savings,initial_inheritance,initial_assets_total
+1,CNY,64203.8204,3456.6956,2859.9979,0.643,80.1902,74.4939,631.5256,0.0,0.0,0.0

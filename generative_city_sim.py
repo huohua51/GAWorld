@@ -18,9 +18,26 @@ from html import unescape
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
+from city_map_system import (
+    all_locations as city_all_locations,
+    distance_between as city_distance_between,
+    load_city_map as load_structured_city_map,
+    load_city_map_text as load_structured_city_map_text,
+    node_by_name as city_node_by_name,
+    travel_plan as build_travel_plan,
+)
+from distributed_comm import (
+    DistributedRelayClient,
+    extract_sender_agent_ids,
+    format_inbox_context,
+)
 from extensibility import HookBus
 from environment import EnvironmentSystem, RemoteEnvironmentClient
 from llm_providers import call_llm
+from simulation_visualizer import (
+    SimulationVisualizer,
+    build_agent_step_payload,
+)
 from experience_store import (
     append_agent_episode,
     load_agent_episodes,
@@ -204,6 +221,25 @@ def _clear_dir(path):
                 shutil.rmtree(target)
         except OSError:
             continue
+
+
+def _coerce_positive_int_list(values):
+    if values is None:
+        return []
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+    seen = set()
+    out = []
+    for raw in values:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0 or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
 
 def _strip_html(text):
     if not text:
@@ -1095,7 +1131,7 @@ def reset_simulation():
                 os.remove(vector_db_path)
         except OSError:
             pass
-    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR, ENV_OUTPUT_DIR]:
+    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR, ENV_OUTPUT_DIR, VISUALIZATION_OUTPUT_DIR]:
         if output_dir not in (memory_dir, log_dir):
             _clear_dir(output_dir)
     save_sim_state({
@@ -1245,7 +1281,13 @@ def append_jsonl(path, row):
 # =========================================================
 # 参数
 # =========================================================
-AGENT_IDS = CONFIG["agent_ids"]   # 可扩展为 100
+_BASE_AGENT_IDS = _coerce_positive_int_list(CONFIG.get("agent_ids", []))
+DISTRIBUTED_CONFIG = CONFIG.get("distributed", {})
+DISTRIBUTED_ENABLED = bool(DISTRIBUTED_CONFIG.get("enabled", False))
+_DISTRIBUTED_LOCAL_AGENT_IDS = _coerce_positive_int_list(
+    DISTRIBUTED_CONFIG.get("local_agent_ids", [])
+)
+AGENT_IDS = _DISTRIBUTED_LOCAL_AGENT_IDS if (DISTRIBUTED_ENABLED and _DISTRIBUTED_LOCAL_AGENT_IDS) else _BASE_AGENT_IDS
 SIM_DAYS = CONFIG["sim_days"]
 SECONDS_PER_DAY = CONFIG["seconds_per_day"]
 
@@ -1264,6 +1306,10 @@ HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
 ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
+VISUALIZATION_CONFIG = CONFIG.get("visualization", {})
+VISUALIZATION_ENABLED = bool(VISUALIZATION_CONFIG.get("enabled", True))
+VISUALIZATION_OUTPUT_DIR = VISUALIZATION_CONFIG.get("output_dir", "output/visualization")
+VISUALIZATION_SITE_PATH = VISUALIZATION_CONFIG.get("site_path", "site/simviz/index.html")
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
 ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
@@ -1405,40 +1451,13 @@ def build_social_network(agents, avg_degree=6, p_cross=0.15):
 # Map & Location
 # =========================================================
 def load_city_map(map_path):
-    if not os.path.exists(map_path):
-        return {}
-    hubs = {}
-    current_hub = None
-    with open(map_path, "r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            hub_match = re.match(r"-\s*Hub:\s*(.+)", line)
-            if hub_match:
-                current_hub = hub_match.group(1).strip()
-                hubs.setdefault(current_hub, [])
-                continue
-            nearby_match = re.match(r"-\s*Nearby:\s*(.+)", line)
-            if nearby_match and current_hub:
-                hubs[current_hub].append(nearby_match.group(1).strip())
-    return hubs
+    return load_structured_city_map(map_path)
 
 def load_city_map_text(map_path):
-    if not os.path.exists(map_path):
-        return ""
-    try:
-        with open(map_path, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+    return load_structured_city_map_text(map_path)
 
 def _all_locations(city_map):
-    locs = []
-    for hub, nearby in city_map.items():
-        locs.append(hub)
-        locs.extend(nearby)
-    return list(dict.fromkeys(locs))
+    return city_all_locations(city_map)
 
 def _pick_first_available(candidates, location_set):
     for c in candidates:
@@ -1508,6 +1527,13 @@ def assign_agent_locations(agent, city_map):
         "home": home,
         "workplace": workplace,
         "current": home,
+        "destination": home,
+        "in_transit": False,
+        "transport_mode": "",
+        "travel_minutes": 0,
+        "travel_progress": 1.0,
+        "travel_route": [home],
+        "arrival_time": "",
     }
 
 def init_agent_locations(agent, city_map):
@@ -1515,6 +1541,13 @@ def init_agent_locations(agent, city_map):
     if cached_locations:
         agent["locations"] = cached_locations
         agent["locations"].setdefault("current", agent["locations"].get("home", "Home"))
+        agent["locations"].setdefault("destination", agent["locations"].get("current", agent["locations"].get("home", "Home")))
+        agent["locations"].setdefault("in_transit", False)
+        agent["locations"].setdefault("transport_mode", "")
+        agent["locations"].setdefault("travel_minutes", 0)
+        agent["locations"].setdefault("travel_progress", 1.0)
+        agent["locations"].setdefault("travel_route", [agent["locations"].get("current", agent["locations"].get("home", "Home"))])
+        agent["locations"].setdefault("arrival_time", "")
         return agent["locations"]
     agent["locations"] = assign_agent_locations(agent, city_map)
     if STATEFUL:
@@ -1654,6 +1687,153 @@ def resolve_location(agent, activity, time_str, city_map):
 
     choice = _weighted_pick(weights)
     return choice or home
+
+
+def _timeline_step_minutes(timeline, index):
+    if not timeline:
+        return 30
+    current = _time_str_to_minutes(timeline[index])
+    if current is None:
+        return 30
+    if index + 1 < len(timeline):
+        nxt = _time_str_to_minutes(timeline[index + 1])
+        if nxt is not None:
+            delta = nxt - current
+            if delta <= 0:
+                delta += 24 * 60
+            return max(1, delta)
+    if index > 0:
+        prev = _time_str_to_minutes(timeline[index - 1])
+        if prev is not None:
+            delta = current - prev
+            if delta <= 0:
+                delta += 24 * 60
+            return max(1, delta)
+    return max(1, TIME_STEP_MINUTES or 30)
+
+
+def _update_transit_progress(agent, current_minutes):
+    locations = agent.get("locations", {})
+    if not locations.get("in_transit"):
+        return False
+    arrival_time = locations.get("arrival_time", "")
+    arrival_minutes = _time_str_to_minutes(arrival_time)
+    travel_minutes = max(1, int(locations.get("travel_minutes", 1) or 1))
+    start_minutes = _time_str_to_minutes(locations.get("depart_time", ""))
+    if start_minutes is None:
+        start_minutes = current_minutes
+    if arrival_minutes is None:
+        locations["in_transit"] = False
+        locations["current"] = locations.get("destination", locations.get("current", ""))
+        locations["travel_progress"] = 1.0
+        return True
+    elapsed = current_minutes - start_minutes
+    if elapsed < 0:
+        elapsed += 24 * 60
+    if current_minutes == arrival_minutes or elapsed >= travel_minutes:
+        locations["in_transit"] = False
+        locations["current"] = locations.get("destination", locations.get("current", ""))
+        locations["travel_progress"] = 1.0
+        return True
+    locations["travel_progress"] = max(0.0, min(0.99, elapsed / float(travel_minutes)))
+    return False
+
+
+def move_agent(agent, desired_location, activity, time_str, step_minutes, city_map):
+    locations = agent.setdefault("locations", {})
+    current_minutes = _time_str_to_minutes(time_str)
+    if current_minutes is None:
+        current_minutes = 0
+    just_arrived = _update_transit_progress(agent, current_minutes)
+    if locations.get("in_transit"):
+        return {
+            "display_location": f"Transit to {locations.get('destination', '')}",
+            "resolved_location": locations.get("current", locations.get("home", "Home")),
+            "target_location": locations.get("destination", locations.get("current", locations.get("home", "Home"))),
+            "travel": {
+                "mode": locations.get("transport_mode", ""),
+                "distance_km": float(locations.get("travel_distance_km", 0.0) or 0.0),
+                "minutes": int(locations.get("travel_minutes", 0) or 0),
+                "progress": float(locations.get("travel_progress", 0.0) or 0.0),
+                "route": locations.get("travel_route", []),
+                "status": "in_transit",
+            },
+            "just_arrived": just_arrived,
+        }
+
+    origin = locations.get("current", locations.get("home", "Home"))
+    target = desired_location or origin
+    if target == origin:
+        locations["destination"] = target
+        locations["travel_progress"] = 1.0
+        locations["transport_mode"] = ""
+        locations["travel_minutes"] = 0
+        locations["travel_distance_km"] = 0.0
+        locations["travel_route"] = [origin]
+        locations["arrival_time"] = time_str
+        locations["depart_time"] = time_str
+        return {
+            "display_location": origin,
+            "resolved_location": origin,
+            "target_location": target,
+            "travel": {
+                "mode": "",
+                "distance_km": 0.0,
+                "minutes": 0,
+                "progress": 1.0,
+                "route": [origin],
+                "status": "stationary",
+            },
+            "just_arrived": False,
+        }
+
+    travel = build_travel_plan(agent, city_map, origin, target, activity=activity)
+    travel_minutes = max(1, int(travel.get("travel_minutes", 1) or 1))
+    arrival_minutes = (current_minutes + travel_minutes) % (24 * 60)
+    arrival_time = _minutes_to_time_str(arrival_minutes)
+    locations["destination"] = target
+    locations["transport_mode"] = travel.get("mode", "")
+    locations["travel_minutes"] = travel_minutes
+    locations["travel_distance_km"] = float(travel.get("distance_km", 0.0) or 0.0)
+    locations["travel_route"] = travel.get("route", [origin, target])
+    locations["depart_time"] = time_str
+    locations["arrival_time"] = arrival_time
+
+    if travel_minutes <= max(1, int(step_minutes or 1)):
+        locations["current"] = target
+        locations["in_transit"] = False
+        locations["travel_progress"] = 1.0
+        return {
+            "display_location": target,
+            "resolved_location": target,
+            "target_location": target,
+            "travel": {
+                "mode": travel.get("mode", ""),
+                "distance_km": float(travel.get("distance_km", 0.0) or 0.0),
+                "minutes": travel_minutes,
+                "progress": 1.0,
+                "route": travel.get("route", [origin, target]),
+                "status": "arrived",
+            },
+            "just_arrived": True,
+        }
+
+    locations["in_transit"] = True
+    locations["travel_progress"] = max(0.05, min(0.95, float(step_minutes) / float(travel_minutes)))
+    return {
+        "display_location": f"Transit to {target}",
+        "resolved_location": origin,
+        "target_location": target,
+        "travel": {
+            "mode": travel.get("mode", ""),
+            "distance_km": float(travel.get("distance_km", 0.0) or 0.0),
+            "minutes": travel_minutes,
+            "progress": float(locations["travel_progress"]),
+            "route": travel.get("route", [origin, target]),
+            "status": "departed",
+        },
+        "just_arrived": False,
+    }
 
 # =========================================================
 # Schedule & Action
@@ -3120,6 +3300,17 @@ def run_simulation():
                 agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
+    distributed_client = DistributedRelayClient(DISTRIBUTED_CONFIG)
+    if distributed_client.enabled:
+        registered = distributed_client.register_agents(agents)
+        directory = distributed_client.refresh_directory()
+        remote_ids = sorted(aid for aid in directory.keys() if aid not in AGENT_IDS)
+        status = "ok" if registered else f"degraded ({distributed_client.last_error or 'register failed'})"
+        print(
+            f"🌐 分布式通信已启用: cluster={distributed_client.cluster}, "
+            f"node={distributed_client.node_id}, status={status}, "
+            f"local_agents={AGENT_IDS}, known_remote_agents={remote_ids[:12]}"
+        )
     state_metrics = list(agents[0]["state"].keys()) if agents else []
     state_history = {
         a["id"]: {
@@ -3191,6 +3382,21 @@ def run_simulation():
         print(init_loc_line.strip())
         append_agent_log(a, init_loc_line)
 
+    visualizer = None
+    if VISUALIZATION_ENABLED:
+        visualizer = SimulationVisualizer(
+            VISUALIZATION_OUTPUT_DIR,
+            city_map,
+            agents,
+            sim_meta={
+                "sim_days": SIM_DAYS,
+                "seconds_per_day": SECONDS_PER_DAY,
+                "time_step_minutes": TIME_STEP_MINUTES,
+                "map_path": MAP_PATH,
+                "agent_ids": [a["id"] for a in agents],
+            },
+        )
+
     schedules = {}
     actions = {}
     for a in agents:
@@ -3251,6 +3457,8 @@ def run_simulation():
             f"{day_context.get('day_type_zh', '工作日')}"
         ).strip()
         print(f"\n================= Day {day} ({day_desc}) =================")
+        if distributed_client.enabled:
+            distributed_client.refresh_directory()
         daily_logs = defaultdict(str)
         day_env_events = env_system.start_day(day, day_context=day_context, agents=agents)
         day_env_context = env_system.get_day_context_text()
@@ -3381,11 +3589,13 @@ def run_simulation():
             extension_state=extension_state,
         )
 
-        for time_str in timeline:
+        for time_index, time_str in enumerate(timeline):
+            step_minutes = _timeline_step_minutes(timeline, time_index)
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
+            frame_steps = []
             if env_events:
                 append_jsonl(
                     env_timeline_path,
@@ -3416,6 +3626,14 @@ def run_simulation():
                 policy=policy,
                 extension_state=extension_state,
             )
+
+            distributed_inbox = {}
+            if distributed_client.enabled:
+                distributed_inbox = distributed_client.poll_messages(
+                    local_agent_ids=[a["id"] for a in agents],
+                    day=day,
+                    time_str=time_str,
+                )
 
             for agent in agents:
                 agent_id = agent["id"]
@@ -3463,7 +3681,24 @@ def run_simulation():
                         )
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
+                inbox_messages = distributed_inbox.get(agent_id, [])
                 social_context = get_social_context(agent, agents_by_id)
+                inbox_context = format_inbox_context(
+                    inbox_messages,
+                    max_items=int(DISTRIBUTED_CONFIG.get("max_inbound_per_step", 3)),
+                )
+                if inbox_context:
+                    social_context = f"{social_context} {inbox_context}".strip()
+                    inbox_log = f"[DistributedInbox {agent['name']} @ {time_str}] {inbox_context}\n"
+                    daily_logs[agent_id] += inbox_log
+                    append_agent_log(agent, inbox_log)
+                    vector_db_add_entry(
+                        agent_id,
+                        "distributed_in",
+                        inbox_context,
+                        sim_day=day,
+                        sim_time=time_str,
+                    )
 
                 policy_desc = None
                 if policy:
@@ -3525,27 +3760,50 @@ def run_simulation():
                     if updated and STATEFUL:
                         save_agent_actions(agent_id, actions[agent_id])
 
-                location = resolve_location(agent, activity, time_str, city_map)
-                agent["locations"]["current"] = location
-                location_bias = get_location_action_bias(
+                desired_location = resolve_location(agent, activity, time_str, city_map)
+                movement = move_agent(
                     agent,
-                    location,
-                    city_map_text,
-                    actions[agent_id],
-                )
-                act = choose_action(
-                    agent,
-                    activity,
-                    actions[agent_id],
-                    context=f"{activity} {perc}",
-                    location_bias=location_bias,
-                    location=location,
+                    desired_location=desired_location,
+                    activity=activity,
                     time_str=time_str,
+                    step_minutes=step_minutes,
+                    city_map=city_map,
                 )
-                outcome = f"在【{activity}】中执行了【{act}】"
+                if STATEFUL:
+                    save_agent_locations(agent_id, agent["locations"])
+                location = movement["display_location"]
+                resolved_location = movement["resolved_location"]
+                travel = movement["travel"]
+                effective_activity = activity
+                if travel.get("status") in {"departed", "in_transit"}:
+                    act = f"乘坐{travel.get('mode', '交通工具')}移动"
+                    outcome = (
+                        f"从【{resolved_location}】前往【{movement['target_location']}】，"
+                        f"使用【{travel.get('mode', '未知方式')}】，路程约 {travel.get('distance_km', 0.0):.1f} km，"
+                        f"预计 {travel.get('minutes', 0)} 分钟"
+                    )
+                    location_bias = {}
+                    effective_activity = f"前往{movement['target_location']}"
+                else:
+                    location_bias = get_location_action_bias(
+                        agent,
+                        resolved_location,
+                        city_map_text,
+                        actions[agent_id],
+                    )
+                    act = choose_action(
+                        agent,
+                        activity,
+                        actions[agent_id],
+                        context=f"{activity} {perc}",
+                        location_bias=location_bias,
+                        location=resolved_location,
+                        time_str=time_str,
+                    )
+                    outcome = f"在【{activity}】中执行了【{act}】"
                 refl = reflection(agent, outcome)
                 if HUMAN_REALISM_ENABLED:
-                    update_needs(agent, time_str, activity)
+                    update_needs(agent, time_str, effective_activity)
 
                 if env_events:
                     for ev in env_events:
@@ -3560,8 +3818,41 @@ def run_simulation():
 
                 social_influence(agent, agents_by_id)
                 update_state(agent)
+                sent_remote_messages = []
+                if distributed_client.enabled:
+                    sent_remote_messages = distributed_client.send_agent_messages(
+                        agent,
+                        day=day,
+                        time_str=time_str,
+                        activity=effective_activity,
+                        reflection=refl,
+                        outcome=outcome,
+                    )
+                    if sent_remote_messages:
+                        sent_summary = "; ".join(
+                            f"to#{int(msg.get('to_agent', 0))}:{str(msg.get('text', ''))[:40]}"
+                            for msg in sent_remote_messages
+                            if isinstance(msg, dict)
+                        )
+                        if sent_summary:
+                            sent_log = (
+                                f"[DistributedOutbox {agent['name']} @ {time_str}] "
+                                f"{sent_summary}\n"
+                            )
+                            daily_logs[agent_id] += sent_log
+                            append_agent_log(agent, sent_log)
+                            vector_db_add_entry(
+                                agent_id,
+                                "distributed_out",
+                                sent_summary,
+                                sim_day=day,
+                                sim_time=time_str,
+                            )
                 if HUMAN_REALISM_ENABLED:
                     partners = list(agent.get("_recent_social_partners", []))
+                    for sender_id in extract_sender_agent_ids(inbox_messages):
+                        if sender_id not in partners:
+                            partners.append(sender_id)
                     signal = infer_interaction_signal(refl)
                     for pid in partners:
                         relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
@@ -3581,7 +3872,7 @@ def run_simulation():
                     priorities = agent.get("intentions", {}).get("priorities", [])
                     goal_relevance = 0.2
                     for p in priorities:
-                        if p and (p in activity or p in plan or p in refl):
+                        if p and (p in effective_activity or p in plan or p in refl):
                             goal_relevance = 0.8
                             break
                     salience = compute_episode_salience(
@@ -3591,7 +3882,7 @@ def run_simulation():
                         goal_relevance,
                     )
                     tags = infer_episode_tags(
-                        activity,
+                        effective_activity,
                         act,
                         refl,
                         env_events=[ev.get("description", ev.get("name", "")) for ev in env_events],
@@ -3602,9 +3893,11 @@ def run_simulation():
                         "day": day,
                         "time": time_str,
                         "scheduled_activity": scheduled_activity,
-                        "final_activity": activity,
+                        "final_activity": effective_activity,
                         "action": act,
                         "location": location,
+                        "target_location": movement["target_location"],
+                        "travel": travel,
                         "env_events": [ev.get("description", ev.get("name", "")) for ev in env_events],
                         "policy_event": policy_desc if policy else "",
                         "social_partners": partners,
@@ -3624,11 +3917,11 @@ def run_simulation():
                     update_habits_from_episode(agent, episode, HUMAN_REALISM_CONFIG)
                     append_agent_episode(agent_id, episode)
                     episode_text = (
-                        f"Day {day} {time_str} {activity}/{act} @ {location} "
+                        f"Day {day} {time_str} {effective_activity}/{act} @ {location} "
                         f"tags={','.join(tags)} salience={salience:.2f} reflection={refl}"
                     )
                     vector_db_add_entry(agent_id, "episode", episode_text, sim_day=day, sim_time=time_str)
-                    agent["last_activity"] = activity
+                    agent["last_activity"] = effective_activity
                     agent["last_action"] = act
                 for metric in state_history[agent["id"]]:
                     state_history[agent["id"]][metric].append(agent["state"][metric])
@@ -3636,13 +3929,19 @@ def run_simulation():
                 routine_line = ""
                 if changed:
                     reason_text = change_reason or "临时改变"
-                    routine_line = f"RoutineChange: {scheduled_activity} -> {activity} ({reason_text})\n"
+                    routine_line = f"RoutineChange: {scheduled_activity} -> {effective_activity} ({reason_text})\n"
 
                 log = f"""
 [{agent['name']} @ {time_str}]
 Scheduled: {scheduled_activity}
-Activity: {activity}
+Activity: {effective_activity}
 {routine_line}Location: {location}
+ResolvedLocation: {resolved_location}
+TargetLocation: {movement['target_location']}
+TravelMode: {travel.get('mode', 'N/A')}
+TravelDistanceKm: {travel.get('distance_km', 0.0):.2f}
+TravelMinutes: {travel.get('minutes', 0)}
+TravelStatus: {travel.get('status', 'stationary')}
 Environment: {env_context}
 Perception: {perc}
 Plan: {plan}
@@ -3660,7 +3959,7 @@ Reflection: {refl}
                 step_ctx.update({
                     "perception": perc,
                     "plan": plan,
-                    "activity": activity,
+                    "activity": effective_activity,
                     "action": act,
                     "outcome": outcome,
                     "reflection": refl,
@@ -3668,7 +3967,30 @@ Reflection: {refl}
                     "changed": changed,
                     "change_reason": change_reason,
                     "location": location,
+                    "resolved_location": resolved_location,
+                    "target_location": movement["target_location"],
+                    "travel": travel,
                 })
+                if visualizer is not None:
+                    frame_steps.append(
+                        build_agent_step_payload(
+                            agent,
+                            time_str=time_str,
+                            location=location,
+                            resolved_location=resolved_location,
+                            target_location=movement["target_location"],
+                            scheduled_activity=scheduled_activity,
+                            activity=effective_activity,
+                            action=act,
+                            outcome=outcome,
+                            perception=perc,
+                            plan=plan,
+                            reflection=refl,
+                            changed=changed,
+                            change_reason=change_reason,
+                            travel=travel,
+                        )
+                    )
                 hook_bus.emit(
                     "on_agent_post_step",
                     day=day,
@@ -3687,6 +4009,17 @@ Reflection: {refl}
                     policy=policy,
                     step=step_ctx,
                     extension_state=extension_state,
+                )
+
+            if visualizer is not None:
+                visualizer.record_frame(
+                    day=day,
+                    time_str=time_str,
+                    day_context=day_context,
+                    env_context=env_context,
+                    env_events=env_events,
+                    agent_steps=frame_steps,
+                    policy=policy or {},
                 )
 
             time.sleep(sleep_step)
@@ -3744,6 +4077,8 @@ Reflection: {refl}
             })
 
     print("\n✅ 模拟完成")
+    if visualizer is not None:
+        visualizer.finalize()
     hook_bus.emit(
         "on_simulation_end",
         config=CONFIG,
@@ -4047,9 +4382,17 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
         "state_output_dir": os.path.join(scenario_dir, "state"),
         "network_output_dir": os.path.join(scenario_dir, "network"),
         "environment_output_dir": os.path.join(scenario_dir, "environment"),
+        "visualization": {
+            "enabled": True,
+            "output_dir": os.path.join(scenario_dir, "visualization"),
+            "site_path": CONFIG.get("visualization", {}).get("site_path", "site/simviz/index.html"),
+        },
         "policy_events": policy_events,
         "stateful": True,
         "random_seed": int(args.seed),
+        "distributed": {
+            "enabled": False,
+        },
     }
     if args.sim_days is not None:
         overrides["sim_days"] = int(args.sim_days)
@@ -4400,6 +4743,46 @@ def _build_arg_parser():
         default="output/comparisons",
         help="Output root for comparison artifacts",
     )
+
+    serve_viz = subparsers.add_parser(
+        "serve-viz",
+        help="Serve the visualization page and output artifacts over HTTP",
+    )
+    serve_viz.add_argument("--host", default="127.0.0.1", help="Bind host")
+    serve_viz.add_argument("--port", type=int, default=8000, help="Bind port")
+
+    distributed_cfg = CONFIG.get("distributed", {})
+    distributed_server_cfg = (
+        distributed_cfg.get("server", {})
+        if isinstance(distributed_cfg.get("server"), dict)
+        else {}
+    )
+    serve_distributed = subparsers.add_parser(
+        "serve-distributed",
+        help="Run distributed communication relay server for multi-machine agents",
+    )
+    serve_distributed.add_argument(
+        "--host",
+        default=distributed_server_cfg.get("host", "0.0.0.0"),
+        help="Bind host",
+    )
+    serve_distributed.add_argument(
+        "--port",
+        type=int,
+        default=int(distributed_server_cfg.get("port", 8877)),
+        help="Bind port",
+    )
+    serve_distributed.add_argument(
+        "--state-path",
+        default=distributed_server_cfg.get("state_path", "output/distributed/relay_state.json"),
+        help="State persistence path",
+    )
+    serve_distributed.add_argument(
+        "--max-messages",
+        type=int,
+        default=int(distributed_server_cfg.get("max_messages", 20000)),
+        help="Max retained messages in relay",
+    )
     return parser
 
 def _load_questions_from_file(path):
@@ -4410,6 +4793,41 @@ def _load_questions_from_file(path):
             return [line.strip() for line in f if line.strip()]
     except OSError:
         return []
+
+
+def _cli_serve_viz(host="127.0.0.1", port=8000):
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    handler = partial(SimpleHTTPRequestHandler, directory=repo_root)
+    page_url = f"http://{host}:{int(port)}/{VISUALIZATION_SITE_PATH}"
+    print(f"可视化页面: {page_url}")
+    print("按 Ctrl+C 停止服务。")
+    server = ThreadingHTTPServer((host, int(port)), handler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def _cli_serve_distributed(host=None, port=None, state_path=None, max_messages=None):
+    from distributed_comm_server import run_server
+
+    distributed_cfg = CONFIG.get("distributed", {})
+    server_cfg = distributed_cfg.get("server", {}) if isinstance(distributed_cfg.get("server"), dict) else {}
+    use_host = host or server_cfg.get("host", "0.0.0.0")
+    use_port = int(port if port is not None else server_cfg.get("port", 8877))
+    use_state_path = state_path or server_cfg.get("state_path", "output/distributed/relay_state.json")
+    use_max_messages = int(max_messages if max_messages is not None else server_cfg.get("max_messages", 20000))
+    run_server(
+        host=use_host,
+        port=use_port,
+        state_path=use_state_path,
+        max_messages=use_max_messages,
+    )
 
 def _main():
     parser = _build_arg_parser()
@@ -4449,6 +4867,19 @@ def _main():
 
     if args.command == "compare-event":
         _cli_compare_event(args)
+        return
+
+    if args.command == "serve-viz":
+        _cli_serve_viz(host=args.host, port=args.port)
+        return
+
+    if args.command == "serve-distributed":
+        _cli_serve_distributed(
+            host=args.host,
+            port=args.port,
+            state_path=args.state_path,
+            max_messages=args.max_messages,
+        )
         return
 
     run_simulation()

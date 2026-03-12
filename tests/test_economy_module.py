@@ -54,7 +54,26 @@ class TestEconomyModule(unittest.TestCase):
         self.assertIn("economy", agent)
         self.assertGreater(agent["economy"]["balance"], 0.0)
         self.assertIn("wealth_drive", agent["economy"])
+        self.assertIn("initial_assets", agent["economy"])
+        self.assertIn("inheritance", agent["economy"]["initial_assets"])
         self.assertTrue(os.path.exists(os.path.join(self.log_dir, "agent_1.log")))
+
+    def test_init_can_include_inheritance_assets(self):
+        random.seed(9)
+        agent = _build_agent()
+        cfg = dict(self.config)
+        cfg["economy"] = dict(self.config["economy"])
+        cfg["economy"]["inheritance_enabled"] = True
+        cfg["economy"]["inheritance_base_probability"] = 1.0
+        start_ctx = {"config": cfg, "agents": [agent], "extension_state": {}}
+        eco.on_simulation_start(start_ctx)
+        init_assets = agent["economy"]["initial_assets"]
+        self.assertGreater(init_assets["inheritance"], 0.0)
+        self.assertAlmostEqual(
+            init_assets["total"],
+            init_assets["labor_savings"] + init_assets["inheritance"],
+            places=6,
+        )
 
     def test_high_wealth_drive_can_seek_income_activity(self):
         random.seed(11)
@@ -172,6 +191,10 @@ class TestEconomyModule(unittest.TestCase):
             rows = list(csv.DictReader(f))
         self.assertEqual(1, len(rows))
         self.assertEqual("1", rows[0]["agent_id"])
+        with open(os.path.join(self.output_dir, "wealth_snapshot.csv"), "r", encoding="utf-8") as f:
+            snap_rows = list(csv.DictReader(f))
+        self.assertIn("initial_inheritance", snap_rows[0])
+        self.assertIn("initial_labor_savings", snap_rows[0])
 
 
 if __name__ == "__main__":
