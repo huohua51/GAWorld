@@ -19,7 +19,7 @@
     "action_counts": {
       "乘坐地铁/公交": 1,
       "查看时间": 2,
-      "佩戴耳机": 4,
+      "佩戴耳机": 5,
       "查看地图": 2,
       "准备好工作用品": 2,
       "出门": 2,
@@ -27,8 +27,8 @@
       "回复工作消息": 2
     },
     "preferred_action": "佩戴耳机",
-    "strength": 0.2994254653347239,
-    "last_updated_day": 24
+    "strength": 0.355471428107946,
+    "last_updated_day": 25
   },
   "afternoon|work|午餐外卖": {
     "action_counts": {
@@ -66,11 +66,12 @@
       "查看项目进度": 1,
       "整理电脑文件": 1,
       "起身伸展": 1,
-      "调整座椅姿势": 1
+      "调整座椅姿势": 1,
+      "关闭办公软件": 1
     },
     "preferred_action": "关闭显示器",
-    "strength": 0.19263704893583522,
-    "last_updated_day": 14
+    "strength": 0.1849315669784018,
+    "last_updated_day": 25
   },
   "night|public|睡前放松、阅读": {
     "action_counts": {
@@ -82,11 +83,11 @@
   },
   "night|home|睡觉": {
     "action_counts": {
-      "睡觉": 12
+      "睡觉": 13
     },
     "preferred_action": "睡觉",
-    "strength": 0.669100251110606,
-    "last_updated_day": 24
+    "strength": 0.6955722310217576,
+    "last_updated_day": 25
   },
   "morning|home|准备早餐、查看新闻": {
     "action_counts": {
@@ -129,11 +130,12 @@
       "选择菜品": 1,
       "选择餐厅": 1,
       "查看评价": 1,
-      "打开外卖": 1
+      "打开外卖": 1,
+      "确认地址": 1
     },
     "preferred_action": "打开外卖APP",
-    "strength": 0.1402441039872,
-    "last_updated_day": 24
+    "strength": 0.134634339827712,
+    "last_updated_day": 25
   },
   "evening|home|工作": {
     "action_counts": {
@@ -154,11 +156,11 @@
   },
   "night|home|睡前放松、阅读": {
     "action_counts": {
-      "睡觉": 8
+      "睡觉": 9
     },
     "preferred_action": "睡觉",
-    "strength": 0.5381030141761945,
-    "last_updated_day": 23
+    "strength": 0.575054773042099,
+    "last_updated_day": 25
   },
   "night|public|睡觉": {
     "action_counts": {
@@ -203,11 +205,12 @@
   "evening|public|工作": {
     "action_counts": {
       "撰写技术报告": 1,
-      "编写代码": 1
+      "编写代码": 1,
+      "阅读文档": 1
     },
     "preferred_action": "撰写技术报告",
-    "strength": 0.16512000000000002,
-    "last_updated_day": 11
+    "strength": 0.15851520000000002,
+    "last_updated_day": 25
   },
   "morning|public|起床，进行一套简易的拉伸运动，唤醒身体，并快速浏览技术博客，关注最新的算法趋势。": {
     "action_counts": {
@@ -412,11 +415,12 @@
   },
   "morning|work|工作": {
     "action_counts": {
-      "回复邮件": 1
+      "回复邮件": 1,
+      "打开电脑": 1
     },
     "preferred_action": "回复邮件",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 24
+    "strength": 0.16512000000000002,
+    "last_updated_day": 25
   },
   "evening|home|前往Central Block": {
     "action_counts": {
@@ -425,5 +429,13 @@
     "preferred_action": "乘坐metro移动",
     "strength": 0.23824,
     "last_updated_day": 24
+  },
+  "morning|home|下班后，进行30分钟的轻度瑜伽或冥想，放松身心，缓解工作压力。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 25
   }
 }
