@@ -1,5 +1,21 @@
 {
   "home": "Central Block",
   "workplace": "Hangzhou Tech Labs",
-  "current": "Central Block"
+  "current": "Old Town Market",
+  "destination": "Central Block",
+  "in_transit": true,
+  "transport_mode": "metro",
+  "travel_minutes": 19,
+  "travel_progress": 0.2631578947368421,
+  "travel_route": [
+    "Old Town Market",
+    "Old Town",
+    "Riverside Stadium",
+    "Financial District",
+    "City Hall",
+    "Central Block"
+  ],
+  "arrival_time": "21:31",
+  "travel_distance_km": 6.582,
+  "depart_time": "21:12"
 }

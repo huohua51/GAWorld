@@ -1,5 +1,17 @@
 {
   "home": "Central Block",
   "workplace": "Riverside Middle School",
-  "current": "Central Block"
+  "current": "Hangzhou Tech Labs",
+  "destination": "Hangzhou Tech Labs",
+  "in_transit": false,
+  "transport_mode": "metro",
+  "travel_minutes": 23,
+  "travel_progress": 1.0,
+  "travel_route": [
+    "Central Block",
+    "Hangzhou Tech Labs"
+  ],
+  "arrival_time": "21:40",
+  "travel_distance_km": 8.779,
+  "depart_time": "21:17"
 }

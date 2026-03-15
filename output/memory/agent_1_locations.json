@@ -1,16 +1,17 @@
 {
   "home": "Central Block",
   "workplace": "Hangzhou Tech Labs",
-  "current": "Central Block",
+  "current": "Hangzhou Tech Labs",
   "destination": "Central Block",
-  "in_transit": false,
-  "transport_mode": "",
-  "travel_minutes": 0,
-  "travel_progress": 1.0,
+  "in_transit": true,
+  "transport_mode": "metro",
+  "travel_minutes": 23,
+  "travel_progress": 0.21739130434782608,
   "travel_route": [
+    "Hangzhou Tech Labs",
     "Central Block"
   ],
-  "arrival_time": "23:38",
-  "travel_distance_km": 0.0,
-  "depart_time": "23:38"
+  "arrival_time": "21:35",
+  "travel_distance_km": 8.779,
+  "depart_time": "21:12"
 }

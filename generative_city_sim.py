@@ -336,6 +336,71 @@ def _extract_news_main_content(html_text):
             return content
     return _strip_html(html_text)
 
+def _extract_meta_content(text, *names):
+    if not text or not names:
+        return ""
+    for name in names:
+        pattern = (
+            r'(?is)<meta[^>]+(?:name|property)=["\']%s["\'][^>]+content=["\'](.*?)["\'][^>]*>'
+            % re.escape(name)
+        )
+        match = re.search(pattern, text)
+        if match:
+            content = _normalize_text(_strip_html(match.group(1)))
+            if content:
+                return content
+        pattern_rev = (
+            r'(?is)<meta[^>]+content=["\'](.*?)["\'][^>]+(?:name|property)=["\']%s["\'][^>]*>'
+            % re.escape(name)
+        )
+        match = re.search(pattern_rev, text)
+        if match:
+            content = _normalize_text(_strip_html(match.group(1)))
+            if content:
+                return content
+    return ""
+
+def fetch_social_page_profile_source(
+    url,
+    timeout=12,
+    max_chars=12000,
+    user_agent="GAWorld/1.0",
+):
+    if not url:
+        raise ValueError("缺少 URL")
+    headers = {"User-Agent": user_agent}
+    resp = requests.get(url, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    if not resp.encoding:
+        resp.encoding = resp.apparent_encoding
+    raw_text = resp.text or ""
+    title = _extract_title(raw_text)
+    meta_desc = _extract_meta_content(
+        raw_text,
+        "description",
+        "og:description",
+        "twitter:description",
+    )
+    content = _extract_news_main_content(raw_text)
+    if len(content) < 200:
+        content = _strip_html(raw_text)
+    combined = "\n".join(
+        part for part in [
+            f"页面标题：{title}" if title else "",
+            f"页面摘要：{meta_desc}" if meta_desc else "",
+            content,
+        ]
+        if part
+    ).strip()
+    if max_chars and len(combined) > max_chars:
+        combined = combined[:max_chars]
+    return {
+        "url": url,
+        "title": title,
+        "summary": meta_desc,
+        "content": combined,
+    }
+
 def load_news_sources(path):
     if not path or not os.path.exists(path):
         return []
@@ -1340,6 +1405,7 @@ SIM_START_WEEKDAY_INDEX = _weekday_to_index(CALENDAR_CONFIG.get("start_weekday",
 if SIM_START_WEEKDAY_INDEX is None:
     SIM_START_WEEKDAY_INDEX = 0
 SIM_WEEKEND_INDEXES = _build_weekend_indexes(CALENDAR_CONFIG.get("weekend_days", ["saturday", "sunday"]))
+AGENT_IMPORT_OUTPUT_DIR = CONFIG.get("agent_import_output_dir", "output/imported_agents")
 
 # =========================================================
 # 政策事件
@@ -1374,6 +1440,252 @@ def parse_profile(block):
     p["values"] = _extract(r"\*\*价值观与公共事务态度\*\*：(.+)")
     p["work_style"] = p["job"]
     return p
+
+def _safe_text(value, default=""):
+    text = str(value if value is not None else "").strip()
+    return text if text else default
+
+def _safe_int(value, default):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return int(default)
+
+def _safe_float(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+def _clip_state_value(value, default=0.5):
+    return float(np.clip(_safe_float(value, default), 0.0, 1.0))
+
+def _next_profile_id(df, md_path):
+    max_id = 0
+    if df is not None and not df.empty and "id" in df.columns:
+        try:
+            max_id = max(max_id, int(pd.to_numeric(df["id"], errors="coerce").max()))
+        except Exception:
+            pass
+    try:
+        with open(md_path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        text = ""
+    ids = [int(v) for v in re.findall(r"## Profile\s+(\d+)", text)]
+    if ids:
+        max_id = max(max_id, max(ids))
+    return max_id + 1
+
+def _load_social_source(url=None, file_path=None, text=None):
+    if url:
+        source = fetch_social_page_profile_source(url)
+        source["source_type"] = "url"
+        return source
+    if file_path:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError as exc:
+            raise ValueError(f"读取文件失败：{file_path}") from exc
+        trimmed = content.strip()
+        return {
+            "url": "",
+            "title": os.path.basename(file_path),
+            "summary": "",
+            "content": trimmed,
+            "source_type": "file",
+        }
+    if text:
+        trimmed = str(text).strip()
+        return {
+            "url": "",
+            "title": "direct_text",
+            "summary": "",
+            "content": trimmed,
+            "source_type": "text",
+        }
+    raise ValueError("必须提供 --url、--file 或 --text 之一")
+
+def _parse_agent_seed_payload(text):
+    json_blob = _extract_json_block(text)
+    if not json_blob:
+        return {}
+    try:
+        raw = json.loads(json_blob)
+    except json.JSONDecodeError:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+def _default_imported_agent_payload(source, override_name=None):
+    source_title = _safe_text(source.get("title"), "社交媒体用户")
+    name = _safe_text(override_name, source_title[:12] or "社交媒体用户")
+    return {
+        "name": name,
+        "gender": "未知",
+        "age": 28,
+        "hukou": "未知",
+        "residence": "杭州",
+        "job": "自媒体/平台活跃用户",
+        "personality": "表达欲较强，部分信息不完整，需在模拟中进一步补足。",
+        "daily_life": "日常活动受线上平台内容发布、浏览和社交互动影响较大。",
+        "values": "关注与个人内容、平台环境和公共讨论相关的话题。",
+        "education_income": "根据社交媒体内容估计，教育与收入信息未完全公开。",
+        "social_network": "线上互动关系较多，线下社交网络待进一步观察。",
+        "source_summary": _safe_text(source.get("summary")) or _safe_text(source.get("content"))[:200],
+        "state": {
+            "emotion": 0.58,
+            "stress": 0.52,
+            "econ_security": 0.50,
+            "city_identity": 0.55,
+            "policy_sensitivity": 0.55,
+            "platform_dependence": 0.72,
+            "risk_preference": 0.45,
+            "voice_propensity": 0.66,
+            "mobility_intent": 0.50,
+        },
+    }
+
+def _normalize_imported_agent_payload(raw, source, override_name=None):
+    payload = _default_imported_agent_payload(source, override_name=override_name)
+    if not isinstance(raw, dict):
+        return payload
+
+    state_raw = raw.get("state", {})
+    if not isinstance(state_raw, dict):
+        state_raw = {}
+
+    for key in [
+        "name",
+        "gender",
+        "hukou",
+        "residence",
+        "job",
+        "personality",
+        "daily_life",
+        "values",
+        "education_income",
+        "social_network",
+        "source_summary",
+    ]:
+        payload[key] = _safe_text(raw.get(key), payload[key])
+    payload["name"] = _safe_text(override_name, payload["name"])
+    payload["age"] = max(16, min(80, _safe_int(raw.get("age"), payload["age"])))
+
+    for metric, default in payload["state"].items():
+        payload["state"][metric] = _clip_state_value(state_raw.get(metric), default)
+    return payload
+
+def _generate_imported_agent_seed(source, override_name=None):
+    content = _safe_text(source.get("content"))
+    if not content:
+        raise ValueError("页面内容为空，无法创建智能体")
+    source_url = _safe_text(source.get("url"), "无")
+    source_title = _safe_text(source.get("title"), "无")
+    prompt = f"""
+你是城市社会模拟器的人物建模器。请根据给定社交媒体页面内容，抽取并补全一个可用于仿真的人物画像。
+来源页面标题：{source_title}
+来源页面 URL：{source_url}
+页面文本：
+{content}
+
+要求：
+1) 只输出一个 JSON 对象，不要输出其他文字。
+2) JSON 字段必须包含：
+name, gender, age, hukou, residence, education_income, job, personality, daily_life, social_network, values, source_summary, state
+3) `state` 必须是 JSON 对象，包含：
+emotion, stress, econ_security, city_identity, policy_sensitivity, platform_dependence, risk_preference, voice_propensity, mobility_intent
+4) 所有 state 数值在 0 到 1 之间。
+5) 若页面信息不足，可以合理推断，但要保持谨慎，避免编造过细的细节。
+6) `residence` 尽量使用杭州城区/片区风格短语；`hukou` 若无法判断可写“未知”。
+7) `source_summary` 用 1-2 句概括你主要依据了哪些内容来构造此人。
+"""
+    response = call_llm(prompt, task="social_profile", agent_id=None)
+    raw = _parse_agent_seed_payload(response)
+    return _normalize_imported_agent_payload(raw, source, override_name=override_name)
+
+def _format_imported_profile_block(agent_id, payload):
+    state = payload["state"]
+    return (
+        f"\n## Profile {agent_id:02d}｜{payload['name']}\n"
+        f"**基础信息**：{payload['gender']}，{payload['age']}岁，{payload['hukou']}户籍，居住{payload['residence']}。\n\n"
+        f"**教育与收入背景**：{payload['education_income']}\n\n"
+        f"**职业与工作节奏**：{payload['job']}\n\n"
+        f"**性格与情绪特征**：{payload['personality']}\n\n"
+        f"**日常生活与生活习惯**：{payload['daily_life']}\n\n"
+        f"**社交网络情况**：{payload['social_network']}\n\n"
+        f"**价值观与公共事务态度**：{payload['values']}\n\n"
+        f"**研究增强变量初始化**：\n"
+        f"- policy_sensitivity：{state['policy_sensitivity']:.2f}\n"
+        f"- platform_dependence：{state['platform_dependence']:.2f}\n"
+        f"- risk_preference：{state['risk_preference']:.2f}\n"
+        f"- voice_propensity：{state['voice_propensity']:.2f}\n"
+        f"- mobility_intent：{state['mobility_intent']:.2f}\n\n"
+        f"**核心状态变量**：emotion {state['emotion']:.2f}｜stress {state['stress']:.2f}｜"
+        f"econ_security {state['econ_security']:.2f}｜city_identity {state['city_identity']:.2f}\n"
+        f"\n---\n"
+    )
+
+def _append_imported_agent_records(agent_id, payload, source, csv_path=CSV_PATH, md_path=MD_PATH):
+    df = pd.read_csv(csv_path)
+    row = {
+        "id": int(agent_id),
+        "name": payload["name"],
+        "gender": payload["gender"],
+        "age": int(payload["age"]),
+        "hukou": payload["hukou"],
+        "residence": payload["residence"],
+        "emotion": payload["state"]["emotion"],
+        "stress": payload["state"]["stress"],
+        "econ_security": payload["state"]["econ_security"],
+        "city_identity": payload["state"]["city_identity"],
+        "policy_sensitivity": payload["state"]["policy_sensitivity"],
+        "platform_dependence": payload["state"]["platform_dependence"],
+        "risk_preference": payload["state"]["risk_preference"],
+        "voice_propensity": payload["state"]["voice_propensity"],
+        "mobility_intent": payload["state"]["mobility_intent"],
+    }
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    profile_block = _format_imported_profile_block(agent_id, payload)
+    with open(md_path, "a", encoding="utf-8") as f:
+        f.write(profile_block)
+
+    os.makedirs(AGENT_IMPORT_OUTPUT_DIR, exist_ok=True)
+    artifact_base = os.path.join(AGENT_IMPORT_OUTPUT_DIR, f"agent_{agent_id}")
+    artifact_payload = {
+        "agent_id": int(agent_id),
+        "profile": payload,
+        "source": {
+            "type": source.get("source_type", ""),
+            "url": source.get("url", ""),
+            "title": source.get("title", ""),
+            "summary": source.get("summary", ""),
+        },
+    }
+    with open(f"{artifact_base}_profile.json", "w", encoding="utf-8") as f:
+        json.dump(artifact_payload, f, ensure_ascii=False, indent=2)
+    with open(f"{artifact_base}_source.txt", "w", encoding="utf-8") as f:
+        f.write(_safe_text(source.get("content")) + "\n")
+
+def _cli_create_agent_from_social(url=None, file_path=None, text=None, name=None):
+    source = _load_social_source(url=url, file_path=file_path, text=text)
+    df = pd.read_csv(CSV_PATH)
+    agent_id = _next_profile_id(df, MD_PATH)
+    payload = _generate_imported_agent_seed(source, override_name=name)
+    _append_imported_agent_records(agent_id, payload, source, csv_path=CSV_PATH, md_path=MD_PATH)
+    print("✅ 已创建新智能体")
+    print(json.dumps({
+        "agent_id": int(agent_id),
+        "name": payload["name"],
+        "csv_path": CSV_PATH,
+        "profile_path": MD_PATH,
+        "artifact_dir": AGENT_IMPORT_OUTPUT_DIR,
+        "source_title": source.get("title", ""),
+        "source_url": source.get("url", ""),
+        "source_summary": payload.get("source_summary", ""),
+    }, ensure_ascii=False, indent=2))
 
 def build_agent(agent_id, df, city_map=None):
     row = df[df["id"] == agent_id].iloc[0]
@@ -4677,6 +4989,20 @@ def _build_arg_parser():
         help="Optional background context for the interview",
     )
 
+    create_from_social = subparsers.add_parser(
+        "create-agent-from-social",
+        help="Create a new agent from a social media page or extracted text",
+    )
+    create_source_group = create_from_social.add_mutually_exclusive_group(required=True)
+    create_source_group.add_argument("--url", help="Social media page URL (e.g. X/Weibo page)")
+    create_source_group.add_argument("--file", help="Local text/html/markdown file containing page content")
+    create_source_group.add_argument("--text", help="Direct pasted page text")
+    create_from_social.add_argument(
+        "--name",
+        default=None,
+        help="Optional override name for the generated agent",
+    )
+
     rag_add = subparsers.add_parser(
         "rag-add",
         help="Add one external RAG info item for an agent",
@@ -4845,6 +5171,15 @@ def _main():
         if not questions:
             parser.error("Provide at least one --question or a --questions-file.")
         _cli_interview_agent(args.agent_id, questions, context=args.context)
+        return
+
+    if args.command == "create-agent-from-social":
+        _cli_create_agent_from_social(
+            url=args.url,
+            file_path=args.file,
+            text=args.text,
+            name=args.name,
+        )
         return
 
     if args.command == "rag-add":

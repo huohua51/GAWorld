@@ -37,6 +37,7 @@ Across days, GAWorld accumulates:
 
 ## Features
 - Agent construction from CSV state seeds + Markdown profiles.
+- Create new agents from social media pages or extracted social content.
 - Multi-backend LLM routing (Ollama / OpenAI / Anthropic-compatible).
 - Daily schedule generation, action selection, and reflection loops.
 - Weekday/weekend-aware daily routine generation with behavior differences.
@@ -141,6 +142,14 @@ Interview a specific agent:
 ```bash
 python generative_city_sim.py interview --agent-id 31 --question "Question 1" --question "Question 2"
 ```
+
+Create a new agent from a social media page or extracted content:
+```bash
+python generative_city_sim.py create-agent-from-social --url "https://weibo.com/..."
+python generative_city_sim.py create-agent-from-social --file output/source_page.txt --name "新用户"
+```
+This appends one row to `hangzhou_agents_state_init.csv`, one profile block to `hangzhou_profiles_with_names.md`,
+and stores imported artifacts under `output/imported_agents/`.
 
 Or from a file with one question per line:
 ```bash
