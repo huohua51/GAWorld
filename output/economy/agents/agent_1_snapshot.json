@@ -6,25 +6,25 @@
     "wealth_drive": 0.643,
     "income_skill": 0.5275000000000001,
     "base_hourly_income": 80.1901591185515,
-    "hourly_income": 74.49393243174644,
+    "hourly_income": 84.96767480298716,
     "income_volatility": 0.25,
     "income_target_daily": 631.5255696142847,
     "monthly_rent": 3413.707795876618,
-    "balance": 64203.82035484067,
-    "daily_income": 321.1613653623505,
-    "daily_expense": 323.1693388562667,
+    "balance": 64459.848612090966,
+    "daily_income": 576.44884399271,
+    "daily_expense": 320.4205867424068,
     "daily_expense_by_category": {
-      "food": 20.630987371499465,
+      "food": 24.083110789586176,
       "clothing": 0.0,
       "housing": 125.79025986255394,
-      "transport": 133.74221614343705,
-      "leisure": 0.0,
-      "education": 0.0,
+      "transport": 72.21018129524337,
+      "leisure": 40.85496420671062,
+      "education": 34.36414805713855,
       "healthcare": 0.0,
-      "misc": 43.005875478776275
+      "misc": 23.11792253117408
     },
-    "lifetime_income": 3456.6956411720953,
-    "lifetime_expense": 2859.9978944258,
-    "last_location": "Transit to Central Block"
+    "lifetime_income": 4033.1444851648052,
+    "lifetime_expense": 3180.4184811682067,
+    "last_location": "Central Block"
   }
 }
