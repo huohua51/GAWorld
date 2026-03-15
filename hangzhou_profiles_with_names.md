@@ -1633,3 +1633,55 @@
 - mobility_intent：0.55
 
 **核心状态变量**：emotion 0.83｜stress 0.80｜econ_security 0.70｜city_identity 0.60
+
+## Profile 52｜Tony Zhu
+**基础信息**：male，30岁，未知户籍，居住杭州市西湖区。
+
+**教育与收入背景**：{'education': '本科', 'income': 60000}
+
+**职业与工作节奏**：软件工程师
+
+**性格与情绪特征**：技术导向，略带幽默感，注重效率。
+
+**日常生活与生活习惯**：工作时间较长，可能经常加班，业余时间可能关注技术社区或个人项目。
+
+**社交网络情况**：活跃于技术社区，可能在GitHub、LinkedIn等平台有一定影响力。
+
+**价值观与公共事务态度**：技术创新，个人成长，效率，实用主义。
+
+**研究增强变量初始化**：
+- policy_sensitivity：0.30
+- platform_dependence：0.90
+- risk_preference：0.40
+- voice_propensity：0.60
+- mobility_intent：0.30
+
+**核心状态变量**：emotion 0.60｜stress 0.50｜econ_security 0.70｜city_identity 0.80
+
+---
+
+## Profile 53｜Chao Wu
+**基础信息**：Male，35岁，未知户籍，居住杭州市。
+
+**教育与收入背景**：150000
+
+**职业与工作节奏**：Research Professor
+
+**性格与情绪特征**：Intellectual, driven, collaborative, detail-oriented, likely analytical and problem-solving focused.
+
+**日常生活与生活习惯**：Likely involves a mix of academic work (research, teaching, publications), conference attendance, and potentially some involvement in AI/tech communities.  May have a demanding schedule.
+
+**社交网络情况**：Academic network (colleagues, collaborators, students), professional networks (conferences, online communities), potentially some connections within the AI/tech industry.
+
+**价值观与公共事务态度**：Innovation, knowledge sharing, social impact through technology, data-driven decision making.
+
+**研究增强变量初始化**：
+- policy_sensitivity：0.60
+- platform_dependence：0.70
+- risk_preference：0.40
+- voice_propensity：0.50
+- mobility_intent：0.40
+
+**核心状态变量**：emotion 0.60｜stress 0.50｜econ_security 0.80｜city_identity 0.70
+
+---

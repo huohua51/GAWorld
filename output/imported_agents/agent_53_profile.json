@@ -1,0 +1,34 @@
+{
+  "agent_id": 53,
+  "profile": {
+    "name": "Chao Wu",
+    "gender": "Male",
+    "age": 35,
+    "hukou": "未知",
+    "residence": "杭州市",
+    "job": "Research Professor",
+    "personality": "Intellectual, driven, collaborative, detail-oriented, likely analytical and problem-solving focused.",
+    "daily_life": "Likely involves a mix of academic work (research, teaching, publications), conference attendance, and potentially some involvement in AI/tech communities.  May have a demanding schedule.",
+    "values": "Innovation, knowledge sharing, social impact through technology, data-driven decision making.",
+    "education_income": "150000",
+    "social_network": "Academic network (colleagues, collaborators, students), professional networks (conferences, online communities), potentially some connections within the AI/tech industry.",
+    "source_summary": "Primarily based on the provided webpage content detailing his academic background, research interests, publications, and affiliations.  Also considers the context of his work in computational social science and AI.",
+    "state": {
+      "emotion": 0.6,
+      "stress": 0.5,
+      "econ_security": 0.8,
+      "city_identity": 0.7,
+      "policy_sensitivity": 0.6,
+      "platform_dependence": 0.7,
+      "risk_preference": 0.4,
+      "voice_propensity": 0.5,
+      "mobility_intent": 0.4
+    }
+  },
+  "source": {
+    "type": "url",
+    "url": "https://wuchaozju.github.io",
+    "title": "Chao Wu - Ph D, Research Professor@ZJU",
+    "summary": ""
+  }
+}
