@@ -1,168 +1,18 @@
 {
   "meta": {
-    "generated_at": "2026-03-14T02:16:46Z",
-    "last_updated": "2026-03-14T02:58:15Z",
+    "generated_at": "2026-03-16T20:46:30Z",
+    "last_updated": "2026-03-16T20:46:30Z",
     "finished": false,
-    "frame_count": 22,
+    "frame_count": 0,
     "sim_meta": {
       "sim_days": 1,
       "seconds_per_day": 10,
       "time_step_minutes": null,
       "map_path": "citymap.md",
       "agent_ids": [
-        1,
-        2,
-        3
+        2
       ]
     }
   },
-  "frame": {
-    "index": 21,
-    "day": 25,
-    "time": "21:17",
-    "date": "2026-04-07",
-    "weekday": "周二",
-    "day_type": "工作日",
-    "env_context": "背景：2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。 当前环境事件：日级环境：今日外部环境总体平稳。",
-    "env_events": [],
-    "policy": {},
-    "agents": [
-      {
-        "agent_id": 1,
-        "name": "李泽宇",
-        "time": "21:17",
-        "location": "Transit to Central Block",
-        "resolved_location": "Hangzhou Tech Labs",
-        "target_location": "Central Block",
-        "home": "Central Block",
-        "workplace": "Hangzhou Tech Labs",
-        "scheduled_activity": "下班",
-        "activity": "前往Central Block",
-        "action": "乘坐metro移动",
-        "outcome": "从【Hangzhou Tech Labs】前往【Central Block】，使用【metro】，路程约 8.8 km，预计 23 分钟",
-        "perception": "此刻，夜色已深，杭州的夜生活似乎也相对平静。我感受到一种普遍的焦虑，尤其是在年轻人身上，就业压力和生活成本的现实，让人们的心情都有些沉重。社会秩序稳定，但政策与舆论的压力，也让人们在言语和行动上都更加谨慎。",
-        "plan": "此刻的短期计划是：完成技术报告的初稿，并整理一下今天遇到的问题和解决方案，以便日后回顾和总结。之后我会利用剩余时间，尝试一些新的放松方式，缓解工作带来的压力。",
-        "reflection": "没什么特别的，只是重复了一次熟悉的行程。 Metro的效率还算可以，时间也基本符合预期。",
-        "changed": false,
-        "change_reason": "",
-        "state": {
-          "emotion": 0.4363,
-          "stress": 0.8902,
-          "econ_security": 0.9129,
-          "city_identity": 0.1926,
-          "policy_sensitivity": 0.5251,
-          "platform_dependence": 0.5874,
-          "risk_preference": 0.2968,
-          "voice_propensity": 0.1477,
-          "mobility_intent": 0.8763,
-          "energy": 0.5647,
-          "hunger": 0.9943,
-          "social_need": 0.9992
-        },
-        "travel": {
-          "mode": "metro",
-          "distance_km": 8.779,
-          "minutes": 23,
-          "progress": 0.21739130434782608,
-          "route": [
-            "Hangzhou Tech Labs",
-            "Central Block"
-          ],
-          "status": "in_transit"
-        }
-      },
-      {
-        "agent_id": 2,
-        "name": "周婉清",
-        "time": "21:17",
-        "location": "Transit to Central Block",
-        "resolved_location": "Old Town Market",
-        "target_location": "Central Block",
-        "home": "Central Block",
-        "workplace": "Hangzhou Tech Labs",
-        "scheduled_activity": "看展/艺术活动",
-        "activity": "前往Central Block",
-        "action": "乘坐metro移动",
-        "outcome": "从【Old Town Market】前往【Central Block】，使用【metro】，路程约 6.6 km，预计 19 分钟",
-        "perception": "此刻，窗外是杭州冬日的黄昏，空气中带着一丝湿冷。今天与熟人的互动不多，反而让我感到有些孤单。社会压力和就业形势依然沉重，希望未来能看到更多温暖和机会。",
-        "plan": "此刻，我的短期计划是抵达杭州科技实验室，开始项目设计，争取上午完成初步的设计稿。之后我会留意与同事分享设计理念的机会，并在下午进行一些放松的活动，比如阅读设计资讯或浏览灵感素材。",
-        "reflection": "嗯，刚刚乘坐地铁从 Old Town Market 到 Central Block，感觉很顺利。看来 Old Town Market 和 Central Block 之间的地铁线路非常便捷，而且路程和时间都非常稳定，这让我感到安心。",
-        "changed": false,
-        "change_reason": "",
-        "state": {
-          "emotion": 0.5904,
-          "stress": 0.7582,
-          "econ_security": 0.9743,
-          "city_identity": 0.3306,
-          "policy_sensitivity": 0.6607,
-          "platform_dependence": 0.5243,
-          "risk_preference": 0.3825,
-          "voice_propensity": 0.5444,
-          "mobility_intent": 0.7591,
-          "energy": 0.7213,
-          "hunger": 0.9957,
-          "social_need": 1.0
-        },
-        "travel": {
-          "mode": "metro",
-          "distance_km": 6.582,
-          "minutes": 19,
-          "progress": 0.2631578947368421,
-          "route": [
-            "Old Town Market",
-            "Old Town",
-            "Riverside Stadium",
-            "Financial District",
-            "City Hall",
-            "Central Block"
-          ],
-          "status": "in_transit"
-        }
-      },
-      {
-        "agent_id": 3,
-        "name": "陈一航",
-        "time": "21:17",
-        "location": "Hangzhou Tech Labs",
-        "resolved_location": "Hangzhou Tech Labs",
-        "target_location": "Hangzhou Tech Labs",
-        "home": "Central Block",
-        "workplace": "Riverside Middle School",
-        "scheduled_activity": "学习、查阅文献",
-        "activity": "学习、查阅文献",
-        "action": "继续当前活动",
-        "outcome": "在【学习、查阅文献】中执行了【继续当前活动】",
-        "perception": "时间不早了，杭州的夜色逐渐降临。今天与熟人的互动不多，心里有些许孤单。外部环境平稳，但社会压力和就业压力依然沉重，这让我感到一丝焦虑。",
-        "plan": "此刻的短期计划是：回到下沙高校宿舍，整理今天查阅的文献笔记，并为明天更深入的阅读做准备。同时，我会尝试找到一些轻松的音乐，放松心情。",
-        "reflection": "嗯，看来我一直在重复着同样的工作，有点像在原地打转。虽然效率可能有所提高，但感觉缺乏新的突破和进展，稍微有点沮丧。希望能够找到新的思路或方法，避免陷入重复的循环。",
-        "changed": false,
-        "change_reason": "",
-        "state": {
-          "emotion": 0.2011,
-          "stress": 0.9305,
-          "econ_security": 0.9822,
-          "city_identity": 0.0327,
-          "policy_sensitivity": 0.6611,
-          "platform_dependence": 0.383,
-          "risk_preference": 0.2969,
-          "voice_propensity": 0.2683,
-          "mobility_intent": 0.9765,
-          "energy": 0.5838,
-          "hunger": 0.9957,
-          "social_need": 1.0
-        },
-        "travel": {
-          "mode": "metro",
-          "distance_km": 8.779,
-          "minutes": 23,
-          "progress": 1.0,
-          "route": [
-            "Central Block",
-            "Hangzhou Tech Labs"
-          ],
-          "status": "arrived"
-        }
-      }
-    ]
-  }
+  "frame": {}
 }

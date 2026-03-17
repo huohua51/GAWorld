@@ -4,7 +4,8 @@ import os
 CONFIG = {
     # LLM (legacy defaults for compatibility)
     "ollama_url": "http://localhost:11434/api/generate",
-    "model_name": "gemma3n:e4b",
+    #"model_name": "gemma3n:e4b",
+    "model_name": "qwen3.5:9b",
     "llm_timeout": 120,
     # LLM routing (multi-backend)
     "llm": {
@@ -19,6 +20,12 @@ CONFIG = {
                 "type": "ollama",
                 "url": "http://localhost:11434/api/generate",
                 "model": "gemma3:12b",
+                "timeout": 120,
+            },
+            "ollama_qwen": {
+                "type": "ollama",
+                "url": "http://localhost:11434/api/generate",
+                "model": "qwen3.5:9b",
                 "timeout": 120,
             },
             "openai_gpt": {
@@ -37,14 +44,14 @@ CONFIG = {
             },
         },
         "routing": {
-            "default": "ollama_local",
+            "default": "ollama_qwen",
             "tasks": {
-                "schedule": "ollama_local",
+                "schedule": "ollama_qwen",
             },
         },
     },
     # Simulation
-    "agent_ids": [1,2,3],
+    "agent_ids": [2],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,
