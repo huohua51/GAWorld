@@ -6,7 +6,7 @@ CONFIG = {
     "ollama_url": "http://localhost:11434/api/generate",
     #"model_name": "gemma3n:e4b",
     "model_name": "qwen3.5:9b",
-    "llm_timeout": 120,
+    "llm_timeout": 600,
     # LLM routing (multi-backend)
     "llm": {
         "providers": {
@@ -26,12 +26,12 @@ CONFIG = {
                 "type": "ollama",
                 "url": "http://localhost:11434/api/generate",
                 "model": "qwen3.5:9b",
-                "timeout": 120,
+                "timeout": 600,
             },
             "openai_gpt": {
                 "type": "openai",
                 "base_url": "https://api.openai.com/v1",
-                "model": "gpt-4.1",
+                "model": "gpt-5.4",
                 "api_key_env": "OPENAI_API_KEY",
                 "timeout": 120,
             },
@@ -44,14 +44,14 @@ CONFIG = {
             },
         },
         "routing": {
-            "default": "ollama_qwen",
+            "default": "openai_gpt",
             "tasks": {
-                "schedule": "ollama_qwen",
+                "schedule": "openai_gpt",
             },
         },
     },
     # Simulation
-    "agent_ids": [2],
+    "agent_ids": [53],
     "sim_days": 1,
     "seconds_per_day": 10,
     "print_agent_profile": False,

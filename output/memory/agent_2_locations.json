@@ -1,21 +1,18 @@
 {
   "home": "Central Block",
   "workplace": "Hangzhou Tech Labs",
-  "current": "Old Town Market",
-  "destination": "Central Block",
-  "in_transit": true,
+  "current": "East Community Clinic",
+  "destination": "East Community Clinic",
+  "in_transit": false,
   "transport_mode": "metro",
-  "travel_minutes": 19,
-  "travel_progress": 0.2631578947368421,
+  "travel_minutes": 14,
+  "travel_progress": 1.0,
   "travel_route": [
-    "Old Town Market",
-    "Old Town",
-    "Riverside Stadium",
-    "Financial District",
-    "City Hall",
-    "Central Block"
+    "Central Block",
+    "East Block",
+    "East Community Clinic"
   ],
-  "arrival_time": "21:31",
-  "travel_distance_km": 6.582,
-  "depart_time": "21:12"
+  "arrival_time": "23:39",
+  "travel_distance_km": 3.645,
+  "depart_time": "23:25"
 }

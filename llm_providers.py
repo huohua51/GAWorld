@@ -16,12 +16,33 @@ class OllamaProvider:
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "stream": False,
+            "stream": True,
         }
-        r = requests.post(self.url, json=payload, timeout=self.timeout)
-        r.raise_for_status()
-        data = r.json()
-        return data.get("response", "")
+        try:
+            with requests.post(
+                self.url,
+                json=payload,
+                timeout=(10, self.timeout),
+                stream=True,
+            ) as r:
+                r.raise_for_status()
+                parts = []
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    data = requests.models.complexjson.loads(line)
+                    chunk = data.get("response", "")
+                    if chunk:
+                        parts.append(chunk)
+                    if data.get("done"):
+                        break
+                return "".join(parts)
+        except requests.exceptions.ReadTimeout as exc:
+            raise requests.exceptions.ReadTimeout(
+                f"Ollama provider timed out while calling model '{self.model}'. "
+                f"Current timeout={self.timeout}s. "
+                f"If this model is slow locally, increase config.py -> llm.providers timeout."
+            ) from exc
 
 
 class OpenAIProvider:

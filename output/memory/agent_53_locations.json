@@ -1,0 +1,16 @@
+{
+  "home": "Central Block",
+  "workplace": "C-01 (Village Center)",
+  "current": "Central Block",
+  "destination": "Central Block",
+  "in_transit": false,
+  "transport_mode": "",
+  "travel_minutes": 0,
+  "travel_progress": 1.0,
+  "travel_route": [
+    "Central Block"
+  ],
+  "arrival_time": "23:59",
+  "travel_distance_km": 0.0,
+  "depart_time": "23:59"
+}

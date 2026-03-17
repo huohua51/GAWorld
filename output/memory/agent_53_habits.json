@@ -1,0 +1,82 @@
+{
+  "morning|public|兼职": {
+    "action_counts": {
+      "与同行讨论合作机会": 1
+    },
+    "preferred_action": "与同行讨论合作机会",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "morning|work|早餐后前往高校实验室": {
+    "action_counts": {
+      "收拾电脑电源和随身资料": 1
+    },
+    "preferred_action": "收拾电脑电源和随身资料",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "morning|home|兼职": {
+    "action_counts": {
+      "审阅兼职合同条款": 1
+    },
+    "preferred_action": "审阅兼职合同条款",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "afternoon|home|与学生和合作者开组会讨论项目进展": {
+    "action_counts": {
+      "逐一询问学生实验推进情况": 1
+    },
+    "preferred_action": "逐一询问学生实验推进情况",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "afternoon|public|午餐后短暂散步，处理会议消息": {
+    "action_counts": {
+      "在校园或园区慢走放松": 1
+    },
+    "preferred_action": "在校园或园区慢走放松",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "afternoon|home|备课并开展研究生指导": {
+    "action_counts": {
+      "强调论证逻辑与写作规范": 1
+    },
+    "preferred_action": "强调论证逻辑与写作规范",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "afternoon|home|参加线上学术交流或技术社区讨论": {
+    "action_counts": {
+      "提前登录会议平台测试设备": 1
+    },
+    "preferred_action": "提前登录会议平台测试设备",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "evening|home|晚餐，顺路采购生活用品后回家": {
+    "action_counts": {
+      "结束工作后去附近餐馆简单用餐": 1
+    },
+    "preferred_action": "结束工作后去附近餐馆简单用餐",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "evening|home|继续阅读文献，修改论文或项目申请书": {
+    "action_counts": {
+      "补充论文中的参考文献与背景": 1
+    },
+    "preferred_action": "补充论文中的参考文献与背景",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  },
+  "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 27
+  }
+}
