@@ -64,9 +64,11 @@ def build_map_layout(city_map):
 
 
 class SimulationVisualizer:
-    def __init__(self, output_dir, city_map, agents, sim_meta=None):
+    def __init__(self, output_dir, city_map, agents, sim_meta=None, flush_every_frames=24):
         self.output_dir = output_dir
         self.trace_path = os.path.join(output_dir, "simulation_trace.json")
+        self.latest_frame_path = os.path.join(output_dir, "latest_frame.json")
+        self.flush_every_frames = max(0, int(flush_every_frames or 0))
         layout = build_map_layout(city_map)
         self.trace = {
             "meta": {
@@ -88,15 +90,22 @@ class SimulationVisualizer:
             ],
             "frames": [],
         }
-        self._write()
+        self._write_trace()
+        self._write_latest_frame()
 
-    def _write(self):
+    def _refresh_meta(self):
         self.trace["meta"]["last_updated"] = _utc_timestamp()
         self.trace["meta"]["frame_count"] = len(self.trace.get("frames", []))
+
+    def _write_trace(self):
+        self._refresh_meta()
         _atomic_write_json(self.trace_path, self.trace)
+
+    def _write_latest_frame(self):
+        self._refresh_meta()
         last_frame = self.trace["frames"][-1] if self.trace.get("frames") else {}
         _atomic_write_json(
-            os.path.join(self.output_dir, "latest_frame.json"),
+            self.latest_frame_path,
             {
                 "meta": self.trace["meta"],
                 "frame": last_frame,
@@ -117,11 +126,14 @@ class SimulationVisualizer:
             "agents": agent_steps,
         }
         self.trace["frames"].append(frame)
-        self._write()
+        self._write_latest_frame()
+        if self.flush_every_frames and len(self.trace["frames"]) % self.flush_every_frames == 0:
+            self._write_trace()
 
     def finalize(self):
         self.trace["meta"]["finished"] = True
-        self._write()
+        self._write_trace()
+        self._write_latest_frame()
 
 
 

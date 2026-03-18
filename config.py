@@ -54,6 +54,8 @@ CONFIG = {
     "agent_ids": [53],
     "sim_days": 1,
     "seconds_per_day": 10,
+    # When False, simulation runs as fast as the CPU/LLM backend allows.
+    "simulate_realtime": False,
     "print_agent_profile": False,
     # Time step for simulation timeline (minutes). None/0 uses schedule times only.
     #"time_step_minutes": "2 hours",
@@ -92,6 +94,8 @@ CONFIG = {
         "enabled": True,
         "output_dir": "output/visualization",
         "site_path": "site/simviz/index.html",
+        # Avoid rewriting the full trace file on every tick.
+        "flush_every_frames": 24,
     },
     "environment_config_path": "environment_config.json",
     "external_environment_service": {

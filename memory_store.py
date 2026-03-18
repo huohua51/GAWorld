@@ -1,9 +1,11 @@
+import atexit
 import json
 import os
 import re
 import sqlite3
 import time
 import zlib
+from collections import deque
 
 import numpy as np
 
@@ -16,6 +18,12 @@ VECTOR_DB_PATH = CONFIG.get("vector_db_path", os.path.join(MEMORY_DIR, "vector_d
 VECTOR_DB_DIM = int(CONFIG.get("vector_db_dim", 256))
 VECTOR_DB_TOP_K = int(CONFIG.get("vector_db_top_k", 3))
 VECTOR_DB_MAX_CHARS = int(CONFIG.get("vector_db_max_chars", 2000))
+LOG_CACHE_MAX_BLOCKS = int(CONFIG.get("log_cache_max_blocks", 24))
+LOG_CACHE_MAX_ACTIONS = int(CONFIG.get("log_cache_max_actions", 32))
+
+_VECTOR_DB_CONN = None
+_VECTOR_DB_READY = False
+_LOG_CACHE = {}
 
 
 # =========================================================
@@ -48,6 +56,65 @@ def _log_path(agent_id):
 
 def _sim_state_path():
     return os.path.join(MEMORY_DIR, "sim_state.json")
+
+
+def _new_log_cache_entry():
+    return {
+        "blocks": deque(maxlen=max(2, LOG_CACHE_MAX_BLOCKS)),
+        "current_block": [],
+        "actions": deque(maxlen=max(6, LOG_CACHE_MAX_ACTIONS)),
+    }
+
+
+def _finalize_log_block(entry):
+    block = "\n".join(entry.get("current_block", [])).strip()
+    entry["current_block"] = []
+    if block:
+        entry["blocks"].append(block)
+
+
+def _ingest_log_line(entry, line):
+    clean_line = line.rstrip("\n")
+    if clean_line.startswith("[") and entry["current_block"]:
+        _finalize_log_block(entry)
+    if clean_line or entry["current_block"]:
+        entry["current_block"].append(clean_line)
+    if clean_line.startswith("Action:"):
+        action = clean_line.split("Action:", 1)[-1].strip()
+        if action:
+            entry["actions"].append(action)
+
+
+def _warm_log_cache(agent_id):
+    cache_key = int(agent_id)
+    if cache_key in _LOG_CACHE:
+        return _LOG_CACHE[cache_key]
+    entry = _new_log_cache_entry()
+    path = _log_path(cache_key)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw in f:
+                    _ingest_log_line(entry, raw)
+        except OSError:
+            pass
+    _LOG_CACHE[cache_key] = entry
+    return entry
+
+
+def _append_text_to_log_cache(agent_id, text):
+    entry = _warm_log_cache(agent_id)
+    for raw_line in str(text).splitlines():
+        _ingest_log_line(entry, raw_line)
+
+
+def _cached_log_blocks(agent_id):
+    entry = _warm_log_cache(agent_id)
+    blocks = list(entry["blocks"])
+    current = "\n".join(entry.get("current_block", [])).strip()
+    if current:
+        blocks.append(current)
+    return blocks
 
 
 def load_agent_memory(agent_id):
@@ -172,8 +239,11 @@ def reset_agent_memory(agent_id):
 
 def append_agent_log(agent, text):
     os.makedirs(LOG_DIR, exist_ok=True)
+    agent_id = int(agent["id"])
+    _warm_log_cache(agent_id)
     with open(_log_path(agent["id"]), "a", encoding="utf-8") as f:
         f.write(text)
+    _append_text_to_log_cache(agent_id, text)
 
 
 def load_sim_state():
@@ -211,15 +281,7 @@ def _split_log_blocks(log_text):
 
 
 def load_recent_log_blocks(agent_id, max_blocks=2, max_chars=500):
-    path = _log_path(agent_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return []
-    blocks = _split_log_blocks(text)
+    blocks = _cached_log_blocks(agent_id)
     if not blocks:
         return []
     tail = blocks[-max_blocks:]
@@ -233,21 +295,8 @@ def load_recent_log_blocks(agent_id, max_blocks=2, max_chars=500):
 
 
 def load_recent_actions(agent_id, max_items=6):
-    path = _log_path(agent_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return []
-    actions = []
-    for line in text.splitlines():
-        if line.startswith("Action:"):
-            action = line.split("Action:", 1)[-1].strip()
-            if action:
-                actions.append(action)
-    return actions[-max_items:]
+    entry = _warm_log_cache(agent_id)
+    return list(entry["actions"])[-max_items:]
 
 
 # =========================================================
@@ -307,35 +356,55 @@ def _sanitize_memory_text(text, max_chars=VECTOR_DB_MAX_CHARS):
 
 
 def _vector_db_connect():
+    global _VECTOR_DB_CONN
+    if _VECTOR_DB_CONN is not None:
+        return _VECTOR_DB_CONN
     dir_path = os.path.dirname(VECTOR_DB_PATH)
     if dir_path:
         os.makedirs(dir_path, exist_ok=True)
-    return sqlite3.connect(VECTOR_DB_PATH)
+    _VECTOR_DB_CONN = sqlite3.connect(VECTOR_DB_PATH, timeout=30)
+    return _VECTOR_DB_CONN
+
+
+def _close_vector_db():
+    global _VECTOR_DB_CONN, _VECTOR_DB_READY
+    if _VECTOR_DB_CONN is None:
+        return
+    try:
+        _VECTOR_DB_CONN.close()
+    except sqlite3.Error:
+        pass
+    _VECTOR_DB_CONN = None
+    _VECTOR_DB_READY = False
 
 
 def _init_vector_db():
+    global _VECTOR_DB_READY
+    if _VECTOR_DB_READY:
+        return
     conn = _vector_db_connect()
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS memory_entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id INTEGER NOT NULL,
-                entry_type TEXT NOT NULL,
-                text TEXT NOT NULL,
-                sim_day INTEGER,
-                sim_time TEXT,
-                created_at REAL NOT NULL,
-                embedding TEXT NOT NULL
-            )
-            """
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            entry_type TEXT NOT NULL,
+            text TEXT NOT NULL,
+            sim_day INTEGER,
+            sim_time TEXT,
+            created_at REAL NOT NULL,
+            embedding TEXT NOT NULL
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_entries_agent ON memory_entries(agent_id)"
-        )
-        conn.commit()
-    finally:
-        conn.close()
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_entries_agent ON memory_entries(agent_id)"
+    )
+    conn.commit()
+    _VECTOR_DB_READY = True
 
 
 def _embed_text(text, dim=VECTOR_DB_DIM):
@@ -368,32 +437,24 @@ def vector_db_add_entry(agent_id, entry_type, text, sim_day=None, sim_time=None)
         time.time(),
         json.dumps(embedding, ensure_ascii=False),
     )
-    try:
-        conn = _vector_db_connect()
-        with conn:
-            conn.execute(
-                """
-                INSERT INTO memory_entries
-                (agent_id, entry_type, text, sim_day, sim_time, created_at, embedding)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                payload,
-            )
-    finally:
-        if "conn" in locals():
-            conn.close()
+    conn = _vector_db_connect()
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO memory_entries
+            (agent_id, entry_type, text, sim_day, sim_time, created_at, embedding)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            payload,
+        )
 
 
 def vector_db_delete_agent(agent_id):
     if not os.path.exists(VECTOR_DB_PATH):
         return
-    try:
-        conn = _vector_db_connect()
-        with conn:
-            conn.execute("DELETE FROM memory_entries WHERE agent_id = ?", (int(agent_id),))
-    finally:
-        if "conn" in locals():
-            conn.close()
+    conn = _vector_db_connect()
+    with conn:
+        conn.execute("DELETE FROM memory_entries WHERE agent_id = ?", (int(agent_id),))
 
 
 def vector_db_search(agent_id, query, top_k=VECTOR_DB_TOP_K, entry_types=None):
@@ -417,12 +478,8 @@ def vector_db_search(agent_id, query, top_k=VECTOR_DB_TOP_K, entry_types=None):
         FROM memory_entries
         WHERE {filters}
     """
-    try:
-        conn = _vector_db_connect()
-        rows = conn.execute(sql, params).fetchall()
-    finally:
-        if "conn" in locals():
-            conn.close()
+    conn = _vector_db_connect()
+    rows = conn.execute(sql, params).fetchall()
     scored = []
     for entry_type, text, sim_day, sim_time, embedding_blob in rows:
         try:
@@ -451,16 +508,12 @@ def vector_db_count_entries(agent_id):
     if not os.path.exists(VECTOR_DB_PATH):
         return 0
     _init_vector_db()
-    try:
-        conn = _vector_db_connect()
-        row = conn.execute(
-            "SELECT COUNT(1) FROM memory_entries WHERE agent_id = ?",
-            (int(agent_id),),
-        ).fetchone()
-        return int(row[0]) if row else 0
-    finally:
-        if "conn" in locals():
-            conn.close()
+    conn = _vector_db_connect()
+    row = conn.execute(
+        "SELECT COUNT(1) FROM memory_entries WHERE agent_id = ?",
+        (int(agent_id),),
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def seed_vector_db_from_memory(agent):
@@ -547,3 +600,6 @@ def relevant_memory(agent, context=None, max_items=3):
                 top.sort(key=lambda x: x[1])
                 return [item for _, _, item in top]
     return _recent_unique(memory, max_items)
+
+
+atexit.register(_close_vector_db)

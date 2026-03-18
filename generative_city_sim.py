@@ -223,6 +223,13 @@ def _clear_dir(path):
             continue
 
 
+def _stable_json_marker(value):
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return repr(value)
+
+
 def _coerce_positive_int_list(values):
     if values is None:
         return []
@@ -1375,6 +1382,11 @@ VISUALIZATION_CONFIG = CONFIG.get("visualization", {})
 VISUALIZATION_ENABLED = bool(VISUALIZATION_CONFIG.get("enabled", True))
 VISUALIZATION_OUTPUT_DIR = VISUALIZATION_CONFIG.get("output_dir", "output/visualization")
 VISUALIZATION_SITE_PATH = VISUALIZATION_CONFIG.get("site_path", "site/simviz/index.html")
+VISUALIZATION_FLUSH_EVERY_FRAMES = max(
+    0,
+    int(VISUALIZATION_CONFIG.get("flush_every_frames", 24)),
+)
+SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
 ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
@@ -1860,11 +1872,22 @@ def init_agent_locations(agent, city_map):
         agent["locations"].setdefault("travel_progress", 1.0)
         agent["locations"].setdefault("travel_route", [agent["locations"].get("current", agent["locations"].get("home", "Home"))])
         agent["locations"].setdefault("arrival_time", "")
+        agent["_persisted_locations_marker"] = _stable_json_marker(agent["locations"])
         return agent["locations"]
     agent["locations"] = assign_agent_locations(agent, city_map)
     if STATEFUL:
         save_agent_locations(agent["id"], agent["locations"])
+    agent["_persisted_locations_marker"] = _stable_json_marker(agent["locations"])
     return agent["locations"]
+
+
+def persist_agent_locations_if_changed(agent):
+    marker = _stable_json_marker(agent.get("locations", {}))
+    if agent.get("_persisted_locations_marker") == marker:
+        return False
+    save_agent_locations(agent["id"], agent["locations"])
+    agent["_persisted_locations_marker"] = marker
+    return True
 
 def resolve_location(agent, activity, time_str, city_map):
     location_set = set(_all_locations(city_map))
@@ -3703,10 +3726,12 @@ def run_simulation():
             sim_meta={
                 "sim_days": SIM_DAYS,
                 "seconds_per_day": SECONDS_PER_DAY,
+                "simulate_realtime": SIMULATE_REALTIME,
                 "time_step_minutes": TIME_STEP_MINUTES,
                 "map_path": MAP_PATH,
                 "agent_ids": [a["id"] for a in agents],
             },
+            flush_every_frames=VISUALIZATION_FLUSH_EVERY_FRAMES,
         )
 
     schedules = {}
@@ -4082,7 +4107,7 @@ def run_simulation():
                     city_map=city_map,
                 )
                 if STATEFUL:
-                    save_agent_locations(agent_id, agent["locations"])
+                    persist_agent_locations_if_changed(agent)
                 location = movement["display_location"]
                 resolved_location = movement["resolved_location"]
                 travel = movement["travel"]
@@ -4334,7 +4359,8 @@ Reflection: {refl}
                     policy=policy or {},
                 )
 
-            time.sleep(sleep_step)
+            if SIMULATE_REALTIME and sleep_step > 0:
+                time.sleep(sleep_step)
 
         for agent in agents:
             if HUMAN_REALISM_ENABLED:
