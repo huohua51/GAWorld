@@ -183,3 +183,4 @@ cython_debug/
 # Project video workspace
 /video/node_modules/
 /output/video/
+/output/
