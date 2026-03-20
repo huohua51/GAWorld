@@ -4639,6 +4639,41 @@ def _parse_external_text_blob(blob):
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     return [_normalize_external_item(line) for line in lines]
 
+def _infer_diary_timestamp_from_path(file_path):
+    base_name = os.path.basename(str(file_path or "")).strip()
+    match = re.match(r"^(\d{4}-\d{2}-\d{2})\.(md|txt)$", base_name, re.I)
+    if not match:
+        return ""
+    return match.group(1)
+
+def _summarize_diary_import(raw_text, timestamp, file_path):
+    cleaned = _sanitize_extra_text(raw_text, max_chars=12000)
+    if not cleaned:
+        return ""
+    prompt = f"""
+请将下面这份个人日记原文浓缩整理成一篇第一人称日记。
+
+要求：
+1. 保留当天最重要的事件、情绪、想法、人际互动和计划。
+2. 写成连贯自然的一篇日记，不要分点。
+3. 不要虚构原文没有的信息。
+4. 长度控制在200到500字。
+
+日期：{timestamp or "未知"}
+文件：{os.path.basename(file_path)}
+
+原文：
+{cleaned}
+"""
+    try:
+        summary = call_llm(prompt, task="diary_import_summary", agent_id=None).strip()
+    except Exception:
+        summary = ""
+    summary = _sanitize_extra_text(summary, max_chars=1200)
+    if summary:
+        return summary
+    return cleaned[:800]
+
 def _load_external_items_from_file(file_path):
     if not os.path.exists(file_path):
         return []
@@ -4650,6 +4685,14 @@ def _load_external_items_from_file(file_path):
         return []
     if not raw.strip():
         return []
+    diary_timestamp = _infer_diary_timestamp_from_path(file_path)
+    if diary_timestamp:
+        diary_text = _summarize_diary_import(raw, diary_timestamp, file_path)
+        if diary_text:
+            return [{
+                "text": diary_text,
+                "timestamp": diary_timestamp,
+            }]
 
     if ext == ".json":
         try:
@@ -4677,6 +4720,21 @@ def _load_external_items_from_file(file_path):
 
     return _parse_external_text_blob(raw)
 
+def _iter_external_import_files(path):
+    if not path or not os.path.exists(path):
+        return []
+    if os.path.isfile(path):
+        return [path]
+    supported_exts = {".txt", ".md", ".json", ".jsonl", ".ndjson"}
+    collected = []
+    for root, _, files in os.walk(path):
+        for name in sorted(files):
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in supported_exts:
+                continue
+            collected.append(os.path.join(root, name))
+    return collected
+
 def _cli_rag_add(agent_id, text, timestamp=None, source="cli"):
     payload = _upsert_external_info(agent_id, text, timestamp=timestamp, source=source)
     if not payload:
@@ -4691,33 +4749,48 @@ def _cli_rag_add(agent_id, text, timestamp=None, source="cli"):
     }, ensure_ascii=False, indent=2))
 
 def _cli_rag_import(agent_id, file_path, source=None, default_timestamp=None):
-    items = _load_external_items_from_file(file_path)
-    if not items:
-        raise ValueError(f"文件未解析到有效信息：{file_path}")
-    src = source or os.path.basename(file_path)
+    import_files = _iter_external_import_files(file_path)
+    if not import_files:
+        raise ValueError(f"未找到可导入文件：{file_path}")
+    base_dir = file_path if os.path.isdir(file_path) else os.path.dirname(file_path)
     inserted = 0
     preview = []
-    for item in items:
-        text = _sanitize_extra_text(item.get("text", ""))
-        if not text:
+    imported_files = 0
+    for current_file in import_files:
+        items = _load_external_items_from_file(current_file)
+        if not items:
             continue
-        timestamp = item.get("timestamp") or default_timestamp
-        payload = _upsert_external_info(agent_id, text, timestamp=timestamp, source=src)
-        if not payload:
-            continue
-        inserted += 1
-        if len(preview) < 5:
-            preview.append({
-                "timestamp": _sanitize_timestamp_text(timestamp) or None,
-                "text": payload,
-            })
+        imported_files += 1
+        if source:
+            src = source
+        elif os.path.isdir(file_path):
+            src = os.path.relpath(current_file, base_dir)
+        else:
+            src = os.path.basename(current_file)
+        for item in items:
+            text = _sanitize_extra_text(item.get("text", ""))
+            if not text:
+                continue
+            timestamp = item.get("timestamp") or default_timestamp
+            payload = _upsert_external_info(agent_id, text, timestamp=timestamp, source=src)
+            if not payload:
+                continue
+            inserted += 1
+            if len(preview) < 5:
+                preview.append({
+                    "source": src,
+                    "timestamp": _sanitize_timestamp_text(timestamp) or None,
+                    "text": payload,
+                })
     if inserted <= 0:
-        raise ValueError(f"文件存在内容但无有效条目写入：{file_path}")
+        raise ValueError(f"存在输入内容但无有效条目写入：{file_path}")
     print("✅ 已批量导入额外 RAG 信息")
     print(json.dumps({
         "agent_id": int(agent_id),
-        "file": file_path,
-        "source": src,
+        "path": file_path,
+        "source": source,
+        "files_found": len(import_files),
+        "files_imported": imported_files,
         "inserted": inserted,
         "preview": preview,
     }, ensure_ascii=False, indent=2))
@@ -5124,14 +5197,14 @@ def _build_arg_parser():
 
     rag_import = subparsers.add_parser(
         "rag-import",
-        help="Import external RAG info from a file for an agent",
+        help="Import external RAG info from a file or directory for an agent",
     )
     rag_import.add_argument("--agent-id", type=int, required=True, help="Agent ID")
-    rag_import.add_argument("--file", required=True, help="Input file path (.txt/.md/.json/.jsonl)")
+    rag_import.add_argument("--file", required=True, help="Input file or directory path (.txt/.md/.json/.jsonl)")
     rag_import.add_argument(
         "--source",
         default=None,
-        help="Optional source tag (defaults to file name)",
+        help="Optional source tag (defaults to file name or relative path when importing a directory)",
     )
     rag_import.add_argument(
         "--default-timestamp",
