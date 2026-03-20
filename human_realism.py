@@ -9,6 +9,19 @@ def _clamp(value, lo=0.0, hi=1.0):
     return float(max(lo, min(hi, value)))
 
 
+def _contains_any(text, keywords):
+    blob = str(text or "")
+    return any(k in blob for k in keywords)
+
+
+def _time_str_to_minutes(time_str):
+    text = str(time_str or "")
+    if not re.match(r"^\d{2}:\d{2}$", text):
+        return None
+    hh, mm = text.split(":")
+    return int(hh) * 60 + int(mm)
+
+
 def _extract_json_block(text):
     if not text:
         return ""
@@ -72,24 +85,103 @@ def update_needs(agent, time_str, activity):
     state["hunger"] = float(state.get("hunger", 0.25))
     state["social_need"] = float(state.get("social_need", 0.40))
     text = str(activity or "")
-    work_like = any(k in text for k in ["工作", "学习", "上课", "通勤", "加班"])
-    rest_like = any(k in text for k in ["休息", "睡", "午休", "睡前"])
-    meal_like = any(k in text for k in ["早饭", "午饭", "晚饭", "吃饭", "买菜"])
-    social_like = any(k in text for k in ["聊天", "聚会", "同事", "朋友", "家人", "拜访"])
+    minutes = _time_str_to_minutes(time_str)
+    work_like = _contains_any(
+        text,
+        [
+            "工作",
+            "上班",
+            "学习",
+            "上课",
+            "通勤",
+            "加班",
+            "研究",
+            "实验",
+            "论文",
+            "备课",
+            "指导",
+            "项目",
+            "邮件",
+            "开会",
+            "会议",
+            "报告",
+        ],
+    )
+    rest_like = _contains_any(text, ["休息", "睡", "午休", "睡前", "放松", "躺", "小憩"])
+    meal_like = _contains_any(
+        text,
+        [
+            "早饭",
+            "早餐",
+            "午饭",
+            "午餐",
+            "晚饭",
+            "晚餐",
+            "吃饭",
+            "用餐",
+            "外卖",
+            "餐馆",
+            "餐厅",
+            "食堂",
+            "做饭",
+            "买菜",
+            "咖啡",
+            "茶歇",
+        ],
+    )
+    social_like = _contains_any(
+        text,
+        [
+            "聊天",
+            "聚会",
+            "同事",
+            "朋友",
+            "家人",
+            "拜访",
+            "学生",
+            "合作者",
+            "组会",
+            "讨论",
+            "交流",
+            "沟通",
+            "协作",
+            "社区",
+            "通话",
+            "会面",
+        ],
+    )
+    active_like = _contains_any(text, ["通勤", "散步", "运动", "健身", "跑步", "采购", "买菜", "出行"])
 
+    energy_delta = -0.012
     if work_like:
-        state["energy"] -= 0.04
+        energy_delta -= 0.02
+    if active_like:
+        energy_delta -= 0.01
     if rest_like:
-        state["energy"] += 0.08
-
-    state["hunger"] += 0.06
+        energy_delta += 0.08
     if meal_like:
-        state["hunger"] -= 0.35
+        energy_delta += 0.01
+    state["energy"] += energy_delta
 
+    hunger_delta = 0.035
+    if minutes is not None and minutes in range(690, 841):
+        hunger_delta += 0.015
+    if minutes is not None and minutes in range(1050, 1201):
+        hunger_delta += 0.015
+    if work_like or active_like:
+        hunger_delta += 0.01
+    if meal_like:
+        hunger_delta -= 0.28
+    state["hunger"] += hunger_delta
+
+    social_delta = 0.015
+    if work_like and not social_like:
+        social_delta += 0.01
+    if rest_like and not social_like:
+        social_delta += 0.01
     if social_like:
-        state["social_need"] -= 0.10
-    else:
-        state["social_need"] += 0.05
+        social_delta -= 0.08
+    state["social_need"] += social_delta
 
     state["energy"] = _clamp(state["energy"])
     state["hunger"] = _clamp(state["hunger"])

@@ -3,29 +3,29 @@
   "wealth_drive": 0.625,
   "income_skill": 0.7450000000000001,
   "base_hourly_income": 29.98194385473459,
-  "hourly_income": 30.463644058022446,
+  "hourly_income": 34.64008978928224,
   "income_volatility": 0.25,
   "income_target_daily": 234.79609781239023,
   "monthly_rent": 1206.6107646947974,
-  "balance": 23223.2984790168,
+  "balance": 4019.3496732272147,
   "initial_assets": {
     "labor_savings": 16345.336420629845,
     "inheritance": 7069.672268194074,
     "total": 23415.008688823917
   },
-  "daily_income": 150.243653648109,
-  "daily_expense": 341.953863455229,
+  "daily_income": 113.69316258838265,
+  "daily_expense": 325.71628043692203,
   "daily_expense_by_category": {
-    "food": 50.35337072530741,
+    "food": 14.577231692756833,
     "clothing": 0.0,
     "housing": 52.22035882315991,
-    "transport": 56.90915494827432,
-    "leisure": 51.90928943142158,
-    "education": 87.99435472393434,
+    "transport": 90.17762616430716,
+    "leisure": 0.0,
+    "education": 114.70887167988738,
     "healthcare": 0.0,
-    "misc": 42.567334803131416
+    "misc": 54.03219207681079
   },
-  "lifetime_income": 150.243653648109,
-  "lifetime_expense": 341.953863455229,
-  "last_location": "Central Block"
+  "lifetime_income": 12609.74009837403,
+  "lifetime_expense": 32005.399113970783,
+  "last_location": "Riverside Public Library"
 }

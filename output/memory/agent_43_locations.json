@@ -1,5 +1,19 @@
 {
   "home": "Central Block",
   "workplace": "C-01 (Village Center)",
-  "current": "Central Block"
+  "current": "Main Library",
+  "destination": "Main Library",
+  "in_transit": false,
+  "transport_mode": "metro",
+  "travel_minutes": 21,
+  "travel_progress": 1.0,
+  "travel_route": [
+    "C-01 (Village Center)",
+    "Central Station",
+    "University District",
+    "Main Library"
+  ],
+  "arrival_time": "22:37",
+  "travel_distance_km": 7.6,
+  "depart_time": "22:16"
 }

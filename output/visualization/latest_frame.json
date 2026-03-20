@@ -1,71 +1,75 @@
 {
   "meta": {
-    "generated_at": "2026-03-17T17:25:59Z",
-    "last_updated": "2026-03-17T17:30:00Z",
+    "generated_at": "2026-03-19T06:29:15Z",
+    "last_updated": "2026-03-19T08:59:06Z",
     "finished": true,
-    "frame_count": 10,
+    "frame_count": 500,
     "sim_meta": {
-      "sim_days": 1,
+      "sim_days": 50,
       "seconds_per_day": 10,
+      "simulate_realtime": false,
       "time_step_minutes": null,
       "map_path": "citymap.md",
       "agent_ids": [
-        53
+        43
       ]
     }
   },
   "frame": {
-    "index": 9,
-    "day": 27,
-    "time": "23:59",
-    "date": "2026-04-13",
-    "weekday": "周一",
-    "day_type": "工作日",
+    "index": 499,
+    "day": 157,
+    "time": "22:16",
+    "date": "2026-08-22",
+    "weekday": "周六",
+    "day_type": "周末",
     "env_context": "背景：2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。 当前环境事件：日级环境：今日外部环境总体平稳。",
     "env_events": [],
     "policy": {},
     "agents": [
       {
-        "agent_id": 53,
-        "name": "Chao Wu",
-        "time": "23:59",
-        "location": "Central Block",
-        "resolved_location": "Central Block",
-        "target_location": "Central Block",
+        "agent_id": 43,
+        "name": "范国富",
+        "time": "22:16",
+        "location": "Main Library",
+        "resolved_location": "Main Library",
+        "target_location": "Main Library",
         "home": "Central Block",
         "workplace": "C-01 (Village Center)",
         "scheduled_activity": "睡觉",
         "activity": "睡觉",
         "action": "睡觉",
         "outcome": "在【睡觉】中执行了【睡觉】",
-        "perception": "夜深了，杭州的冬夜显得很安静，外部一切都还算平稳，但这种平稳里也带着一点淡淡的压迫感，像是就业和生活成本的压力一直悬在空气里。今天几乎没怎么和熟人互动，所以我对他人的感知偏疏离，对制度则更多是觉得它稳定、清晰，但也始终带着一种不太容易忽视的约束感。",
-        "plan": "先把今天的研究数据、文稿修改点和合同信息再核对一遍，整理成明天可以直接续做的交接状态，并记清优先事项。完成后我会出去短暂散步放空一下，再视情况和学术同事做必要的线上沟通，但不再接新的任务。",
-        "reflection": "有点意外，明明在睡觉却像是“继续执行任务”，说明最近脑子可能绷得太紧了，连休息都没完全放松下来。也提醒我今天更要先抓住实验室里最关键的数据和文稿推进，别让精力被杂事进一步分散。",
+        "perception": "此刻，夜已深，杭州的夜色笼罩着这座城市，也似乎笼罩着我。与熟人的互动少，让我感受到一种与世隔开的平静，但也隐约能感受到社会上普遍存在的焦虑和压力，这与我所观察到的青年就业压力和生活成本上升息息相关。我对当前政策环境的无变化感到一丝失望，希望能够有更多能够真正改善民生的政策出台。",
+        "plan": "此刻，我的短期计划是：**分析上午客流数据，并根据数据结果，优化淡季营销方案的细节，力求方案更具针对性和可行性。同时，我会整理一份详细的近期工作计划，确保各项工作有条不紊地推进。**",
+        "reflection": "（深呼吸，略带困倦的语气）\n\n这…这感觉有些…循环往复。在睡觉中执行睡觉，重复多次，仿佛陷入了无尽的梦境。我感到一种迷茫，以及一丝难以名状的空虚，仿佛失去了目标，只是在原地打转。",
         "changed": false,
         "change_reason": "",
         "state": {
-          "emotion": 0.6638,
-          "stress": 0.6431,
-          "econ_security": 0.957,
-          "city_identity": 0.6793,
-          "policy_sensitivity": 0.6478,
-          "platform_dependence": 0.7313,
-          "risk_preference": 0.3707,
-          "voice_propensity": 0.557,
-          "mobility_intent": 0.3888,
-          "energy": 0.8263,
-          "hunger": 0.8724,
-          "social_need": 0.8921
+          "emotion": 0.8287,
+          "stress": 0.1931,
+          "econ_security": 0.7796,
+          "city_identity": 0.7364,
+          "policy_sensitivity": 0.4565,
+          "platform_dependence": 0.3819,
+          "risk_preference": 0.6444,
+          "voice_propensity": 0.6344,
+          "mobility_intent": 0.2369,
+          "energy": 0.859,
+          "hunger": 0.1586,
+          "social_need": 0.656
         },
         "travel": {
-          "mode": "",
-          "distance_km": 0.0,
-          "minutes": 0,
+          "mode": "metro",
+          "distance_km": 7.6,
+          "minutes": 21,
           "progress": 1.0,
           "route": [
-            "Central Block"
+            "C-01 (Village Center)",
+            "Central Station",
+            "University District",
+            "Main Library"
           ],
-          "status": "stationary"
+          "status": "arrived"
         }
       }
     ]

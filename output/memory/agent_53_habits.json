@@ -1,82 +1,2719 @@
 {
   "morning|public|兼职": {
     "action_counts": {
-      "与同行讨论合作机会": 1
+      "与同行讨论合作机会": 2,
+      "评估企业顾问邀约": 2,
+      "核算时间投入与报酬": 1,
+      "筛选高校合作项目": 1,
+      "更新个人学术主页": 1,
+      "准备线上专题讲座": 1
     },
     "preferred_action": "与同行讨论合作机会",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "strength": 0.191811317441495,
+    "last_updated_day": 44
   },
   "morning|work|早餐后前往高校实验室": {
     "action_counts": {
-      "收拾电脑电源和随身资料": 1
+      "收拾电脑电源和随身资料": 3,
+      "到实验室后先检查设备状态": 1,
+      "边吃早餐边查看邮件": 1,
+      "路上阅读AI行业和学术快讯": 1,
+      "规划从住处到高校的通勤路线": 2,
+      "整理工位并准备开始工作": 2,
+      "边吃早餐边浏览未读邮件": 2,
+      "和到场学生确认今日任务分工": 3,
+      "查看杭州本地通勤路线情况": 1,
+      "路上浏览AI行业与学术动态": 1,
+      "收拾电脑与会议资料": 1,
+      "到实验室后检查设备运行状态": 2,
+      "确认当天组会与实验安排": 1
     },
     "preferred_action": "收拾电脑电源和随身资料",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "strength": 0.16774046590531932,
+    "last_updated_day": 100
   },
   "morning|home|兼职": {
+    "action_counts": {
+      "审阅兼职合同条款": 1,
+      "更新个人学术主页": 1,
+      "回复行业咨询邮件": 1
+    },
+    "preferred_action": "审阅兼职合同条款",
+    "strength": 0.15851520000000002,
+    "last_updated_day": 28
+  },
+  "afternoon|home|与学生和合作者开组会讨论项目进展": {
+    "action_counts": {
+      "逐一询问学生实验推进情况": 1,
+      "逐一询问学生当前卡点": 3,
+      "结合数据结果提出修正建议": 2,
+      "记录会议结论与待办事项": 1,
+      "提前整理项目里程碑与待办清单": 1,
+      "打开共享文档核对实验进度": 4,
+      "结合论文目标调整技术路线": 1,
+      "分析当前结果中的异常与瓶颈": 2,
+      "协调合作者分工与时间节点": 1,
+      "打开共享文档核对各子任务状态": 1
+    },
+    "preferred_action": "打开共享文档核对实验进度",
+    "strength": 0.25019872136275645,
+    "last_updated_day": 100
+  },
+  "afternoon|public|午餐后短暂散步，处理会议消息": {
+    "action_counts": {
+      "在校园或园区慢走放松": 5,
+      "顺手清理不重要的提醒消息": 1,
+      "调整下午日程中的会议顺序": 6,
+      "语音记录散步时想到的研究点": 4,
+      "快速浏览群组里的项目更新": 8,
+      "语音备注临时想到的研究点": 4,
+      "快速浏览项目群中的更新内容": 4,
+      "在校园道路上慢走放松思路": 1,
+      "查看手机上的会议通知": 3,
+      "查看手机里的会议提醒与邀请": 3,
+      "回复合作方的参会时间确认": 1,
+      "处理学生发来的临时请教消息": 2,
+      "回复合作方的时间确认消息": 1,
+      "清理无关提醒保持信息简洁": 1,
+      "调整下午线上会议日程": 2
+    },
+    "preferred_action": "快速浏览群组里的项目更新",
+    "strength": 0.29663563248842445,
+    "last_updated_day": 107
+  },
+  "afternoon|home|备课并开展研究生指导": {
+    "action_counts": {
+      "强调论证逻辑与写作规范": 1,
+      "指导学生优化实验设置": 2,
+      "一对一讨论研究设计细节": 4,
+      "检查学生作业与阅读汇报": 3,
+      "布置下一阶段阅读与实现任务": 2,
+      "强调论文写作规范与逻辑": 2,
+      "准备与AI研究相关的演示材料": 2,
+      "梳理本次课程的核心知识点": 1,
+      "准备与AI研究相关的示范材料": 8,
+      "梳理课程大纲与本周重点": 2,
+      "记录每位学生的进展与问题": 1,
+      "更新讲义中的案例与图表": 2,
+      "布置下一步阅读与实现任务": 1,
+      "检查学生作业与阅读反馈": 1
+    },
+    "preferred_action": "准备与AI研究相关的示范材料",
+    "strength": 0.3032639680806323,
+    "last_updated_day": 107
+  },
+  "afternoon|home|参加线上学术交流或技术社区讨论": {
+    "action_counts": {
+      "提前登录会议平台测试设备": 5,
+      "认真聆听前沿方法介绍": 6,
+      "记录可借鉴的数据处理思路": 3,
+      "在聊天区提出技术问题": 1,
+      "整理讨论中提到的工具与论文": 4,
+      "浏览议程并标记重点报告": 3,
+      "在讨论区提出细节性技术问题": 2,
+      "会后整理讨论笔记与联系人": 2,
+      "会后添加同行联系方式": 2,
+      "简要分享团队近期研究观察": 1,
+      "记录与自己课题相关的思路": 2,
+      "提前进入会议平台检查麦克风": 1,
+      "分享自己团队的阶段性观察": 1,
+      "浏览议程并标记关注的报告": 1,
+      "关注同行提到的数据集与工具": 1,
+      "认真听取前沿方法与应用案例": 1
+    },
+    "preferred_action": "认真聆听前沿方法介绍",
+    "strength": 0.2966262004423648,
+    "last_updated_day": 107
+  },
+  "evening|home|晚餐，顺路采购生活用品后回家": {
+    "action_counts": {
+      "结束工作后去附近餐馆简单用餐": 4,
+      "选择熟悉高效的回家路线": 2,
+      "对照手机清单避免重复购买": 3,
+      "补充日用品与简单食材": 4,
+      "在便利店采购牛奶和水果": 3,
+      "结束工作后前往附近餐馆用餐": 5,
+      "在便利店购买牛奶水果和面包": 2,
+      "边吃边回顾当天研究进展": 2,
+      "用餐时回顾当天研究推进情况": 2,
+      "选择熟悉便捷的路线回住处": 1,
+      "补充纸巾洗漱用品等日用品": 1,
+      "核对手机里的购物清单": 1
+    },
+    "preferred_action": "结束工作后前往附近餐馆用餐",
+    "strength": 0.3478319625537706,
+    "last_updated_day": 106
+  },
+  "evening|home|继续阅读文献，修改论文或项目申请书": {
+    "action_counts": {
+      "补充论文中的参考文献与背景": 2,
+      "比对现有工作与自己研究差异": 2,
+      "标注文献中的关键方法与结论": 3,
+      "检索最新相关论文与预印本": 3,
+      "对照自己的研究补充参考文献": 3,
+      "调整项目申请书的研究目标": 2,
+      "修改摘要中的贡献表述": 2,
+      "标记文献中的关键方法与结论": 3,
+      "润色方法和实验部分措辞": 2,
+      "强化社会影响与创新价值论证": 1,
+      "反复检查格式与逻辑一致性": 1,
+      "润色方法和实验部分语言": 1
+    },
+    "preferred_action": "标注文献中的关键方法与结论",
+    "strength": 0.23184513023210934,
+    "last_updated_day": 103
+  },
+  "night|home|睡觉": {
+    "action_counts": {
+      "睡觉": 38
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.962140057628207,
+    "last_updated_day": 106
+  },
+  "morning|work|整理实验数据并推进论文研究": {
+    "action_counts": {
+      "运行脚本复核主要实验结果": 5,
+      "清洗异常样本并补充缺失说明": 3,
+      "绘制论文需要的图表和表格": 2,
+      "列出下一步需要补做的实验": 2,
+      "绘制论文所需图表与表格": 1,
+      "清洗异常值并核对变量定义": 5,
+      "梳理论文讨论部分的逻辑结构": 3,
+      "补写方法细节与实验设置": 2,
+      "汇总不同实验批次的数据文件": 1,
+      "汇总各轮实验生成的数据文件": 1,
+      "补充方法部分的技术细节": 1,
+      "运行分析脚本复现实验结果": 1,
+      "比较不同模型的性能差异": 1
+    },
+    "preferred_action": "运行脚本复核主要实验结果",
+    "strength": 0.32492674318367665,
+    "last_updated_day": 107
+  },
+  "morning|public|与学生和合作者开组会讨论项目进展": {
+    "action_counts": {
+      "提前梳理项目进度与关键节点": 1,
+      "协调合作者分工与时间节点": 1,
+      "结合论文目标调整技术路线": 1
+    },
+    "preferred_action": "提前梳理项目进度与关键节点",
+    "strength": 0.15851520000000002,
+    "last_updated_day": 96
+  },
+  "evening|public|晚餐，顺路采购生活用品后回家": {
+    "action_counts": {
+      "对照手机清单避免重复购买": 1,
+      "在便利店采购牛奶和水果": 1,
+      "回到家后整理随身物品": 3,
+      "补充纸巾洗漱用品等日用品": 1,
+      "在便利店购买牛奶水果和面包": 2,
+      "边吃边回顾当天研究进展": 1,
+      "用餐时回顾当天研究推进情况": 4,
+      "回家后放好采购物品与背包": 1,
+      "补充日用品与简单食材": 1,
+      "结束工作后前往附近餐馆用餐": 1,
+      "结束工作后去附近餐馆简单用餐": 1,
+      "核对手机里的购物清单": 3,
+      "选择熟悉高效的回家路线": 1
+    },
+    "preferred_action": "用餐时回顾当天研究推进情况",
+    "strength": 0.24091859945464175,
+    "last_updated_day": 103
+  },
+  "evening|public|继续阅读文献，修改论文或项目申请书": {
+    "action_counts": {
+      "润色方法和实验部分措辞": 3,
+      "标记文献中的关键方法与结论": 3,
+      "检索最新相关论文与预印本": 5,
+      "补充论文中的参考文献与背景": 4,
+      "修改摘要中的贡献表述": 1,
+      "检查格式规范和逻辑连贯性": 1,
+      "调整项目申请书的研究目标": 2,
+      "反复检查格式与逻辑一致性": 2,
+      "比对现有工作与自己研究差异": 2,
+      "调整申请书的研究目标与路径": 1
+    },
+    "preferred_action": "检索最新相关论文与预印本",
+    "strength": 0.2375567851171608,
+    "last_updated_day": 107
+  },
+  "morning|public|起床洗漱，浏览科研邮件和AI行业动态": {
+    "action_counts": {
+      "起床后洗漱整理仪表": 1,
+      "关注AI行业新闻和技术发布": 1,
+      "快速确认是否有紧急回复事项": 1,
+      "起床后洗漱并整理仪表": 2,
+      "查看邮箱中的学生来信": 1,
+      "记录值得跟进的机会与信息": 1,
+      "查看邮箱中的学生与合作邮件": 1,
+      "筛选合作项目与会议通知": 1,
+      "浏览学术平台上的最新论文": 1
+    },
+    "preferred_action": "起床后洗漱并整理仪表",
+    "strength": 0.19415268697840182,
+    "last_updated_day": 104
+  },
+  "morning|home|整理实验数据并推进论文研究": {
+    "action_counts": {
+      "运行分析脚本复现实验结果": 2,
+      "比较模型表现并记录结论": 1,
+      "列出下一步需要补做的实验": 1,
+      "梳理讨论章节的论证结构": 1
+    },
+    "preferred_action": "运行分析脚本复现实验结果",
+    "strength": 0.21680062464,
+    "last_updated_day": 100
+  },
+  "afternoon|home|兼职": {
+    "action_counts": {
+      "整理研究专长清单": 2,
+      "回复行业咨询邮件": 1
+    },
+    "preferred_action": "整理研究专长清单",
+    "strength": 0.23191040000000002,
+    "last_updated_day": 47
+  },
+  "afternoon|public|备课并开展研究生指导": {
+    "action_counts": {
+      "记录每位学生的进展与问题": 6,
+      "更新讲义中的案例与图表": 1,
+      "指导学生优化实验设置": 2,
+      "准备与AI研究相关的演示材料": 1,
+      "检查学生作业与阅读汇报": 2,
+      "梳理本次课程的核心知识点": 2,
+      "更新讲义中的案例和图示": 1,
+      "检查学生作业与阅读反馈": 1,
+      "一对一讨论研究设计细节": 3,
+      "一对一讨论课题设计细节": 1,
+      "梳理课程大纲与本周重点": 1
+    },
+    "preferred_action": "记录每位学生的进展与问题",
+    "strength": 0.31231754617514196,
+    "last_updated_day": 100
+  },
+  "evening|home|参加线上学术交流或技术社区讨论": {
+    "action_counts": {
+      "在聊天区提出技术问题": 1,
+      "提前登录会议平台测试设备": 1,
+      "浏览议程并标记重点报告": 1,
+      "记录与自己课题相关的思路": 1,
+      "记录可借鉴的数据处理思路": 1,
+      "关注同行提到的数据集与工具": 1,
+      "整理讨论中提到的工具与论文": 1,
+      "会后添加同行联系方式": 1
+    },
+    "preferred_action": "在聊天区提出技术问题",
+    "strength": 0.12924896623460352,
+    "last_updated_day": 106
+  },
+  "morning|home|早餐后前往高校实验室": {
+    "action_counts": {
+      "确认当天实验室安排": 2,
+      "路上阅读AI行业和学术快讯": 1,
+      "与到场学生简单确认当天任务": 1,
+      "边吃早餐边浏览未读邮件": 1,
+      "规划从住处到高校的通勤路线": 1,
+      "收拾电脑与会议资料": 1
+    },
+    "preferred_action": "确认当天实验室安排",
+    "strength": 0.196972300468224,
+    "last_updated_day": 105
+  },
+  "night|work|睡觉": {
+    "action_counts": {
+      "睡觉": 3
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.2991808,
+    "last_updated_day": 56
+  },
+  "morning|work|起床，快速浏览 arXiv 和 Nature 等预印本，关注 AI/机器学习领域最新进展，并整理今日待办清单。": {
+    "action_counts": {
+      "继续当前活动": 3
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.2991808,
+    "last_updated_day": 40
+  },
+  "morning|work|早餐后，沉浸式分析昨晚实验数据，尝试用新的统计模型识别潜在偏差，并记录关键发现。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "afternoon|work|与学生和合作者进行结构化线上研讨，重点讨论如何根据不同学习风格和知识背景，定制个性化的实验指导方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "afternoon|home|午餐后，利用番茄工作法进行深度思考，针对实验设计中的逻辑漏洞和潜在改进点，撰写详细的解决方案。": {
+    "action_counts": {
+      "检查解决方案的完整性和准确性。": 1
+    },
+    "preferred_action": "检查解决方案的完整性和准确性。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "afternoon|home|备课时，结合最新研究成果，设计更具挑战性和启发性的研究生实验项目，并预留充足的时间进行一对一辅导。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "afternoon|work|参加技术社区的在线讨论，重点关注基于深度学习的实验数据分析方法，并尝试将其与当前研究项目相结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "evening|home|晚餐后，前往当地的科技馆或博物馆，参观与人工智能相关的展览，寻找灵感和新的研究方向。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "evening|public|阅读最新的学术论文，并尝试用自己的话进行总结和批判性分析，记录关键思路和潜在的应用场景。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "night|home|整理今日工作，回顾实验数据分析过程，并为明天与学生讨论实验细节做充分准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "night|home|阅读一本关于科技伦理或未来社会趋势的书籍，拓展视野，激发创新思维。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 31
+  },
+  "morning|public|回顾昨天收集到的文献和技术社区讨论笔记，重点关注深度学习数据分析方法与个性化实验指导方案框架的结合点，并尝试用思维导图梳理思路。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "afternoon|work|与核心合作者进行线上研讨，重点讨论如何将深度学习数据分析方法应用于个性化实验指导方案的优化，并寻求他们的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "afternoon|home|午餐后，前往当地科技馆或博物馆，参观最新的AI技术展览，激发研究灵感，并思考其与自身研究的潜在联系。": {
+    "action_counts": {
+      "拍照记录关键技术和设计细节。": 1
+    },
+    "preferred_action": "拍照记录关键技术和设计细节。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "afternoon|work|备课时，将最新的技术趋势融入到教学案例中，尝试设计更具挑战性和启发性的实验指导方案，鼓励学生探索前沿技术。": {
+    "action_counts": {
+      "准备案例分析题目，引导学生思考": 1
+    },
+    "preferred_action": "准备案例分析题目，引导学生思考",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "afternoon|home|参与一个专注于AI伦理的在线讨论小组，与来自不同领域的专家交流，探讨技术发展带来的社会影响，并思考如何在研究中融入伦理考量。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "evening|public|晚餐后，阅读一本关于人工智能历史和未来趋势的科普书籍，放松身心，并为未来的研究方向提供新的视角。": {
+    "action_counts": {
+      "闭上眼睛，放松身心": 1
+    },
+    "preferred_action": "闭上眼睛，放松身心",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "evening|home|利用剩余时间，整理一份关于未来研究方向的初步规划，并撰写一份简要的个人简历，为未来职业发展做准备。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "night|work|阅读一篇关于最新数据分析技术的论文，并记录下关键思路和实验方法，为后续研究工作做准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 32
+  },
+  "afternoon|public|兼职": {
     "action_counts": {
       "审阅兼职合同条款": 1
     },
     "preferred_action": "审阅兼职合同条款",
     "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "last_updated_day": 33
   },
-  "afternoon|home|与学生和合作者开组会讨论项目进展": {
+  "night|public|睡觉": {
     "action_counts": {
-      "逐一询问学生实验推进情况": 1
+      "睡觉": 20
     },
-    "preferred_action": "逐一询问学生实验推进情况",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "preferred_action": "睡觉",
+    "strength": 0.830176003753483,
+    "last_updated_day": 107
   },
-  "afternoon|public|午餐后短暂散步，处理会议消息": {
+  "morning|work|阅读一篇关于最新数据分析技术的论文，并记录下关键思路和实验方法，为后续研究工作做准备。": {
     "action_counts": {
-      "在校园或园区慢走放松": 1
+      "继续处理手头工作": 1
     },
-    "preferred_action": "在校园或园区慢走放松",
+    "preferred_action": "继续处理手头工作",
     "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "last_updated_day": 34
   },
-  "afternoon|home|备课并开展研究生指导": {
+  "morning|home|与学生和合作者开组会讨论项目进展": {
     "action_counts": {
-      "强调论证逻辑与写作规范": 1
+      "记录关键结论与行动项": 1,
+      "打开共享文档核对实验进度": 1,
+      "结合论文目标调整技术路线": 1,
+      "分析当前结果中的异常与瓶颈": 1,
+      "逐一询问学生实验推进情况": 1,
+      "协调合作者分工与时间节点": 1,
+      "提前整理项目里程碑与待办清单": 1
     },
-    "preferred_action": "强调论证逻辑与写作规范",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "preferred_action": "记录关键结论与行动项",
+    "strength": 0.134634339827712,
+    "last_updated_day": 90
   },
-  "afternoon|home|参加线上学术交流或技术社区讨论": {
+  "afternoon|home|参加技术社区的在线讨论，重点关注基于深度学习的实验数据分析方法，并尝试将其与当前研究项目相结合。": {
     "action_counts": {
-      "提前登录会议平台测试设备": 1
+      "继续当前活动": 1
     },
-    "preferred_action": "提前登录会议平台测试设备",
+    "preferred_action": "继续当前活动",
     "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "last_updated_day": 34
   },
-  "evening|home|晚餐，顺路采购生活用品后回家": {
+  "evening|work|继续阅读文献，修改论文或项目申请书": {
     "action_counts": {
-      "结束工作后去附近餐馆简单用餐": 1
-    },
-    "preferred_action": "结束工作后去附近餐馆简单用餐",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 27
-  },
-  "evening|home|继续阅读文献，修改论文或项目申请书": {
-    "action_counts": {
-      "补充论文中的参考文献与背景": 1
+      "润色方法和实验部分语言": 1,
+      "比对现有工作与自己研究差异": 1,
+      "补充论文中的参考文献与背景": 2,
+      "修改论文摘要与贡献表述": 1
     },
     "preferred_action": "补充论文中的参考文献与背景",
-    "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "strength": 0.22000062464000003,
+    "last_updated_day": 93
   },
-  "night|home|睡觉": {
+  "morning|public|起床，快速浏览 arXiv 和 Nature 等预印本，关注 AI/机器学习领域最新进展，并整理今日待办清单。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 35
+  },
+  "morning|home|整理今日工作，回顾实验数据分析过程，并为明天与学生讨论实验细节做充分准备。": {
+    "action_counts": {
+      "继续处理手头工作": 3
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.2991808,
+    "last_updated_day": 72
+  },
+  "morning|work|回顾昨天收集到的文献和技术社区讨论笔记，重点关注深度学习数据分析方法与个性化实验指导方案框架的结合点，并尝试用思维导图梳理思路。": {
+    "action_counts": {
+      "继续当前活动": 4
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.355246336,
+    "last_updated_day": 58
+  },
+  "morning|public|整理今日工作，回顾实验数据分析过程，并为明天与学生讨论实验细节做充分准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 37
+  },
+  "morning|public|整理实验数据并推进论文研究": {
+    "action_counts": {
+      "运行分析脚本复现实验结果": 2,
+      "梳理讨论章节的论证结构": 2,
+      "比较不同模型的性能差异": 1
+    },
+    "preferred_action": "运行分析脚本复现实验结果",
+    "strength": 0.28482326528,
+    "last_updated_day": 99
+  },
+  "afternoon|public|与学生和合作者开组会讨论项目进展": {
+    "action_counts": {
+      "协调合作者分工与时间节点": 1,
+      "逐一询问学生当前卡点": 3,
+      "会后发送会议纪要与资料链接": 2,
+      "记录会议结论与待办事项": 1,
+      "分析当前结果中的异常与瓶颈": 3,
+      "提前整理项目里程碑与待办清单": 1,
+      "结合论文目标调整技术路线": 2,
+      "提前梳理项目进度与关键节点": 1,
+      "在白板上拆解后续研究问题": 1,
+      "在白板上拆解下一阶段任务": 1
+    },
+    "preferred_action": "逐一询问学生当前卡点",
+    "strength": 0.3273563596318841,
+    "last_updated_day": 107
+  },
+  "morning|home|起床，回顾昨天收集的文献笔记，并快速浏览AI领域最新技术趋势，关注深度学习数据分析与个性化实验指导的交叉点。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 102
+  },
+  "morning|public|早餐后，在实验室进行深度学习数据分析方法与个性化实验指导方案框架的初步构建，尝试将理论模型与实际应用场景相结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "morning|home|利用Python或R等工具，模拟研究生实验数据，测试不同数据分析方法对实验结果的影响，验证方案框架的可行性。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "afternoon|home|与核心合著者进行线上会议，重点讨论数据分析方法在个性化实验指导中的应用，寻求技术上的突破口和合作机会。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "afternoon|work|午餐后，前往图书馆或研究中心，查阅相关案例研究和最新学术论文，深化对数据分析与实验指导结合的理解。": {
+    "action_counts": {
+      "输入关键词，搜索相关案例研究和论文。": 1
+    },
+    "preferred_action": "输入关键词，搜索相关案例研究和论文。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "afternoon|home|备课时，将深度学习数据分析方法融入到研究生指导计划中，设计更具针对性的实验方案和数据分析练习。": {
+    "action_counts": {
+      "整理实验数据示例": 1
+    },
+    "preferred_action": "整理实验数据示例",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "afternoon|public|参加一个关于AI伦理或数据隐私的线上研讨会，拓展视野，并思考如何将这些议题融入到研究生实验指导中。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "evening|public|晚餐后，前往当地科技社区的活动，与行业专家交流，了解最新的技术应用和行业发展趋势。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "evening|work|整理与学生组会讨论的反饋，并根据反馈调整实验计划和数据分析思路，确保后续实验能够更有针对性地进行。同时，撰写一篇关于数据分析在个性化实验指导中应用的初步文章。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "night|home|阅读一本关于人工智能哲学或未来科技的书籍，放松身心，为下周的科研工作蓄力。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 38
+  },
+  "morning|home|起床，快速浏览arXiv和ConnectedPapers，关注最新的深度学习数据分析和个性化实验指导相关论文。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "morning|work|早餐后，沉浸式进行数据分析与实验指导结合的研究，重点关注如何利用深度学习方法优化实验设计，并细化项目里程碑，确保可追踪性。": {
+    "action_counts": {
+      "继续当前活动": 3
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.2991808,
+    "last_updated_day": 62
+  },
+  "afternoon|work|与学生和合作者开组会，重点讨论数据分析遇到的瓶颈和实验指导中的挑战，分享最新的研究进展和技术见解，并鼓励大家提出更具创新性的解决方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "afternoon|work|午餐后，在附近的科技馆或博物馆参观，寻找启发灵感，思考如何将最新的科技趋势融入到研究生指导中，同时浏览技术社区的讨论。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "afternoon|work|备课并开展研究生指导，结合深度学习数据分析方法，针对性地讲解实验设计和数据解读，强调伦理和隐私保护的重要性。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "afternoon|home|整理AI研究演示材料，重点突出数据分析方法在个性化实验指导中的应用，并加入互动环节，鼓励听众提出问题和建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "evening|home|晚餐后，前往当地的开源社区或技术沙龙，与同行交流经验，探讨最新的技术趋势和研究方向。": {
+    "action_counts": {
+      "思考将讨论内容应用于自身研究的可能方向。": 1
+    },
+    "preferred_action": "思考将讨论内容应用于自身研究的可能方向。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "evening|work|继续阅读文献，重点关注深度学习数据分析方法与个性化实验指导方案的结合点，并撰写初步的方案框架。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "evening|home|回顾今日工作，整理思路，重点总结数据分析和实验指导方面的发现，并为下周工作做计划。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 39
+  },
+  "night|home|阅读一本关于人工智能伦理或未来科技的书籍，放松身心，为睡眠做准备。": {
     "action_counts": {
       "睡觉": 1
     },
     "preferred_action": "睡觉",
     "strength": 0.17200000000000001,
-    "last_updated_day": 27
+    "last_updated_day": 39
+  },
+  "morning|work|起床，快速浏览arXiv和ConnectedPapers，关注最新的深度学习数据分析和个性化实验指导相关论文。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 40
+  },
+  "afternoon|work|与学生和合作者开组会讨论项目进展": {
+    "action_counts": {
+      "逐一询问学生实验推进情况": 1,
+      "提前梳理项目进度与关键节点": 2,
+      "明确下一周的验证任务": 1,
+      "打开共享文档核对实验进度": 1,
+      "结合数据结果提出修正建议": 1
+    },
+    "preferred_action": "提前梳理项目进度与关键节点",
+    "strength": 0.2051794796544,
+    "last_updated_day": 103
+  },
+  "afternoon|public|参加线上学术交流或技术社区讨论": {
+    "action_counts": {
+      "浏览议程并标记关注的报告": 3,
+      "提前进入会议平台检查麦克风": 1,
+      "分享自己团队的阶段性观察": 1
+    },
+    "preferred_action": "浏览议程并标记关注的报告",
+    "strength": 0.27572502528000004,
+    "last_updated_day": 92
+  },
+  "morning|public|参加技术社区的在线讨论，重点关注基于深度学习的实验数据分析方法，并尝试将其与当前研究项目相结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 41
+  },
+  "afternoon|home|前往C-01 (Village Center)": {
+    "action_counts": {
+      "乘坐metro移动": 2
+    },
+    "preferred_action": "乘坐metro移动",
+    "strength": 0.23824,
+    "last_updated_day": 41
+  },
+  "morning|work|参加技术社区的在线讨论，重点关注基于深度学习的实验数据分析方法，并尝试将其与当前研究项目相结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 42
+  },
+  "afternoon|work|午餐后，利用番茄工作法进行深度思考，针对实验设计中的逻辑漏洞和潜在改进点，撰写详细的解决方案。": {
+    "action_counts": {
+      "查阅相关文献，寻找解决方案的参考。": 1
+    },
+    "preferred_action": "查阅相关文献，寻找解决方案的参考。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 42
+  },
+  "morning|public|早餐后前往高校实验室": {
+    "action_counts": {
+      "到实验室后检查设备运行状态": 1,
+      "规划从住处到高校的通勤路线": 1,
+      "和到场学生确认今日任务分工": 1,
+      "路上浏览AI行业与学术动态": 1,
+      "收拾电脑与会议资料": 1
+    },
+    "preferred_action": "到实验室后检查设备运行状态",
+    "strength": 0.14608760832,
+    "last_updated_day": 104
+  },
+  "morning|public|起床，快速浏览 arXiv 和 AI 领域最新预印本，关注深度学习数据分析的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "morning|work|在家准备一份营养丰富的早餐，并回顾昨天收集的文献笔记，思考数据分析方法与个性化实验指导的结合点。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "afternoon|public|与合作者进行非正式的头脑风暴会议，讨论深度学习数据分析在实验指导中的应用，以及如何利用技术社区的反馈优化方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "afternoon|work|午餐后，前往附近的科技书店，浏览最新的 AI/机器学习书籍和技术期刊，寻找灵感和新的研究方向。": {
+    "action_counts": {
+      "在书店的阅读区，快速浏览书籍内容。": 1
+    },
+    "preferred_action": "在书店的阅读区，快速浏览书籍内容。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "afternoon|home|研究生指导：结合数据分析的思路，为研究生提供个性化的实验设计建议，并鼓励他们探索新的数据可视化和模型评估方法。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "afternoon|work|参加一个在线技术社区的讨论，重点关注深度学习数据分析工具和技术在实验指导中的应用案例。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "evening|work|晚餐后，利用周末时间，尝试使用新的数据分析工具，对实验数据进行更深入的挖掘和建模。": {
+    "action_counts": {
+      "尝试不同的数据可视化方法。": 1
+    },
+    "preferred_action": "尝试不同的数据可视化方法。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "evening|home|回顾今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并思考如何将这些方法融入到实际的指导工作中。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "night|public|阅读一本关于人工智能伦理的书籍，思考技术发展对社会的影响，并为未来的研究方向提供新的视角。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 45
+  },
+  "morning|work|起床，快速浏览最新发表的深度学习论文摘要和AI技术社区动态，重点关注数据分析与个性化实验指导相关内容。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "morning|home|早餐后，前往实验室，利用时间梳理昨天收集的文献笔记，并开始构建深度学习数据分析方法与个性化实验指导方案的框架草案。": {
+    "action_counts": {
+      "整理早餐后书桌上的文件。": 1
+    },
+    "preferred_action": "整理早餐后书桌上的文件。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "morning|work|深入分析上午收集的实验数据，尝试利用深度学习模型识别潜在的实验偏差和改进点，并记录分析结果。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "afternoon|work|前往Riverside Middle School": {
+    "action_counts": {
+      "乘坐metro移动": 2
+    },
+    "preferred_action": "乘坐metro移动",
+    "strength": 0.23824,
+    "last_updated_day": 46
+  },
+  "afternoon|work|利用上午的分析结果，为研究生准备实验讲解材料，重点突出数据分析方法在实验指导中的应用。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "afternoon|home|参与线上技术社区讨论，重点关注深度学习数据分析与个性化实验指导方面的最新进展，并积极提问和分享自己的想法。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "evening|work|晚餐后，在社区的科技沙龙或人工智能活动中与同行交流，分享研究心得，并获取最新的行业信息。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "evening|work|回顾今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并思考如何将这些方法融入到实际的指导工作中，完善方案框架。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "night|work|阅读一本与人工智能伦理或未来科技相关的书籍，放松心情，为明天的工作做好准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 46
+  },
+  "morning|work|起床洗漱，浏览科研邮件和AI行业动态": {
+    "action_counts": {
+      "筛选会议通知和审稿相关来信": 1
+    },
+    "preferred_action": "筛选会议通知和审稿相关来信",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 47
+  },
+  "afternoon|work|起床，快速浏览arXiv和ConnectedPapers，关注最新的深度学习数据分析和个性化实验指导相关论文。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 100
+  },
+  "morning|public|阅读一本与人工智能伦理或未来科技相关的书籍，放松心情，为明天的工作做好准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 48
+  },
+  "morning|home|起床洗漱，浏览科研邮件和AI行业动态": {
+    "action_counts": {
+      "筛选会议通知和审稿相关来信": 1,
+      "起床后洗漱并整理仪表": 1,
+      "记录值得跟进的会议信息": 1,
+      "记录值得跟进的机会与信息": 1,
+      "起床后洗漱整理仪表": 1,
+      "快速确认是否有紧急回复事项": 1,
+      "查看邮箱中的学生与合作邮件": 1,
+      "筛选合作项目与会议通知": 1
+    },
+    "preferred_action": "筛选会议通知和审稿相关来信",
+    "strength": 0.12924896623460352,
+    "last_updated_day": 106
+  },
+  "morning|work|参加一个在线技术社区的讨论，重点关注深度学习数据分析工具和技术在实验指导中的应用案例。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 77
+  },
+  "morning|home|阅读一本关于人工智能哲学或未来科技的书籍，放松身心，为下周的科研工作蓄力。": {
+    "action_counts": {
+      "继续处理手头工作": 3
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.2991808,
+    "last_updated_day": 76
+  },
+  "morning|work|与核心合作者进行线上研讨，重点讨论如何将深度学习数据分析方法应用于个性化实验指导方案的优化，并寻求他们的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 50
+  },
+  "afternoon|home|午餐后短暂散步，处理会议消息": {
+    "action_counts": {
+      "在校园道路上慢走放松思路": 1,
+      "查看手机上的会议通知": 3,
+      "语音记录散步时想到的研究点": 1,
+      "语音备注临时想到的研究点": 1,
+      "清理无关提醒保持信息简洁": 1,
+      "处理学生发来的临时请教消息": 1
+    },
+    "preferred_action": "查看手机上的会议通知",
+    "strength": 0.2549425164307661,
+    "last_updated_day": 103
+  },
+  "morning|work|继续阅读文献，重点关注深度学习数据分析方法与个性化实验指导方案的结合点，并撰写初步的方案框架。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 56
+  },
+  "morning|work|起床，阅读最新发表的深度学习论文摘要和技术社区讨论记录，关注数据分析方法的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "morning|work|在家中设置一个安静的阅读空间，利用文献管理工具整理上午阅读的资料，并开始构建深度学习数据分析与个性化实验指导方案的框架草稿。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "morning|work|在实验室，利用上午整理的框架草稿，结合实验数据，进行初步的模拟实验和数据分析，验证方案的可行性。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "afternoon|work|与研究生进行一对一的深入讨论，针对他们的实验问题，结合数据分析的思路，提供个性化的指导建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "afternoon|work|午餐后，利用时间进行头脑风暴，思考如何将数据可视化技术融入到实验指导中，提升学生的理解能力。": {
+    "action_counts": {
+      "思考如何将可视化结果与实验原理相结合。": 1
+    },
+    "preferred_action": "思考如何将可视化结果与实验原理相结合。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "afternoon|work|撰写研究生指导方案的详细文档，包括数据分析流程、实验设计建议和评估指标。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "afternoon|public|参与在线技术社区讨论，分享数据分析方法和实验指导的经验，并寻求其他研究者的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "evening|public|准备晚餐，同时浏览与AI伦理相关的最新新闻，思考技术发展带来的社会影响。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "evening|work|回顾今日的工作，整理笔记，并根据技术社区的反馈，完善数据分析与实验指导方案的框架。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "night|home|阅读一本关于人工智能哲学或未来社会发展的书籍，放松身心，为明日的工作做好准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 52
+  },
+  "morning|work|起床，快速浏览最新发表的深度学习论文摘要和AI技术社区的讨论，关注数据分析与实验设计方面的进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "morning|work|早餐后，在实验室进行模拟实验数据分析，尝试不同的深度学习模型参数设置，并记录详细的实验结果。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 88
+  },
+  "morning|public|深入分析上午模拟实验数据，重点关注数据偏差和模型优化空间，并记录关键发现，为个性化实验指导方案做准备。": {
+    "action_counts": {
+      "与同事讨论实验结果，寻求反馈。": 1
+    },
+    "preferred_action": "与同事讨论实验结果，寻求反馈。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "afternoon|home|与实验室学生进行一对一交流，讨论他们当前实验遇到的问题，并结合数据分析结果，提供个性化的实验指导建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "afternoon|work|午餐后，前往图书馆或研究中心，查阅相关文献，特别是关于数据可视化和实验结果解读方面的资料。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "afternoon|home|备课时，将深度学习数据分析方法与实验指导方案框架结合，设计更具互动性和实践性的实验环节，并准备案例分析。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "afternoon|work|参加线上技术社区讨论，重点关注数据分析工具和实验流程优化方面的最新进展，并积极提问和分享自己的研究经验。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "evening|work|晚餐后，在个人工作室或舒适的阅读角，利用数据分析软件整理上午的实验数据分析报告，并撰写初步的实验改进方案。": {
+    "action_counts": {
+      "打开数据分析软件": 1
+    },
+    "preferred_action": "打开数据分析软件",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "evening|work|继续阅读相关文献，并尝试用数据分析方法对现有实验数据进行重新解读，寻找新的研究方向和思路。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "night|work|回顾今日工作，整理笔记，为明日的实验指导和论文撰写做好准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 53
+  },
+  "morning|work|备课并开展研究生指导，结合深度学习数据分析方法，针对性地讲解实验设计和数据解读，强调伦理和隐私保护的重要性。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 58
+  },
+  "afternoon|home|起床，快速浏览 arXiv 和 AI 领域最新预印本，关注深度学习数据分析的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 55
+  },
+  "afternoon|work|备课并开展研究生指导": {
+    "action_counts": {
+      "准备与AI研究相关的演示材料": 1
+    },
+    "preferred_action": "准备与AI研究相关的演示材料",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 55
+  },
+  "afternoon|work|参加线上学术交流或技术社区讨论": {
+    "action_counts": {
+      "认真聆听前沿方法介绍": 1,
+      "关注同行提到的数据集与工具": 1
+    },
+    "preferred_action": "认真聆听前沿方法介绍",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 83
+  },
+  "morning|public|晚餐后，在个人工作室或舒适的阅读角，利用数据分析软件整理上午的实验数据分析报告，并撰写初步的实验改进方案。": {
+    "action_counts": {
+      "记录实验细节与结果": 1
+    },
+    "preferred_action": "记录实验细节与结果",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 56
+  },
+  "morning|work|与学生进行一对一的实验讲解，结合深度学习数据分析的思路，针对性地解答疑问，并鼓励他们探索新的实验方向。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 57
+  },
+  "evening|public|参加线上学术交流或技术社区讨论": {
+    "action_counts": {
+      "会后整理讨论笔记与联系人": 1
+    },
+    "preferred_action": "会后整理讨论笔记与联系人",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 57
+  },
+  "morning|home|起床，快速浏览最新发表的深度学习论文摘要和AI技术趋势报告，关注数据分析方法的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "morning|work|早餐后，利用时间梳理实验数据分析报告的逻辑框架，并思考如何将其与个性化实验指导方案相结合。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "morning|home|与合作者进行非正式的头脑风暴会议，讨论深度学习数据分析在实验指导中的应用，以及如何利用技术社区的反馈优化方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "morning|public|与学生和合作者进行一对一研讨，重点讨论个性化实验指导方案的初步框架，并根据他们的反馈调整方案细节。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "afternoon|work|午餐后，前往图书馆，查阅相关文献，特别是关于深度学习数据分析和个性化学习的案例研究。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "afternoon|work|备课时，将深度学习数据分析方法与个性化实验指导方案框架结合，设计更具针对性的实验指导内容和评估方式。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 104
+  },
+  "afternoon|work|参与在线技术社区讨论，分享实验数据分析的经验和技巧，并寻求同行对个性化实验指导方案的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "evening|home|晚餐后，前往当地科技馆或博物馆，参观与人工智能或数据科学相关的展览，激发灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "evening|work|回顾今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并思考如何将这些方法融入到实际的指导工作中。": {
+    "action_counts": {
+      "继续处理手头工作": 2
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.23824,
+    "last_updated_day": 95
+  },
+  "night|home|阅读一本关于人工智能伦理或未来科技的书籍，放松身心，为明天的工作做好准备。": {
+    "action_counts": {
+      "如果感到疲倦，可以暂停阅读，休息片刻。": 1
+    },
+    "preferred_action": "如果感到疲倦，可以暂停阅读，休息片刻。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 59
+  },
+  "morning|public|起床后，阅读最新的arXiv预印本和AI领域技术博客，关注深度学习数据分析的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "morning|public|早餐后，在实验室构建一个模拟实验环境，用于测试和验证数据分析方法。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "morning|work|深入分析上午模拟实验的数据，尝试不同的深度学习模型，并记录关键指标和结果。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 75
+  },
+  "afternoon|work|与团队成员进行非正式的头脑风暴，讨论个性化实验指导方案中数据分析方法的具体应用场景。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "afternoon|work|午餐后，在图书馆阅读关于教育心理学和个性化学习的文献，寻找灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "afternoon|work|利用Python编写脚本，自动化数据分析流程，并构建一个初步的个性化实验指导方案框架。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "afternoon|home|参与一个在线技术社区的讨论，分享数据分析方法在科研中的应用经验，并寻求反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "evening|work|晚餐后，在社区中心参加一个数据可视化工作坊，学习如何更有效地呈现实验结果。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "evening|public|回顾今天收集到的文献和技术社区讨论笔记，将数据分析方法与个性化指导方案框架结合，并思考如何将这些方法融入到实际的指导工作中。": {
+    "action_counts": {
+      "查阅相关案例，寻找灵感和借鉴。": 1
+    },
+    "preferred_action": "查阅相关案例，寻找灵感和借鉴。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "night|public|阅读一本关于人工智能伦理的书籍，思考技术发展带来的社会影响。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 60
+  },
+  "morning|work|备课时，将深度学习数据分析方法融入到研究生指导计划中，设计更具针对性的实验方案和数据分析练习。": {
+    "action_counts": {
+      "模拟学生提问": 1,
+      "准备演示幻灯片": 1
+    },
+    "preferred_action": "模拟学生提问",
+    "strength": 0.16512000000000002,
+    "last_updated_day": 99
+  },
+  "afternoon|public|晚餐后，在个人工作室或舒适的阅读角，利用数据分析软件整理上午的实验数据分析报告，并撰写初步的实验改进方案。": {
+    "action_counts": {
+      "导入上午实验数据": 1
+    },
+    "preferred_action": "导入上午实验数据",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 61
+  },
+  "morning|home|与核心合作者进行线上研讨，重点讨论如何将深度学习数据分析方法应用于个性化实验指导方案的优化，并寻求他们的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 62
+  },
+  "morning|work|前往Hangzhou Tech Labs": {
+    "action_counts": {
+      "乘坐metro移动": 18
+    },
+    "preferred_action": "乘坐metro移动",
+    "strength": 0.7993572823174422,
+    "last_updated_day": 107
+  },
+  "evening|work|整理今日工作，回顾实验数据分析过程，并为明天与学生讨论实验细节做充分准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 63
+  },
+  "morning|home|起床，快速浏览 arXiv 和 AI 领域最新预印本，关注深度学习数据分析的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 64
+  },
+  "morning|work|与学生和合作者进行结构化线上研讨，重点讨论如何根据不同学习风格和知识背景，定制个性化的实验指导方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 65
+  },
+  "morning|work|起床后，先浏览arXiv和相关技术社区的最新论文，关注深度学习数据分析和个性化实验指导方面的进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "morning|home|午餐后，前往附近的科技书店，浏览最新的 AI/机器学习书籍和技术期刊，寻找灵感和新的研究方向。": {
+    "action_counts": {
+      "在技术期刊区停留，浏览最新发表的文章。": 1
+    },
+    "preferred_action": "在技术期刊区停留，浏览最新发表的文章。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "morning|work|深入分析上午收集的实验数据，重点关注数据偏差和潜在误差，并记录关键发现，为论文框架做准备。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "afternoon|work|与学生进行一对一的实验指导，结合深度学习数据分析的思路，针对性地解决他们遇到的问题，并收集反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "afternoon|work|午餐后，在图书馆或咖啡馆阅读与个性化学习相关的书籍，拓展思路，寻找新的教学方法。": {
+    "action_counts": {
+      "思考书中观点与自身研究的联系。": 1
+    },
+    "preferred_action": "思考书中观点与自身研究的联系。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "afternoon|public|撰写研究生指导方案的初步框架，将深度学习数据分析方法融入其中，并考虑如何利用技术社区的资源进行辅助。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "afternoon|home|参加一个关于AI伦理或数据隐私的线上研讨会，与同行交流观点，拓展学术视野。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "evening|home|晚餐后，在个人工作室或舒适的阅读角，回顾今日收集到的文献和技术社区讨论笔记，整理思路。": {
+    "action_counts": {
+      "继续处理手头工作": 2
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.23824,
+    "last_updated_day": 106
+  },
+  "evening|work|利用数据可视化工具，将实验数据分析结果呈现为图表和报告，以便更好地理解和分享。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "night|public|阅读一篇关于最新深度学习算法的论文，并记录关键技术点，为未来的研究提供灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 66
+  },
+  "morning|home|起床，快速浏览arXiv和Nature等科研 preprint，关注最新的深度学习数据分析与个性化实验指导相关论文。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "morning|work|早餐后，在实验室搭建一个模拟实验环境，测试新的数据分析算法在特定数据集上的效果。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "morning|work|分析上午模拟实验数据，记录关键指标，并与之前的实验结果进行对比，寻找改进方向。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "afternoon|public|与研究生进行一对一的实验方案讨论，重点关注他们遇到的数据分析难题，并结合最新的深度学习方法提供建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "afternoon|public|午餐后，前往附近的科技社区，参加一个关于AI伦理的非正式讨论，拓展学术视野。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "afternoon|work|利用文献管理工具，整理今天收集到的深度学习数据分析和个性化实验指导相关文献，并撰写读书笔记。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "afternoon|home|参与线上技术社区的深度学习数据分析讨论，分享自己的实验经验和想法，并学习其他研究者的解决方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "evening|work|晚餐后，在实验室整理实验数据分析报告，并根据技术社区讨论的反饋，制定一份初步的实验改进方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "evening|home|阅读最新的深度学习论文，并尝试用代码实现其中的关键算法，加深对理论的理解。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "night|home|回顾今日工作，整理明日实验计划，确保实验数据分析报告的完整性和可读性。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 67
+  },
+  "morning|home|阅读一本关于人工智能伦理或未来科技的书籍，放松身心，为明天的工作做好准备。": {
+    "action_counts": {
+      "避免在睡前阅读过于刺激或复杂的材料。": 1
+    },
+    "preferred_action": "避免在睡前阅读过于刺激或复杂的材料。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 68
+  },
+  "afternoon|home|起床，回顾昨天收集的文献笔记，并快速浏览AI领域最新技术趋势，关注深度学习数据分析与个性化实验指导的交叉点。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 68
+  },
+  "morning|home|回顾今日工作，整理明日实验计划，确保实验数据分析报告的完整性和可读性。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 69
+  },
+  "morning|home|回顾今日工作，整理思路，重点总结数据分析和实验指导方面的发现，并为下周工作做计划。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 71
+  },
+  "morning|work|与合作者进行非正式的头脑风暴会议，讨论深度学习数据分析在实验指导中的应用，以及如何利用技术社区的反馈优化方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 71
+  },
+  "morning|public|起床，一杯黑咖啡，快速浏览 arXiv 和 AI 领域最新技术报告，重点关注深度学习数据分析与个性化实验指导相关进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "morning|public|在家完成一份关于深度学习数据分析方法与个性化实验指导方案的初步框架草稿，并进行逻辑梳理。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "morning|public|实验室时间：利用上午时间，将数据分析报告中的关键发现与个性化实验指导方案框架进行对比，寻找结合点，并思考如何将数据驱动的洞察融入指导实践。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "afternoon|public|与研究团队成员进行非正式的头脑风暴，讨论数据分析方法在个性化实验指导中的应用，并寻求他们对方案框架的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "afternoon|work|午餐后，前往附近的科技书店，浏览最新的 AI/机器学习书籍和技术文献，并记录关键信息。": {
+    "action_counts": {
+      "在书店入口处，快速扫描最新出版的AI/ML书籍。": 1
+    },
+    "preferred_action": "在书店入口处，快速扫描最新出版的AI/ML书籍。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "afternoon|work|利用书店的安静环境，进一步完善方案框架，并撰写一份关于数据分析方法与个性化实验指导结合的初步研究计划。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "afternoon|home|参加一个线上 AI 伦理讨论会，关注技术发展带来的社会影响，并思考如何在研究生指导中融入伦理考量。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "evening|work|前往Hangzhou Tech Labs": {
+    "action_counts": {
+      "乘坐metro移动": 4
+    },
+    "preferred_action": "乘坐metro移动",
+    "strength": 0.355246336,
+    "last_updated_day": 101
+  },
+  "night|home|阅读一篇关于 AI 趋势的深度分析文章，并记录关键观点，为未来的研究提供灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 73
+  },
+  "morning|work|利用文献管理工具，整理今天收集到的深度学习数据分析和个性化实验指导相关文献，并撰写读书笔记。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "afternoon|work|与学生和合作者进行非正式的讨论，重点是分享数据分析的挑战和解决方案，并寻求他们对个性化实验指导方案的反馈。鼓励他们提出新的想法和建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "afternoon|public|午餐后，在附近的科技书店浏览最新的AI/机器学习书籍和技术报告，寻找灵感和新的研究方向。同时，关注技术社区的最新动态。": {
+    "action_counts": {
+      "关注行业领袖和专家在社交媒体上的动态。": 1
+    },
+    "preferred_action": "关注行业领袖和专家在社交媒体上的动态。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "afternoon|work|备课时，将深度学习数据分析方法与个性化实验指导方案框架结合，设计更具挑战性和针对性的实验项目。考虑引入一些新兴的AI工具和技术，例如强化学习或生成式模型。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "afternoon|work|参与在线技术社区的讨论，分享自己的研究成果和数据分析经验，并积极参与其他研究者的讨论。重点关注与个性化实验指导相关的技术和方法。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "evening|home|晚餐后，在实验室的白板上绘制实验流程图，并思考如何利用数据分析方法优化实验流程。同时，整理采购的食材，为周末的烹饪做准备。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "evening|home|继续阅读相关文献，并尝试用代码实现个性化实验指导方案的初步原型。重点关注如何利用机器学习算法预测学生的学习进度和需求。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "night|home|阅读一本关于人工智能伦理的书籍，思考技术发展与社会责任的关系，并为未来的研究方向提供更宏观的视角。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 74
+  },
+  "morning|home|阅读最新的深度学习论文，并尝试用代码实现其中的关键算法，加深对理论的理解。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 75
+  },
+  "morning|home|晚餐后，在个人工作室或舒适的阅读角，利用数据分析软件整理上午的实验数据分析报告，并撰写初步的实验改进方案。": {
+    "action_counts": {
+      "提出实验改进建议": 1
+    },
+    "preferred_action": "提出实验改进建议",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 76
+  },
+  "morning|work|阅读一篇关于最新深度学习算法的论文，并记录关键技术点，为未来的研究提供灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 78
+  },
+  "morning|public|阅读一本关于人工智能哲学或未来社会发展的书籍，放松身心，为明日的工作做好准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 78
+  },
+  "morning|work|起床，快速浏览arXiv和Nature等科研 preprint，关注最新的深度学习数据分析与个性化实验指导相关论文。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 79
+  },
+  "morning|work|起床，先快速浏览 arXiv 和技术博客，关注深度学习数据分析和个性化实验指导的最新进展。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 103
+  },
+  "morning|work|早餐后，在实验室整理上午收集到的实验数据，并尝试用 Python 脚本进行初步的数据分析，寻找潜在的瓶颈。": {
+    "action_counts": {
+      "分析数据分布，寻找异常值和潜在偏差。": 1
+    },
+    "preferred_action": "分析数据分布，寻找异常值和潜在偏差。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "morning|work|深入分析实验数据分析报告，重点关注数据偏差和模型优化空间，并记录关键发现，为后续论文框架构建做准备。": {
+    "action_counts": {
+      "在报告中划出数据偏差区域。": 1
+    },
+    "preferred_action": "在报告中划出数据偏差区域。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "morning|work|与研究团队成员进行一对一会议，重点讨论数据分析方法和个性化实验指导方案的结合点，寻求新的思路和建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "afternoon|public|午餐后，在附近书店浏览最新出版的 AI/数据科学书籍，寻找灵感，并思考如何将这些知识融入到研究生指导中。": {
+    "action_counts": {
+      "思考如何将书中的知识应用到自己的研究中。": 1
+    },
+    "preferred_action": "思考如何将书中的知识应用到自己的研究中。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "afternoon|public|备课时，将深度学习数据分析方法与个性化实验指导方案框架结合，设计更具针对性的实验指导流程，并考虑使用数据可视化工具辅助讲解。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "evening|work|参与在线技术社区讨论，重点关注深度学习数据分析的最新技术趋势和应用案例，并尝试提出自己的见解。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "evening|public|晚餐后，前往社区农场采购新鲜的有机蔬菜和水果，为周末准备健康营养的食材。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "evening|public|回顾今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并撰写初步的方案框架草稿。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "night|home|阅读一篇关于 AI 伦理的论文，思考技术发展与社会责任之间的关系，并为未来的研究方向提供启发。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 80
+  },
+  "morning|work|起床，一边喝咖啡，一边快速浏览arXiv和Medium上的最新AI论文和技术博客，重点关注深度学习数据分析与个性化实验指导相关内容。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "morning|work|整理上午的实验数据分析报告，并根据技术社区讨论的反饋，制定一份初步的实验改进方案，重点关注如何利用深度学习技术提升实验数据的质量。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "morning|work|高校实验室：利用Python和R进行实验数据分析，尝试构建深度学习模型，寻找实验数据偏差的潜在原因，并记录分析过程中的关键发现。": {
+    "action_counts": {
+      "记录实验结果和分析过程。": 1
+    },
+    "preferred_action": "记录实验结果和分析过程。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "afternoon|work|与学生和合作者开组会，重点讨论如何将深度学习数据分析方法应用于个性化实验指导，分享当前研究中遇到的挑战和解决方案。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 91
+  },
+  "afternoon|home|午餐后，前往附近的科技馆或博物馆，参观与人工智能相关的展览，寻找灵感，并思考如何将这些技术融入到研究生指导方案中。": {
+    "action_counts": {
+      "阅读展板上的文字，深入了解人工智能的应用。": 1
+    },
+    "preferred_action": "阅读展板上的文字，深入了解人工智能的应用。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "afternoon|home|备课并开展研究生指导，结合数据分析报告和AI伦理考量，设计更具针对性的实验指导方案，并鼓励学生探索新的数据分析方法。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "afternoon|public|参加线上AI伦理论坛或技术社区讨论，重点关注数据偏差、模型可解释性和公平性等议题，并积极参与讨论，分享自己的观点和经验。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "evening|public|晚餐后，前往当地一家氛围轻松的咖啡馆，阅读最新的AI技术趋势报告，并尝试将报告中的知识与当前研究相结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "evening|public|整理上午的实验数据分析报告，并根据技术社区讨论的反饋，制定一份初步的实验改进方案，重点关注如何利用深度学习技术提升实验数据的质量。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "night|home|阅读一本关于人工智能哲学或未来社会影响的书籍，放松心情，为第二天的工作做好准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 81
+  },
+  "morning|work|与学生进行一对一的实验指导，结合深度学习数据分析的思路，针对性地解决他们遇到的问题，并收集反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 82
+  },
+  "afternoon|work|阅读一篇关于最新深度学习算法的论文，并记录关键技术点，为未来的研究提供灵感。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 85
+  },
+  "morning|public|深入分析上午收集的实验数据，尝试利用深度学习模型识别潜在的实验偏差和改进点，并记录分析结果。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 83
+  },
+  "morning|work|起床，一杯浓咖啡，快速浏览Nature、arXiv等科研 preprint 服务器，关注AI领域最新进展，筛选与深度学习数据分析相关的论文和技术讨论。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 84
+  },
+  "morning|work|午餐后，在图书馆或咖啡馆阅读与个性化学习相关的书籍，拓展思路，寻找新的教学方法。": {
+    "action_counts": {
+      "查找相关文献，拓展阅读范围。": 1
+    },
+    "preferred_action": "查找相关文献，拓展阅读范围。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 84
+  },
+  "morning|home|回顾今天收集到的文献和技术社区讨论笔记，将数据分析方法与个性化指导方案框架结合，并思考如何将这些方法融入到实际的指导工作中。": {
+    "action_counts": {
+      "绘制概念图，连接数据分析方法和个性化指导方案框架。": 1
+    },
+    "preferred_action": "绘制概念图，连接数据分析方法和个性化指导方案框架。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 85
+  },
+  "morning|work|晚餐后，在社区中心参加一个数据可视化工作坊，学习如何更有效地呈现实验结果。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 86
+  },
+  "morning|work|午餐后，在附近的科技书店浏览最新的AI/机器学习书籍和技术报告，寻找灵感和新的研究方向。同时，关注技术社区的最新动态。": {
+    "action_counts": {
+      "仔细翻阅AI机器学习书籍，寻找最新技术趋势。": 1
+    },
+    "preferred_action": "仔细翻阅AI机器学习书籍，寻找最新技术趋势。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 86
+  },
+  "morning|public|起床，一杯浓咖啡，快速浏览最新发表的深度学习论文摘要和AI技术社区动态，重点关注数据分析与个性化实验指导相关内容。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 102
+  },
+  "afternoon|public|与学生和合作者进行非正式的头脑风暴，探讨深度学习数据分析在个性化实验指导中的应用，重点讨论如何将数据分析结果转化为可操作的指导建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 87
+  },
+  "afternoon|home|午餐后，在附近的科技书店浏览最新出版的AI技术书籍和研究报告，寻找灵感和新的思路。同时，整理会议消息，筛选与深度学习数据分析相关的讨论。": {
+    "action_counts": {
+      "在书店的咖啡区，一边喝咖啡一边阅读。": 1
+    },
+    "preferred_action": "在书店的咖啡区，一边喝咖啡一边阅读。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 87
+  },
+  "afternoon|work|备课时，将深度学习数据分析方法与个性化实验指导方案框架结合，设计更具针对性的实验指导活动，并考虑如何利用数据可视化工具辅助教学。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 87
+  },
+  "evening|work|参加线上技术社区讨论，重点关注深度学习数据分析在科研领域的应用案例，并积极参与讨论，分享自己的想法和经验。": {
+    "action_counts": {
+      "浏览聊天区，了解当前讨论热点。": 1
+    },
+    "preferred_action": "浏览聊天区，了解当前讨论热点。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 87
+  },
+  "evening|work|晚餐后，前往当地的科技创新中心，参观最新的AI技术展览，并与相关领域的专家进行交流，寻求合作机会。": {
+    "action_counts": {
+      "寻找目标专家，准备好自我介绍和研究方向。": 1
+    },
+    "preferred_action": "寻找目标专家，准备好自我介绍和研究方向。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 87
+  },
+  "evening|work|整理今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并撰写初步的方案框架草稿。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 87
+  },
+  "night|home|阅读与深度学习相关的最新研究论文，并思考如何将这些研究成果融入到未来的实验指导工作中。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 87
+  },
+  "morning|work|起床后，快速浏览arXiv和Semantic Scholar上的最新论文，重点关注深度学习数据分析与可视化方面的突破。同时，整理并回顾昨天收集到的数据可视化工具和技术博客链接。": {
+    "action_counts": {
+      "整理昨天收集的数据可视化工具链接": 1
+    },
+    "preferred_action": "整理昨天收集的数据可视化工具链接",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 88
+  },
+  "morning|work|高校实验室：深入分析上午收集的实验数据，尝试利用新的数据可视化库（如Altair或Plotly）进行更深入的探索，并记录关键发现和潜在的论文方向。": {
+    "action_counts": {
+      "打开Python IDE，加载实验数据文件。": 1
+    },
+    "preferred_action": "打开Python IDE，加载实验数据文件。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 88
+  },
+  "afternoon|public|与学生和合作者开组会，重点讨论深度学习数据分析方法在实验设计和数据解释中的应用，分享数据可视化技巧，并探讨如何将这些方法融入到研究生指导中。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 88
+  },
+  "afternoon|home|午餐后，前往城市图书馆或专门的数据科学工作坊，阅读最新的数据可视化相关书籍和案例研究，并尝试动手实践一些新的可视化方法。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 88
+  },
+  "afternoon|work|备课并开展研究生指导，重点讲解深度学习数据分析方法与个性化实验指导方案的结合点，并提供实际案例分析。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 99
+  },
+  "afternoon|work|参加线上学术交流或技术社区讨论，与专家交流合作，重点探讨深度学习数据分析方法在科研中的应用，并寻求关于个性化实验指导方案的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 88
+  },
+  "evening|work|晚餐后，前往一家氛围轻松的咖啡馆，整理今天收集到的文献和技术社区讨论笔记，并开始将深度学习数据分析方法与个性化实验指导方案框架结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 88
+  },
+  "evening|home|继续阅读文献，修改论文或项目申请书，重点完善数据可视化部分，并尝试用代码实现一些初步的可视化方案。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 88
+  },
+  "morning|home|回顾今日工作，整理笔记，为明日的实验指导和论文撰写做好准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 89
+  },
+  "morning|public|前往Central Parking Lot": {
+    "action_counts": {
+      "乘坐metro移动": 2
+    },
+    "preferred_action": "乘坐metro移动",
+    "strength": 0.23824,
+    "last_updated_day": 90
+  },
+  "morning|work|回顾今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并撰写初步的方案框架草稿。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 90
+  },
+  "morning|public|起床，阅读最新发表的深度学习论文摘要和技术社区讨论记录，关注数据分析方法的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 91
+  },
+  "evening|work|晚餐，顺路采购生活用品后回家": {
+    "action_counts": {
+      "边吃边回顾当天研究进展": 1
+    },
+    "preferred_action": "边吃边回顾当天研究进展",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 91
+  },
+  "morning|public|午餐后，前往图书馆，查阅相关文献，特别是关于深度学习数据分析和个性化学习的案例研究。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 92
+  },
+  "morning|public|起床，一杯浓咖啡，快速浏览Nature、arXiv等科研 preprint 服务器，关注AI领域最新进展，筛选与深度学习数据分析相关的论文和技术讨论。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 93
+  },
+  "morning|public|起床，快速浏览 arXiv 和 Nature 等学术期刊，关注深度学习和数据分析领域的最新论文。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 98
+  },
+  "morning|work|高校实验室：利用 Python 脚本自动化实验数据清洗和初步分析，重点关注数据异常检测和特征提取，为论文构建数据分析框架做准备。": {
+    "action_counts": {
+      "查阅相关学术论文": 1
+    },
+    "preferred_action": "查阅相关学术论文",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "afternoon|work|与学生和合作者开组会，重点讨论个性化实验指导方案的初步框架，分享深度学习数据分析方法在实验设计和结果解读中的应用。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "afternoon|home|午餐，阅读关于 AI 伦理和社会影响的报告，思考技术创新与社会责任的平衡。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "afternoon|work|备课并开展研究生指导，结合深度学习数据分析的案例，讲解实验设计和数据解读的策略，鼓励学生探索创新性的实验方法。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "afternoon|work|参加线上技术社区讨论，重点关注深度学习数据分析工具和算法的最新进展，并尝试将这些技术应用于自己的研究中。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "evening|public|晚餐，在社区书店浏览科技类书籍，寻找灵感，并购买一本关于数据可视化的书籍。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "evening|work|利用 Jupyter Notebook 整理实验数据分析报告，并结合技术社区讨论的反饋，优化数据可视化和结果呈现方式。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "evening|work|继续阅读深度学习相关文献，并尝试用不同的方法将理论知识与实际实验相结合，完善个性化实验指导方案的框架。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "night|public|阅读一本关于人工智能未来发展趋势的科普书籍，放松心情，为新的一周做准备。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 94
+  },
+  "morning|home|深入分析昨天实验数据，尝试使用深度学习模型识别潜在的实验偏差，并记录分析过程中的关键发现。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 95
+  },
+  "afternoon|work|与研究生进行一对一的实验方案讨论，重点关注他们遇到的数据分析难题，并分享最新的深度学习数据处理技巧。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 95
+  },
+  "afternoon|public|午餐后，阅读关于个性化学习路径的文献，思考如何将数据分析结果应用于研究生指导，优化实验指导方案。": {
+    "action_counts": {
+      "分析现有实验指导方案的优缺点。": 1
+    },
+    "preferred_action": "分析现有实验指导方案的优缺点。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 95
+  },
+  "afternoon|home|撰写一份关于深度学习数据分析方法与个性化实验指导方案框架的初步草稿，并尝试用图表和流程图清晰地表达。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 95
+  },
+  "afternoon|work|参与一个在线技术社区的讨论，分享自己的数据分析经验，并向其他研究者寻求关于个性化实验指导的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 95
+  },
+  "evening|home|晚餐后，前往当地的科技馆或博物馆，参观与人工智能相关的展览，激发新的研究灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 95
+  },
+  "night|home|阅读一本关于科学史或哲学方面的书籍，放松心情，为新的一周做准备。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 95
+  },
+  "morning|home|备课时，将深度学习数据分析方法与个性化实验指导方案框架结合，设计更具针对性的实验指导流程，并考虑使用数据可视化工具辅助讲解。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 96
+  },
+  "afternoon|home|晚餐后，前往一家氛围轻松的咖啡馆，整理今天收集到的文献和技术社区讨论笔记，并开始将深度学习数据分析方法与个性化实验指导方案框架结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 96
+  },
+  "evening|work|起床，先快速浏览 arXiv 和技术博客，关注深度学习数据分析和个性化实验指导的最新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 96
+  },
+  "morning|public|起床，快速浏览最新发表的深度学习论文摘要和AI技术趋势报告，关注数据分析方法的新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 97
+  },
+  "morning|work|午餐后，阅读关于个性化学习路径的文献，思考如何将数据分析结果应用于研究生指导，优化实验指导方案。": {
+    "action_counts": {
+      "绘制思维导图，梳理个性化指导方案的框架。": 1
+    },
+    "preferred_action": "绘制思维导图，梳理个性化指导方案的框架。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 97
+  },
+  "afternoon|work|起床，快速浏览 arXiv 和相关技术博客，关注深度学习数据分析领域的最新进展。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 97
+  },
+  "evening|work|起床，一杯浓咖啡，快速浏览Nature、arXiv等科研 preprint 服务器，关注AI领域最新进展，筛选与深度学习数据分析相关的论文和技术讨论。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 97
+  },
+  "morning|work|深入分析昨天实验数据，尝试使用深度学习模型识别潜在的实验偏差，并记录分析过程中的关键发现。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 98
+  },
+  "evening|public|与学生进行一对一的实验指导，结合深度学习数据分析的思路，针对性地解决他们遇到的问题，并收集反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 98
+  },
+  "evening|home|参加技术社区的在线讨论，重点关注基于深度学习的实验数据分析方法，并尝试将其与当前研究项目相结合。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 99
+  },
+  "evening|work|深入分析上午收集的实验数据，尝试利用深度学习模型识别潜在的实验偏差和改进点，并记录分析结果。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 100
+  },
+  "morning|work|参与在线技术社区讨论，重点关注深度学习数据分析的最新技术趋势和应用案例，并尝试提出自己的见解。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 101
+  },
+  "morning|public|阅读一篇关于最新数据分析技术的论文，并记录下关键思路和实验方法，为后续研究工作做准备。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 101
+  },
+  "morning|work|深入分析上午收集到的实验数据，并结合深度学习数据分析方法，构建个性化实验指导方案的初步框架。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 101
+  },
+  "afternoon|home|与研究团队成员进行非正式讨论，分享数据分析的初步发现，并寻求他们的反馈和建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 101
+  },
+  "afternoon|home|准备一份营养丰富的午餐，并利用午休时间阅读关于教育心理学和个性化学习的文献。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 101
+  },
+  "afternoon|work|与研究生进行一对一指导，重点讨论他们当前面临的数据分析挑战，并尝试将深度学习方法应用于解决这些问题。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 101
+  },
+  "afternoon|work|参加一个线上技术社区的讨论，重点关注深度学习在实验设计和数据分析中的应用，并提出自己的见解。": {
+    "action_counts": {
+      "继续当前活动": 2
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.23824,
+    "last_updated_day": 104
+  },
+  "night|home|阅读一本关于人工智能伦理的书籍，思考技术发展对社会的影响，并为未来的研究方向提供灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 101
+  },
+  "afternoon|work|与学生进行一对一研讨，重点讨论他们当前实验遇到的问题，并结合最新的深度学习数据分析方法，提供个性化的实验指导建议。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 102
+  },
+  "afternoon|work|午餐后，前往图书馆，阅读关于人工智能伦理和未来社会影响的专业书籍，思考技术发展与社会责任的平衡。": {
+    "action_counts": {
+      "打开书籍，翻阅目录，快速浏览章节标题。": 1
+    },
+    "preferred_action": "打开书籍，翻阅目录，快速浏览章节标题。",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 102
+  },
+  "afternoon|work|备课，设计更具互动性和启发性的研究生课程，尝试引入基于深度学习的数据分析案例，提升学生的实践能力。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 102
+  },
+  "afternoon|work|参加线上技术社区的深度学习数据分析讨论，积极提问和分享自己的研究思路，并尝试将讨论中的方法应用于当前的研究项目中。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 102
+  },
+  "evening|public|晚餐后，前往当地的科技创新中心，参观最新的AI技术展览，并与相关领域的专家进行非正式交流。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 102
+  },
+  "evening|work|回到家中，整理今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并撰写初步的方案草稿。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 102
+  },
+  "night|home|睡前，听一些关于科学史或哲学方面的播客，放松大脑，激发新的思考。": {
+    "action_counts": {
+      "睡觉": 1
+    },
+    "preferred_action": "睡觉",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 102
+  },
+  "morning|work|继续阅读相关文献，并尝试用代码实现个性化实验指导方案的初步原型。重点关注如何利用机器学习算法预测学生的学习进度和需求。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 103
+  },
+  "morning|work|备课时，将深度学习数据分析方法与实验指导方案框架结合，设计更具互动性和实践性的实验环节，并准备案例分析。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 103
+  },
+  "afternoon|home|回顾今日收集到的文献和讨论笔记，将 3D 打印模型与数据分析方案框架结合，思考如何将其应用于实际的指导工作中。": {
+    "action_counts": {
+      "继续处理手头工作": 1
+    },
+    "preferred_action": "继续处理手头工作",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 103
+  },
+  "evening|public|整理今天收集到的文献和技术社区讨论笔记，将深度学习数据分析方法与个性化实验指导方案框架结合，并撰写初步的方案框架草稿。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 104
+  },
+  "evening|public|准备一份营养丰富的午餐，并利用午休时间阅读关于教育心理学和个性化学习的文献。": {
+    "action_counts": {
+      "发呆": 1
+    },
+    "preferred_action": "发呆",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 104
+  },
+  "evening|work|与学生和合作者开组会，重点讨论个性化实验指导方案的初步框架，分享深度学习数据分析方法在实验设计和结果解读中的应用。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 104
+  },
+  "morning|home|起床，快速浏览 arXiv 和 Nature 等预印本，关注 AI/机器学习领域最新进展，并整理今日待办清单。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 105
+  },
+  "afternoon|home|备课时，将深度学习数据分析方法与个性化实验指导方案框架结合，设计更具针对性的实验指导内容和评估方式。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 105
+  },
+  "evening|public|起床后，快速浏览arXiv和Semantic Scholar上的最新论文，重点关注深度学习数据分析与可视化方面的突破。同时，整理并回顾昨天收集到的数据可视化工具和技术博客链接。": {
+    "action_counts": {
+      "调整屏幕亮度，减少视觉疲劳": 1
+    },
+    "preferred_action": "调整屏幕亮度，减少视觉疲劳",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 105
+  },
+  "evening|work|阅读一篇关于最新深度学习算法的论文，并记录关键技术点，为未来的研究提供灵感。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 105
+  },
+  "morning|home|参加线上学术交流或技术社区讨论，与专家交流合作，重点探讨深度学习数据分析方法在科研中的应用，并寻求关于个性化实验指导方案的反馈。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 106
+  },
+  "afternoon|home|回顾昨天收集到的文献和技术社区讨论笔记，重点关注深度学习数据分析方法与个性化实验指导方案框架的结合点，并尝试用思维导图梳理思路。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 106
+  },
+  "evening|work|在家中设置一个安静的阅读空间，利用文献管理工具整理上午阅读的资料，并开始构建深度学习数据分析与个性化实验指导方案的框架草稿。": {
+    "action_counts": {
+      "继续当前活动": 1
+    },
+    "preferred_action": "继续当前活动",
+    "strength": 0.17200000000000001,
+    "last_updated_day": 107
   }
 }

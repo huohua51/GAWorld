@@ -44,15 +44,15 @@ CONFIG = {
             },
         },
         "routing": {
-            "default": "openai_gpt",
+            "default": "ollama_local",
             "tasks": {
-                "schedule": "openai_gpt",
+                "schedule": "ollama_local",
             },
         },
     },
     # Simulation
-    "agent_ids": [53],
-    "sim_days": 1,
+    "agent_ids": [43],
+    "sim_days": 50,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,

@@ -3456,6 +3456,15 @@ def social_influence(agent, agents_by_id):
 # =========================================================
 # 状态更新
 # =========================================================
+def _bounded_state_target(base, *terms, lo=0.08, hi=0.92):
+    return float(np.clip(base + sum(float(term) for term in terms), lo, hi))
+
+
+def _apply_state_tendency(state, key, target, rate, noise_lo, noise_hi):
+    current = float(state.get(key, target))
+    state[key] = current + rate * (target - current) + random.uniform(noise_lo, noise_hi)
+
+
 def update_state(agent):
     s = agent["state"]
     s.setdefault("policy_sensitivity", 0.5)
@@ -3468,19 +3477,86 @@ def update_state(agent):
         s.setdefault("hunger", 0.25)
         s.setdefault("social_need", 0.40)
 
-    s["emotion"] += 0.05 * s["econ_security"] - 0.07 * s["stress"] + random.uniform(-0.02, 0.02)
-    s["stress"] += 0.03 * (1 - s["econ_security"]) + random.uniform(-0.02, 0.03)
-    s["econ_security"] += 0.02 * (1 - s["stress"]) - 0.015 * s["platform_dependence"] + random.uniform(-0.015, 0.02)
-    s["city_identity"] += 0.03 * (s["emotion"] - 0.5) - 0.02 * s["mobility_intent"] + random.uniform(-0.01, 0.01)
-    s["policy_sensitivity"] += 0.02 * (s["stress"] - 0.5) + random.uniform(-0.01, 0.01)
-    s["platform_dependence"] += 0.02 * (1 - s["econ_security"]) + random.uniform(-0.01, 0.01)
-    s["risk_preference"] += 0.02 * (s["emotion"] - s["stress"]) + random.uniform(-0.01, 0.01)
-    s["voice_propensity"] += 0.02 * (s["city_identity"] - 0.5) + 0.01 * (s["emotion"] - 0.5) + random.uniform(-0.01, 0.01)
-    s["mobility_intent"] += 0.03 * (s["stress"] - s["city_identity"]) + random.uniform(-0.01, 0.01)
+    energy = float(s.get("energy", 0.75))
+    hunger = float(s.get("hunger", 0.25))
+    social_need = float(s.get("social_need", 0.40))
+    need_strain = float(np.clip(0.42 * hunger + 0.38 * (1 - energy) + 0.20 * social_need, 0.0, 1.0))
+
+    emotion_target = _bounded_state_target(
+        0.56,
+        0.22 * (s["econ_security"] - 0.5),
+        -0.30 * (s["stress"] - 0.5),
+        0.16 * (s["city_identity"] - 0.5),
+        -0.15 * (need_strain - 0.5),
+        -0.08 * (s["mobility_intent"] - 0.5),
+    )
+    stress_target = _bounded_state_target(
+        0.46,
+        0.30 * (0.5 - s["econ_security"]),
+        0.20 * (s["platform_dependence"] - 0.5),
+        0.22 * (need_strain - 0.5),
+        -0.18 * (s["emotion"] - 0.5),
+        -0.10 * (s["city_identity"] - 0.5),
+    )
+    econ_target = _bounded_state_target(
+        0.53,
+        -0.22 * (s["stress"] - 0.5),
+        -0.18 * (s["platform_dependence"] - 0.5),
+        0.10 * (s["risk_preference"] - 0.5),
+        -0.10 * (need_strain - 0.5),
+    )
+    city_target = _bounded_state_target(
+        0.58,
+        0.24 * (s["emotion"] - 0.5),
+        -0.18 * (s["mobility_intent"] - 0.5),
+        -0.10 * (s["stress"] - 0.5),
+    )
+    policy_target = _bounded_state_target(
+        0.52,
+        0.16 * (s["stress"] - 0.5),
+        0.10 * (s["voice_propensity"] - 0.5),
+        -0.06 * (s["emotion"] - 0.5),
+    )
+    platform_target = _bounded_state_target(
+        0.52,
+        0.20 * (0.5 - s["econ_security"]),
+        0.12 * (s["stress"] - 0.5),
+        -0.10 * (s["city_identity"] - 0.5),
+    )
+    risk_target = _bounded_state_target(
+        0.48,
+        0.18 * (s["emotion"] - 0.5),
+        -0.20 * (s["stress"] - 0.5),
+        0.10 * (s["econ_security"] - 0.5),
+    )
+    voice_target = _bounded_state_target(
+        0.50,
+        0.20 * (s["city_identity"] - 0.5),
+        0.10 * (s["emotion"] - 0.5),
+        0.10 * (s["policy_sensitivity"] - 0.5),
+        -0.12 * (s["stress"] - 0.5),
+    )
+    mobility_target = _bounded_state_target(
+        0.42,
+        0.22 * (s["stress"] - 0.5),
+        -0.24 * (s["city_identity"] - 0.5),
+        0.14 * (0.5 - s["econ_security"]),
+        -0.08 * (s["emotion"] - 0.5),
+    )
+
+    _apply_state_tendency(s, "emotion", emotion_target, 0.18, -0.012, 0.012)
+    _apply_state_tendency(s, "stress", stress_target, 0.16, -0.012, 0.012)
+    _apply_state_tendency(s, "econ_security", econ_target, 0.14, -0.010, 0.010)
+    _apply_state_tendency(s, "city_identity", city_target, 0.12, -0.008, 0.008)
+    _apply_state_tendency(s, "policy_sensitivity", policy_target, 0.12, -0.008, 0.008)
+    _apply_state_tendency(s, "platform_dependence", platform_target, 0.13, -0.008, 0.008)
+    _apply_state_tendency(s, "risk_preference", risk_target, 0.12, -0.008, 0.008)
+    _apply_state_tendency(s, "voice_propensity", voice_target, 0.12, -0.008, 0.008)
+    _apply_state_tendency(s, "mobility_intent", mobility_target, 0.14, -0.008, 0.008)
     if HUMAN_REALISM_ENABLED:
-        s["energy"] += random.uniform(-0.01, 0.01)
-        s["hunger"] += random.uniform(-0.01, 0.01)
-        s["social_need"] += random.uniform(-0.01, 0.01)
+        _apply_state_tendency(s, "energy", 0.72, 0.08, -0.004, 0.004)
+        _apply_state_tendency(s, "hunger", 0.35, 0.10, -0.003, 0.003)
+        _apply_state_tendency(s, "social_need", 0.45, 0.08, -0.004, 0.004)
 
     for k in s:
         s[k] = float(np.clip(s[k], 0, 1))
