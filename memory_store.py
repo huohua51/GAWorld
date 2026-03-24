@@ -310,6 +310,33 @@ def _extract_keywords(text):
     return [t.lower() for t in tokens]
 
 
+_POSITIVE_MEMORY_HINTS = (
+    "顺利",
+    "满意",
+    "开心",
+    "轻松",
+    "完成",
+    "进展",
+    "收获",
+    "支持",
+    "认可",
+    "放松",
+)
+
+_NEGATIVE_MEMORY_HINTS = (
+    "失败",
+    "挫败",
+    "焦虑",
+    "压力",
+    "冲突",
+    "不满",
+    "拖延",
+    "疲惫",
+    "后悔",
+    "麻烦",
+)
+
+
 def _recent_unique(items, max_items):
     if not items:
         return []
@@ -563,8 +590,21 @@ def _memory_action_bias(action, memories):
         text = item["text"] if isinstance(item, dict) else str(item)
         mem_tokens = set(_extract_keywords(text))
         overlap = len(act_tokens & mem_tokens)
-        if overlap:
-            score += 0.15 * overlap
+        if not overlap:
+            action_text = str(action).strip()
+            memory_text = str(text).strip()
+            if action_text and action_text in memory_text:
+                overlap = 1
+        if not overlap:
+            continue
+        positive = sum(1 for hint in _POSITIVE_MEMORY_HINTS if hint in text)
+        negative = sum(1 for hint in _NEGATIVE_MEMORY_HINTS if hint in text)
+        bias = 0.10 * overlap
+        if positive > negative:
+            bias += 0.06 * overlap
+        elif negative > positive:
+            bias -= 0.55 * overlap
+        score += bias
     return score
 
 

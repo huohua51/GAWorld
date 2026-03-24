@@ -1375,6 +1375,9 @@ REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE = bool(
 )
 HUMAN_REALISM_CONFIG = CONFIG.get("human_realism", {})
 HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
+HUMAN_MEMORY_CONFIG = HUMAN_REALISM_CONFIG.get("memory", {}) if HUMAN_REALISM_ENABLED else {}
+RECALL_CONFIG = HUMAN_MEMORY_CONFIG.get("recall", {}) if HUMAN_REALISM_ENABLED else {}
+MEMORY_REVIEW_CONFIG = HUMAN_MEMORY_CONFIG.get("review", {}) if HUMAN_REALISM_ENABLED else {}
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
 ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
@@ -1418,6 +1421,42 @@ if SIM_START_WEEKDAY_INDEX is None:
     SIM_START_WEEKDAY_INDEX = 0
 SIM_WEEKEND_INDEXES = _build_weekend_indexes(CALENDAR_CONFIG.get("weekend_days", ["saturday", "sunday"]))
 AGENT_IMPORT_OUTPUT_DIR = CONFIG.get("agent_import_output_dir", "output/imported_agents")
+
+RECALL_STAGE_ENTRY_TYPES = {
+    "planning": ["meta_memory", "memory", "episode", "reflection", "plan", "action", "log"],
+    "action": ["episode", "reflection", "meta_memory", "memory", "action", "plan", "log"],
+    "reflection": ["reflection", "episode", "meta_memory", "memory", "action", "plan", "log"],
+    "interview": ["meta_memory", "memory", "episode", "reflection", "action", "plan", "log"],
+}
+RECALL_STAGE_HINTS = {
+    "planning": ["计划", "打算", "安排", "经验", "教训"],
+    "action": ["行动", "选择", "做法", "后果"],
+    "reflection": ["反思", "感受", "经验", "情绪"],
+    "interview": ["访谈", "经历", "回忆", "看法"],
+}
+POSITIVE_RECALL_HINTS = (
+    "顺利",
+    "满意",
+    "开心",
+    "支持",
+    "完成",
+    "收获",
+    "稳定",
+    "放松",
+    "认可",
+)
+NEGATIVE_RECALL_HINTS = (
+    "失败",
+    "挫败",
+    "焦虑",
+    "压力",
+    "冲突",
+    "不满",
+    "拖延",
+    "后悔",
+    "疲惫",
+    "孤独",
+)
 
 # =========================================================
 # 政策事件
@@ -2476,6 +2515,251 @@ def _agent_has_external_rag(agent):
             return True
     return False
 
+
+def _compact_text(text, max_chars=120):
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    clipped = cleaned[:max_chars]
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]
+    return clipped.rstrip("，,；;。.") + "..."
+
+
+def _clip01(value):
+    return float(np.clip(float(value), 0.0, 1.0))
+
+
+def _join_query_parts(*parts):
+    chunks = []
+    for part in parts:
+        if part is None:
+            continue
+        if isinstance(part, (list, tuple, set)):
+            chunks.extend(str(x).strip() for x in part if str(x).strip())
+        else:
+            text = str(part).strip()
+            if text:
+                chunks.append(text)
+    return " ".join(chunks)
+
+
+def _memory_recall_top_k(agent, stage):
+    base = max(1, int(RECALL_CONFIG.get("base_top_k", 2)))
+    stage_top = max(base, int(RECALL_CONFIG.get(f"{stage}_top_k", base)))
+    max_top = max(stage_top, int(RECALL_CONFIG.get("max_top_k", 5)))
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    stress = abs(float(state.get("stress", 0.5)) - 0.5)
+    emotion = abs(float(state.get("emotion", 0.5)) - 0.5)
+    hunger = abs(float(state.get("hunger", 0.5)) - 0.5)
+    social_need = abs(float(state.get("social_need", 0.5)) - 0.5)
+    bonus = 0
+    if max(stress, emotion, hunger, social_need) >= 0.22:
+        bonus += 1
+    if stage == "interview":
+        bonus += 1
+    return max(1, min(stage_top + bonus, max_top))
+
+
+def _infer_recall_valence(hits):
+    if not hits:
+        return 0.0
+    score = 0.0
+    for item in hits[:3]:
+        text = str(item.get("text", "") if isinstance(item, dict) else item)
+        score += sum(1 for hint in POSITIVE_RECALL_HINTS if hint in text)
+        score -= sum(1 for hint in NEGATIVE_RECALL_HINTS if hint in text)
+    return float(np.clip(score / 4.0, -1.0, 1.0))
+
+
+def _apply_recall_effect(agent, valence, stage, top_score=0.0):
+    if not isinstance(agent, dict) or abs(float(valence)) < 0.01 or stage == "interview":
+        return {}
+    state = agent.setdefault("state", {})
+    if "emotion" not in state or "stress" not in state:
+        return {}
+    scale = float(RECALL_CONFIG.get("effect_scale", 0.015))
+    strength = scale * (1.0 + min(max(float(top_score), 0.0), 1.0))
+    emotion_delta = strength * float(valence)
+    stress_delta = -0.7 * strength * float(valence)
+    state["emotion"] = _clip01(float(state.get("emotion", 0.5)) + emotion_delta)
+    state["stress"] = _clip01(float(state.get("stress", 0.5)) + stress_delta)
+    return {
+        "emotion": round(emotion_delta, 4),
+        "stress": round(stress_delta, 4),
+    }
+
+
+def _format_recollection(stage, hits):
+    if not hits:
+        return ""
+    prefix = {
+        "planning": "这让你想起",
+        "action": "你临时想起",
+        "reflection": "你又联想到",
+        "interview": "这些问题让你回忆起",
+    }.get(stage, "你想起")
+    type_label = {
+        "episode": "一段经历",
+        "reflection": "之前的反思",
+        "meta_memory": "更高层的总结",
+        "memory": "过去的记忆",
+        "action": "某次做法",
+        "plan": "先前的打算",
+        "log": "一个生活片段",
+    }
+    items = []
+    for hit in hits[:2]:
+        if isinstance(hit, dict):
+            label = type_label.get(str(hit.get("type", "")), "一个片段")
+            text = _compact_text(hit.get("text", ""), max_chars=60)
+        else:
+            label = "一个片段"
+            text = _compact_text(hit, max_chars=60)
+        if text:
+            items.append(f"{label}：{text}")
+    if not items:
+        return ""
+    return f"{prefix}{'；'.join(items)}"
+
+
+def evoke_memory(agent, stage, *parts, entry_types=None):
+    query = _join_query_parts(RECALL_STAGE_HINTS.get(stage, []), parts)
+    hits = retrieve_relevant_memories(
+        agent,
+        query,
+        max_items=_memory_recall_top_k(agent, stage),
+        entry_types=entry_types or RECALL_STAGE_ENTRY_TYPES.get(stage),
+    )
+    hint = _format_memory_hint(hits, max_chars=max(120, int(RECALL_CONFIG.get("hint_chars", 240))))
+    top_score = float(hits[0].get("score", 0.0)) if hits and isinstance(hits[0], dict) else 0.0
+    min_score = float(RECALL_CONFIG.get("surface_min_score", 0.08))
+    recollection = ""
+    valence = 0.0
+    effect = {}
+    if hits and (stage == "interview" or top_score >= min_score):
+        recollection = _format_recollection(stage, hits)
+        valence = _infer_recall_valence(hits)
+        effect = _apply_recall_effect(agent, valence, stage, top_score=top_score)
+    return {
+        "query": query,
+        "hits": hits,
+        "hint": hint,
+        "recollection": recollection,
+        "valence": valence,
+        "effect": effect,
+        "top_score": top_score,
+    }
+
+
+def _append_memory_record(agent, text, entry_type="memory", day=None, time_str=None):
+    payload = str(text or "").strip()
+    if not payload or not isinstance(agent, dict):
+        return False
+    memory = agent.setdefault("memory", [])
+    if payload not in memory:
+        memory.append(payload)
+    save_agent_memory(agent)
+    vector_db_add_entry(agent["id"], entry_type, payload, sim_day=day, sim_time=time_str)
+    return True
+
+
+def _heuristic_memory_review(agent, selected):
+    tags = []
+    for ep in selected:
+        tags.extend(ep.get("tags", []))
+    activities = [str(ep.get("final_activity", "")).strip() for ep in selected if str(ep.get("final_activity", "")).strip()]
+    repeated = ""
+    if activities:
+        counts = defaultdict(int)
+        for activity in activities:
+            counts[activity] += 1
+        repeated, repeated_count = max(counts.items(), key=lambda x: x[1])
+        if repeated_count < 2:
+            repeated = ""
+    if "failure" in tags or "conflict" in tags:
+        insight = "最近有些做法会反复带来压力，接下来最好更早调整。"
+    elif "success" in tags:
+        insight = "最近有效的做法值得继续保留。"
+    elif "health" in tags:
+        insight = "身体状态和恢复节奏正在明显影响你的判断。"
+    else:
+        insight = "这几段经历说明你的日常节奏正在慢慢塑造接下来的选择。"
+    if repeated:
+        return f"回顾最近几段经历后，你意识到自己总会被“{repeated}”牵引，{insight}"
+    return f"回顾最近几段经历后，你意识到{insight}"
+
+
+def maybe_review_memories(agent, day, time_str, recent_episode=None, llm_budget_ctx=None):
+    if not HUMAN_REALISM_ENABLED:
+        return ""
+    now = _time_str_to_minutes(time_str)
+    if now is None:
+        return ""
+    if agent.get("_memory_review_day") != day:
+        agent["_memory_review_day"] = day
+        agent["_memory_review_count"] = 0
+        agent["_last_memory_review_minute"] = -10**9
+    max_reviews = max(1, int(MEMORY_REVIEW_CONFIG.get("max_per_day", 3)))
+    if int(agent.get("_memory_review_count", 0)) >= max_reviews:
+        return ""
+    interval = max(60, int(MEMORY_REVIEW_CONFIG.get("interval_minutes", 240)))
+    last_minute = int(agent.get("_last_memory_review_minute", -10**9))
+    recent_salience = 0.0
+    if isinstance(recent_episode, dict):
+        recent_salience = float(recent_episode.get("salience", recent_episode.get("decayed_salience", 0.0)))
+    trigger_salience = float(MEMORY_REVIEW_CONFIG.get("trigger_salience", 0.72))
+    if now - last_minute < interval and recent_salience < trigger_salience:
+        return ""
+    top_k = max(1, int(MEMORY_REVIEW_CONFIG.get("top_k", 4)))
+    episodes = sorted(
+        agent.get("episodes", []),
+        key=lambda e: float(e.get("decayed_salience", e.get("salience", 0.0))),
+        reverse=True,
+    )
+    selected = []
+    for ep in episodes:
+        ep_day = int(ep.get("day", ep.get("created_at_day", 0)) or 0)
+        if ep_day < max(0, int(day) - 2):
+            continue
+        selected.append(ep)
+        if len(selected) >= top_k:
+            break
+    if not selected and isinstance(recent_episode, dict):
+        selected = [recent_episode]
+    if not selected:
+        return ""
+    summary_lines = [
+        f"{ep.get('time', '')} {ep.get('final_activity', '')} -> {ep.get('action', '')} / {ep.get('reflection', '')}"
+        for ep in selected
+    ]
+    summary = _heuristic_memory_review(agent, selected)
+    if isinstance(llm_budget_ctx, dict) and llm_budget_ctx.get("remaining", 0) > 0:
+        prompt = f"""
+你是城市模拟器中的“记忆复盘器”。
+请根据角色近期经历，写一句更高层次的自我认识，像人在回顾自己最近状态时形成的结论。
+角色：{agent.get('name', '')}
+近期经历：
+{json.dumps(summary_lines, ensure_ascii=False, indent=2)}
+
+要求：
+1) 只输出一句中文，不超过60字。
+2) 要体现模式、偏好、教训或状态变化，不要重复流水账。
+3) 不要输出其他文字。
+"""
+        llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
+        try:
+            response = call_llm(prompt, task="memory_review", agent_id=agent["id"]).strip()
+        except Exception:
+            response = ""
+        if response:
+            summary = _compact_text(response, max_chars=90)
+    review_text = f"[Day {day} {time_str} MemoryReview] {summary}"
+    _append_memory_record(agent, review_text, entry_type="meta_memory", day=day, time_str=time_str)
+    agent["_memory_review_count"] = int(agent.get("_memory_review_count", 0)) + 1
+    agent["_last_memory_review_minute"] = now
+    return review_text
+
 def _append_external_payload_to_agent(agent, payload):
     if not payload or not isinstance(agent, dict):
         return
@@ -3176,7 +3460,7 @@ def ensure_action_space_for_activity(agent, action_space, activity):
     action_space[activity] = acts
     return True
 
-def choose_action(agent, activity, action_space, context=None, location_bias=None, location=None, time_str=None):
+def choose_action(agent, activity, action_space, context=None, location_bias=None, location=None, time_str=None, recall_context=None):
     if is_sleep_activity(activity):
         return "睡觉"
     options = action_space.get(activity, [])
@@ -3190,9 +3474,18 @@ def choose_action(agent, activity, action_space, context=None, location_bias=Non
     memory_hits = []
     if STATEFUL:
         recent_actions = load_recent_actions(agent["id"], max_items=6)
-    if context or activity:
+    if isinstance(recall_context, dict):
+        memory_hits = list(recall_context.get("hits", []) or [])
+    elif context or activity:
         query = context if context else activity
-        memory_hits = retrieve_relevant_memories(agent, query, max_items=2)
+        memory_hits = evoke_memory(
+            agent,
+            "action",
+            activity,
+            query,
+            location or "",
+            time_str or "",
+        ).get("hits", [])
 
     bias = (location_bias or {}).get(activity, {})
     prefer_set = set(bias.get("prefer", [])) if isinstance(bias, dict) else set()
@@ -3334,9 +3627,11 @@ def perception(agent, time_str, social_context, env_context, policy_event):
 """
     return call_llm(prompt, task="perception", agent_id=agent["id"])
 
-def planning(agent, perception_text):
-    memory_hits = retrieve_relevant_memories(agent, perception_text, max_items=VECTOR_DB_TOP_K)
-    memory_hint = _format_memory_hint(memory_hits)
+def planning(agent, perception_text, recall_context=None):
+    if not isinstance(recall_context, dict):
+        recall_context = evoke_memory(agent, "planning", perception_text)
+    memory_hint = recall_context.get("hint", "暂无重要经验")
+    recollection = recall_context.get("recollection", "").strip() or "无明显回忆"
     external_hint = _external_rag_hint(agent, perception_text)
     history_hint = "暂无历史"
     if STATEFUL:
@@ -3348,6 +3643,7 @@ def planning(agent, perception_text):
 你是{agent['name']}。
 你的感知是：{perception_text}
 你的近期经验：{memory_hint}
+你此刻被唤起的回忆：{recollection}
 可用额外信息：{external_hint}
 你今天的行为意图：{intent_hint}
 你的近期历史片段：
@@ -3357,13 +3653,16 @@ def planning(agent, perception_text):
 """
     return call_llm(prompt, task="planning", agent_id=agent["id"])
 
-def reflection(agent, outcome):
-    memory_hits = retrieve_relevant_memories(agent, outcome, max_items=VECTOR_DB_TOP_K)
-    memory_hint = _format_memory_hint(memory_hits)
+def reflection(agent, outcome, recall_context=None):
+    if not isinstance(recall_context, dict):
+        recall_context = evoke_memory(agent, "reflection", outcome)
+    memory_hint = recall_context.get("hint", "暂无重要经验")
+    recollection = recall_context.get("recollection", "").strip() or "无明显回忆"
     prompt = f"""
 你是{agent['name']}。
 刚刚发生的事情是：{outcome}
 你的相关记忆：{memory_hint}
+你此刻想起了：{recollection}
 
 你对此有何反思或情绪变化？（1-2句）
 """
@@ -3407,20 +3706,23 @@ def interview_agent(agent, questions, context=None, max_questions=6):
         return []
     questions = questions[:max_questions]
 
-    memory_hits = retrieve_relevant_memories(agent, "访谈", max_items=VECTOR_DB_TOP_K)
-    memory_hint = _format_memory_hint(memory_hits)
     context_text = context if context else "无"
     question_text = "\n".join(f"- {q}" for q in questions)
+    recall_context = evoke_memory(agent, "interview", context_text, questions)
+    memory_hint = recall_context.get("hint", "暂无重要经验")
+    recollection = recall_context.get("recollection", "").strip() or "无明显回忆"
     prompt = f"""
 你是{agent['name']}。
 这是一次访谈，回答要真实且基于角色经历。
 背景：{context_text}
 你的近期经验：{memory_hint}
+这些问题勾起的回忆：{recollection}
 
 请逐题回答以下问题，每题1-3句。
 要求：
 1) 输出 JSON 数组，每项为 {{"question":"...","answer":"..."}} 或 ["question","answer"]。
 2) 仅输出 JSON，不要其他文字。
+3) 回答前先在心里调动与你问题最相关的经历，而不是泛泛而谈。
 问题列表：
 {question_text}
 """
@@ -3573,9 +3875,7 @@ def daily_summary(agent, logs, day=None):
 请总结今天最重要的一条经验或感受。
 """
     memory = call_llm(prompt, task="summary", agent_id=agent["id"])
-    agent["memory"].append(memory)
-    save_agent_memory(agent)
-    vector_db_add_entry(agent["id"], "memory", memory, sim_day=day, sim_time="end_of_day")
+    _append_memory_record(agent, memory, entry_type="memory", day=day, time_str="end_of_day")
     return memory
 
 # =========================================================
@@ -4146,7 +4446,19 @@ def run_simulation():
                 policy_desc = step_ctx.get("policy_desc", policy_desc)
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
-                plan = planning(agent, perc)
+                step_recollections = []
+                plan_recall = evoke_memory(
+                    agent,
+                    "planning",
+                    scheduled_activity,
+                    perc,
+                    social_context,
+                    env_context,
+                    policy_desc,
+                )
+                if plan_recall.get("recollection"):
+                    step_recollections.append(plan_recall["recollection"])
+                plan = planning(agent, perc, recall_context=plan_recall)
                 activity, change_reason, changed = maybe_adjust_activity(
                     agent,
                     time_str,
@@ -4204,6 +4516,17 @@ def run_simulation():
                         city_map_text,
                         actions[agent_id],
                     )
+                    action_recall = evoke_memory(
+                        agent,
+                        "action",
+                        activity,
+                        perc,
+                        plan,
+                        resolved_location,
+                        time_str,
+                    )
+                    if action_recall.get("recollection"):
+                        step_recollections.append(action_recall["recollection"])
                     act = choose_action(
                         agent,
                         activity,
@@ -4212,9 +4535,20 @@ def run_simulation():
                         location_bias=location_bias,
                         location=resolved_location,
                         time_str=time_str,
+                        recall_context=action_recall,
                     )
                     outcome = f"在【{activity}】中执行了【{act}】"
-                refl = reflection(agent, outcome)
+                reflection_recall = evoke_memory(
+                    agent,
+                    "reflection",
+                    effective_activity,
+                    act,
+                    outcome,
+                    time_str,
+                )
+                if reflection_recall.get("recollection"):
+                    step_recollections.append(reflection_recall["recollection"])
+                refl = reflection(agent, outcome, recall_context=reflection_recall)
                 if HUMAN_REALISM_ENABLED:
                     update_needs(agent, time_str, effective_activity)
 
@@ -4322,6 +4656,7 @@ def run_simulation():
                         "state_after": state_after,
                         "delta": delta,
                         "tags": tags,
+                        "recollections": list(step_recollections),
                         "salience": salience,
                         "valence": float(np.clip(delta.get("emotion", 0.0), -1.0, 1.0)),
                         "created_at_day": day,
@@ -4336,6 +4671,15 @@ def run_simulation():
                     vector_db_add_entry(agent_id, "episode", episode_text, sim_day=day, sim_time=time_str)
                     agent["last_activity"] = effective_activity
                     agent["last_action"] = act
+                    memory_review = maybe_review_memories(
+                        agent,
+                        day,
+                        time_str,
+                        recent_episode=episode,
+                        llm_budget_ctx=llm_budget_by_agent.get(agent_id),
+                    )
+                else:
+                    memory_review = ""
                 for metric in state_history[agent["id"]]:
                     state_history[agent["id"]][metric].append(agent["state"][metric])
 
@@ -4343,6 +4687,15 @@ def run_simulation():
                 if changed:
                     reason_text = change_reason or "临时改变"
                     routine_line = f"RoutineChange: {scheduled_activity} -> {effective_activity} ({reason_text})\n"
+                recall_line = ""
+                unique_recollections = []
+                for item in step_recollections:
+                    text = str(item).strip()
+                    if text and text not in unique_recollections:
+                        unique_recollections.append(text)
+                if unique_recollections:
+                    recall_line = f"Recall: {' | '.join(unique_recollections)}\n"
+                memory_review_line = f"MemoryReview: {memory_review}\n" if memory_review else ""
 
                 log = f"""
 [{agent['name']} @ {time_str}]
@@ -4358,9 +4711,10 @@ TravelStatus: {travel.get('status', 'stationary')}
 Environment: {env_context}
 Perception: {perc}
 Plan: {plan}
-Action: {act}
+{recall_line}Action: {act}
 Outcome: {outcome}
 Reflection: {refl}
+{memory_review_line}
 """
                 print(log)
                 daily_logs[agent["id"]] += log
@@ -4464,9 +4818,13 @@ Reflection: {refl}
                     agent["episodes"] = load_agent_episodes(agent_id)
                 memory_text = consolidated.get("memory_text", "").strip()
                 if memory_text:
-                    agent["memory"].append(memory_text)
-                    save_agent_memory(agent)
-                    vector_db_add_entry(agent_id, "memory", memory_text, sim_day=day, sim_time="consolidation")
+                    _append_memory_record(
+                        agent,
+                        memory_text,
+                        entry_type="memory",
+                        day=day,
+                        time_str="consolidation",
+                    )
                     print(f"🧩 {agent['name']} 的经验整合：{memory_text}")
             mem = daily_summary(agent, daily_logs[agent["id"]], day=day)
             print(f"🧠 {agent['name']} 的今日长期记忆：{mem}")

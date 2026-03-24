@@ -203,6 +203,23 @@ CONFIG = {
             "daily_consolidation_top_k": 12,
             "salience_threshold": 0.35,
             "decay_half_life_days": 14,
+            "recall": {
+                "base_top_k": 2,
+                "max_top_k": 5,
+                "planning_top_k": 3,
+                "action_top_k": 3,
+                "reflection_top_k": 4,
+                "interview_top_k": 4,
+                "hint_chars": 240,
+                "surface_min_score": 0.08,
+                "effect_scale": 0.015,
+            },
+            "review": {
+                "interval_minutes": 240,
+                "max_per_day": 3,
+                "trigger_salience": 0.72,
+                "top_k": 4,
+            },
         },
         "behavior": {
             "habit_learning_rate": 0.08,
