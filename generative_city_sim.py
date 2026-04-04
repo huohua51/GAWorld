@@ -1757,6 +1757,9 @@ def build_agent(agent_id, df, city_map=None):
             "risk_preference": float(row.get("risk_preference", 0.5)),
             "voice_propensity": float(row.get("voice_propensity", 0.5)),
             "mobility_intent": float(row.get("mobility_intent", 0.5)),
+            "fatigue_debt": float(row.get("fatigue_debt", 0.20)),
+            "self_control": float(row.get("self_control", 0.60)),
+            "time_pressure": float(row.get("time_pressure", 0.25)),
         },
         "memory": [],
         "social_neighbors": []
@@ -2526,6 +2529,204 @@ def _compact_text(text, max_chars=120):
     return clipped.rstrip("，,；;。.") + "..."
 
 
+def _parse_structured_json(text, allowed_fields):
+    json_blob = _extract_json_block(text)
+    if not json_blob:
+        return {}
+    try:
+        raw = json.loads(json_blob)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    parsed = {}
+    for field in allowed_fields:
+        value = raw.get(field, "")
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False)
+        parsed[field] = _compact_text(value, max_chars=120)
+    return parsed
+
+
+def _fallback_plan_struct(raw_text=""):
+    text = _compact_text(raw_text, max_chars=80) or "先按当前情况稳住节奏。"
+    return {
+        "goal": "先把当前时段过稳",
+        "constraint": "时间和状态都有限",
+        "urge": "也想顺着当下感觉稍微省点力",
+        "plan": text,
+        "expected_outcome": "希望不把后面的安排弄得更乱",
+    }
+
+
+def _fallback_reflection_struct(raw_text=""):
+    text = _compact_text(raw_text, max_chars=80) or "这一步暂时就这样。"
+    return {
+        "result": text,
+        "feeling": "情绪有一点波动",
+        "lesson": "下次还是要更早判断状态和代价",
+        "next_bias": "接下来会更偏向省力或稳妥的做法",
+    }
+
+
+def format_plan_text(plan):
+    if not isinstance(plan, dict):
+        return _compact_text(plan, max_chars=120)
+    return "；".join(
+        part
+        for part in [
+            f"目标：{plan.get('goal', '').strip()}".strip("："),
+            f"顾虑：{plan.get('constraint', '').strip()}".strip("："),
+            f"冲动：{plan.get('urge', '').strip()}".strip("："),
+            f"打算：{plan.get('plan', '').strip()}".strip("："),
+            f"预期：{plan.get('expected_outcome', '').strip()}".strip("："),
+        ]
+        if part and not part.endswith("：")
+    )
+
+
+def format_reflection_text(reflection):
+    if not isinstance(reflection, dict):
+        return _compact_text(reflection, max_chars=120)
+    return "；".join(
+        part
+        for part in [
+            f"结果：{reflection.get('result', '').strip()}".strip("："),
+            f"感受：{reflection.get('feeling', '').strip()}".strip("："),
+            f"教训：{reflection.get('lesson', '').strip()}".strip("："),
+            f"后续倾向：{reflection.get('next_bias', '').strip()}".strip("："),
+        ]
+        if part and not part.endswith("：")
+    )
+
+
+def _activity_commitment_level(activity):
+    text = str(activity or "")
+    if any(k in text for k in ["工作", "上班", "会议", "开会", "上课", "学习", "实验", "看病", "医院", "诊所", "面试", "报告"]):
+        return "high"
+    if any(k in text for k in ["购物", "买菜", "社交", "聚会", "拜访", "办事", "沟通", "会面", "约见", "联系"]):
+        return "medium"
+    return "low"
+
+
+def _commitment_weight(level):
+    behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
+    weights = behavior_cfg.get("commitment_weights", {}) if isinstance(behavior_cfg, dict) else {}
+    default_map = {"high": 1.2, "medium": 0.6, "low": 0.2}
+    return float(weights.get(level, default_map.get(level, 0.2)))
+
+
+def _state_recall_labels(agent):
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    labels = []
+    if float(state.get("self_control", 0.6)) < 0.4:
+        labels.append("low_self_control")
+    if float(state.get("fatigue_debt", 0.2)) > 0.6:
+        labels.append("high_fatigue")
+    if float(state.get("time_pressure", 0.25)) > 0.6:
+        labels.append("high_time_pressure")
+    if float(state.get("hunger", 0.25)) > 0.65:
+        labels.append("high_hunger")
+    if float(state.get("energy", 0.75)) < 0.35:
+        labels.append("low_energy")
+    return labels
+
+
+def _build_recall_context_labels(agent, activity="", time_str="", location="", commitment_level=""):
+    labels = list(_state_recall_labels(agent))
+    if activity:
+        labels.append(f"activity {activity}")
+    if time_str and location and activity:
+        labels.append(f"context {build_context_key(time_str, location, activity)}")
+    if commitment_level:
+        labels.append(f"{commitment_level}_commitment")
+    return labels
+
+
+def _action_style_tags(action_text):
+    text = str(action_text or "")
+    tags = set()
+    if any(k in text for k in ["推进", "完成", "整理", "处理", "准备", "学习", "规划", "落实", "回复", "确认"]):
+        tags.add("progress")
+    if any(k in text for k in ["继续", "维持", "例行", "按原计划", "照常", "看看进度", "简单处理"]):
+        tags.add("maintain")
+    if any(k in text for k in ["拖延", "刷手机", "摸鱼", "发呆", "放空", "晚点再说", "逃避", "躺平"]):
+        tags.add("avoidant")
+    if any(k in text for k in ["聊天", "联系", "沟通", "拜访", "会面", "回消息", "确认安排", "聚会"]):
+        tags.add("social")
+    if any(k in text for k in ["休息", "放松", "回家", "睡", "午休", "吃饭", "散步"]):
+        tags.add("restorative")
+    if any(k in text for k in ["先", "立刻", "马上", "顺手", "简单", "快速"]):
+        tags.add("quick")
+    return tags
+
+
+def _behavioral_action_fallbacks(activity):
+    text = str(activity or "")
+    if any(k in text for k in ["工作", "学习", "会议", "上课", "实验"]):
+        return {
+            "progress": "推进最重要的一项任务",
+            "maintain": "按原计划继续处理例行事项",
+            "avoidant": "拖一会儿再开始，先刷手机分心",
+            "social": "联系相关的人确认进度和分工",
+        }
+    if any(k in text for k in ["买菜", "购物", "办事"]):
+        return {
+            "progress": "尽快把最需要买的东西先办完",
+            "maintain": "按清单照常处理手头事务",
+            "avoidant": "先随便逛一会儿拖时间",
+            "social": "发消息问熟人有没有顺路需求",
+        }
+    return {
+        "progress": "先把眼前这件事往前推进一点",
+        "maintain": "按原节奏继续当前安排",
+        "avoidant": "先拖一会儿再说，顺手刷会儿手机",
+        "social": "联系一下相关的人确认接下来的安排",
+    }
+
+
+def _ensure_behavioral_action_balance(activity, actions):
+    cleaned = []
+    seen = set()
+    for action in actions or []:
+        text = str(action).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    fallbacks = _behavioral_action_fallbacks(activity)
+    for category in ("progress", "maintain", "avoidant", "social"):
+        if not any(category in _action_style_tags(action) for action in cleaned):
+            fallback = fallbacks.get(category, "")
+            if fallback and fallback not in seen:
+                cleaned.append(fallback)
+                seen.add(fallback)
+    return cleaned
+
+
+def _social_relationship_snapshot(agent):
+    relationships = agent.get("relationships", {}) if isinstance(agent, dict) else {}
+    partner_ids = list(agent.get("_recent_social_partners", []) or [])
+    selected = []
+    for pid in partner_ids:
+        item = relationships.get(str(pid), {})
+        if isinstance(item, dict):
+            selected.append(item)
+    if not selected:
+        for item in relationships.values():
+            if isinstance(item, dict):
+                selected.append(item)
+            if len(selected) >= 3:
+                break
+    if not selected:
+        return {"obligation": 0.5, "friction": 0.5, "support": 0.5}
+    return {
+        "obligation": float(np.mean([float(item.get("obligation", 0.5)) for item in selected])),
+        "friction": float(np.mean([float(item.get("friction", 0.5)) for item in selected])),
+        "support": float(np.mean([float(item.get("closeness", 0.5)) for item in selected])),
+    }
+
+
 def _clip01(value):
     return float(np.clip(float(value), 0.0, 1.0))
 
@@ -2553,8 +2754,11 @@ def _memory_recall_top_k(agent, stage):
     emotion = abs(float(state.get("emotion", 0.5)) - 0.5)
     hunger = abs(float(state.get("hunger", 0.5)) - 0.5)
     social_need = abs(float(state.get("social_need", 0.5)) - 0.5)
+    fatigue = abs(float(state.get("fatigue_debt", 0.2)) - 0.5)
+    self_control = abs(float(state.get("self_control", 0.6)) - 0.5)
+    time_pressure = abs(float(state.get("time_pressure", 0.25)) - 0.5)
     bonus = 0
-    if max(stress, emotion, hunger, social_need) >= 0.22:
+    if max(stress, emotion, hunger, social_need, fatigue, self_control, time_pressure) >= 0.22:
         bonus += 1
     if stage == "interview":
         bonus += 1
@@ -2623,8 +2827,8 @@ def _format_recollection(stage, hits):
     return f"{prefix}{'；'.join(items)}"
 
 
-def evoke_memory(agent, stage, *parts, entry_types=None):
-    query = _join_query_parts(RECALL_STAGE_HINTS.get(stage, []), parts)
+def evoke_memory(agent, stage, *parts, entry_types=None, context_labels=None):
+    query = _join_query_parts(RECALL_STAGE_HINTS.get(stage, []), context_labels or [], parts)
     hits = retrieve_relevant_memories(
         agent,
         query,
@@ -2668,6 +2872,7 @@ def _heuristic_memory_review(agent, selected):
     tags = []
     for ep in selected:
         tags.extend(ep.get("tags", []))
+    drivers = [str(ep.get("decision_driver", "")).strip() for ep in selected if str(ep.get("decision_driver", "")).strip()]
     activities = [str(ep.get("final_activity", "")).strip() for ep in selected if str(ep.get("final_activity", "")).strip()]
     repeated = ""
     if activities:
@@ -2677,6 +2882,14 @@ def _heuristic_memory_review(agent, selected):
         repeated, repeated_count = max(counts.items(), key=lambda x: x[1])
         if repeated_count < 2:
             repeated = ""
+    repeated_driver = ""
+    if drivers:
+        counts = defaultdict(int)
+        for driver in drivers:
+            counts[driver] += 1
+        repeated_driver, repeated_driver_count = max(counts.items(), key=lambda x: x[1])
+        if repeated_driver_count < 2:
+            repeated_driver = ""
     if "failure" in tags or "conflict" in tags:
         insight = "最近有些做法会反复带来压力，接下来最好更早调整。"
     elif "success" in tags:
@@ -2685,6 +2898,8 @@ def _heuristic_memory_review(agent, selected):
         insight = "身体状态和恢复节奏正在明显影响你的判断。"
     else:
         insight = "这几段经历说明你的日常节奏正在慢慢塑造接下来的选择。"
+    if repeated_driver:
+        return f"回顾最近几段经历后，你意识到自己常常被“{repeated_driver}”推着走，{insight}"
     if repeated:
         return f"回顾最近几段经历后，你意识到自己总会被“{repeated}”牵引，{insight}"
     return f"回顾最近几段经历后，你意识到{insight}"
@@ -3189,16 +3404,62 @@ def _routine_change_probability(agent, env_events, policy_desc):
     s = agent.get("state", {})
     stress = float(s.get("stress", 0.5))
     emotion = float(s.get("emotion", 0.5))
+    hunger = float(s.get("hunger", 0.25))
+    fatigue = float(s.get("fatigue_debt", 0.2))
+    time_pressure = float(s.get("time_pressure", 0.25))
     if stress > 0.6:
         prob += (stress - 0.6) * 0.3
     if emotion < 0.4:
         prob += (0.4 - emotion) * 0.25
+    if hunger > 0.65:
+        prob += (hunger - 0.65) * 0.18
+    if fatigue > 0.65:
+        prob += (fatigue - 0.65) * 0.16
+    if time_pressure > 0.65:
+        prob += (time_pressure - 0.65) * 0.12
     return float(max(0.0, min(prob, ROUTINE_CHANGE_MAX_CHANCE)))
+
+def _routine_change_trigger_strength(agent, env_events, policy_desc):
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    stress = float(state.get("stress", 0.5))
+    hunger = float(state.get("hunger", 0.25))
+    fatigue = float(state.get("fatigue_debt", 0.2))
+    time_pressure = float(state.get("time_pressure", 0.25))
+    self_control = float(state.get("self_control", 0.6))
+    energy = float(state.get("energy", 0.75))
+    trigger = 0.0
+    trigger += max(0.0, stress - 0.62) * 0.65
+    trigger += max(0.0, hunger - 0.68) * 0.55
+    trigger += max(0.0, fatigue - 0.62) * 0.55
+    trigger += max(0.0, time_pressure - 0.60) * 0.45
+    trigger += max(0.0, 0.42 - self_control) * 0.65
+    trigger += max(0.0, 0.35 - energy) * 0.35
+    trigger += min(0.25, 0.10 * len(env_events or []))
+    if policy_desc:
+        trigger += 0.10
+    return float(np.clip(trigger, 0.0, 1.0))
+
+
+def _routine_change_resistance(agent, activity):
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    self_control = float(state.get("self_control", 0.6))
+    commitment_level = _activity_commitment_level(activity)
+    commitment_weight = _commitment_weight(commitment_level)
+    resistance = 0.08 + commitment_weight * 0.55 + max(0.0, self_control - 0.5) * 0.20
+    return commitment_level, float(np.clip(resistance, 0.0, 1.0))
+
 
 def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, plan_text,
                           env_context, env_events, policy_desc):
     prob = _routine_change_probability(agent, env_events, policy_desc)
-    if prob <= 0 or random.random() > prob:
+    if prob <= 0:
+        return scheduled_activity, "", False
+    commitment_level, resistance = _routine_change_resistance(agent, scheduled_activity)
+    trigger = _routine_change_trigger_strength(agent, env_events, policy_desc)
+    if trigger <= resistance:
+        return scheduled_activity, "", False
+    activation = min(0.95, prob + max(0.0, trigger - resistance) * 0.9)
+    if random.random() > activation:
         return scheduled_activity, "", False
 
     profile_text = "\n".join([
@@ -3214,12 +3475,16 @@ def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, 
         f"emotion={state.get('emotion', 0.5):.2f}, "
         f"stress={state.get('stress', 0.5):.2f}, "
         f"econ_security={state.get('econ_security', 0.5):.2f}, "
-        f"risk_preference={state.get('risk_preference', 0.5):.2f}"
+        f"risk_preference={state.get('risk_preference', 0.5):.2f}, "
+        f"fatigue_debt={state.get('fatigue_debt', 0.2):.2f}, "
+        f"self_control={state.get('self_control', 0.6):.2f}, "
+        f"time_pressure={state.get('time_pressure', 0.25):.2f}"
     )
     prompt = f"""
 你是城市生活模拟器的“临时改程”决策器。
 当前时间：{time_str}
 原计划活动：{scheduled_activity}
+该活动承诺等级：{commitment_level}
 角色资料：
 {profile_text}
 当前状态数值：{state_text}
@@ -3227,12 +3492,15 @@ def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, 
 当前计划：{plan_text}
 环境事件：{env_context if env_context else "无"}
 政策事件：{policy_desc if policy_desc else "无"}
+改程触发强度：{trigger:.2f}
+原计划承诺阻力：{resistance:.2f}
 
 请判断是否需要因个人意愿或环境/事件影响而临时更改该时段活动。
 要求：
 1) 仅输出 JSON：{{"change": true/false, "activity": "活动", "reason": "原因"}}。
 2) 若不改变，change=false，activity 可留空。
 3) 若改变，activity 为中文短语（2-8字），能合理反映动机与情境。
+4) 高承诺活动除非触发很强，否则尽量不改；低承诺活动可以更灵活。
 4) 不要输出其他文字。
 """
     response = call_llm(prompt, task="routine_change", agent_id=agent["id"])
@@ -3350,7 +3618,8 @@ def _llm_generate_actions(agent, activities, seed_actions=None):
 要求：
 1) 每个活动给出 5-10 个动作，中文短语。
 2) 动作要符合角色职业、性格与生活习惯。
-3) 仅输出 JSON 对象，键为活动名，值为动作列表，不要输出其他文字。
+3) 每个活动尽量同时覆盖：推进型、维持型、回避型、社交/协调型动作。
+4) 仅输出 JSON 对象，键为活动名，值为动作列表，不要输出其他文字。
 {seed_text}
 """
     response = call_llm(prompt, task="actions", agent_id=agent["id"])
@@ -3368,7 +3637,10 @@ def _llm_generate_actions(agent, activities, seed_actions=None):
         retry_actions = _parse_action_space(retry_response, missing)
         for activity, acts in retry_actions.items():
             action_space[activity] = acts
-    return action_space
+    balanced = {}
+    for activity in activities:
+        balanced[activity] = _ensure_behavioral_action_balance(activity, action_space.get(activity, []))
+    return balanced
 
 def _llm_generate_location_bias(agent, location, city_map_text, action_space):
     activities = list(action_space.keys())
@@ -3460,15 +3732,40 @@ def ensure_action_space_for_activity(agent, action_space, activity):
     action_space[activity] = acts
     return True
 
-def choose_action(agent, activity, action_space, context=None, location_bias=None, location=None, time_str=None, recall_context=None):
+def choose_action(
+    agent,
+    activity,
+    action_space,
+    context=None,
+    location_bias=None,
+    location=None,
+    time_str=None,
+    recall_context=None,
+    return_debug=False,
+):
     if is_sleep_activity(activity):
-        return "睡觉"
+        result = "睡觉"
+        if return_debug:
+            return result, {
+                "decision_driver": "恢复需求",
+                "commitment_level": _activity_commitment_level(activity),
+                "scores": {result: {"weight": 1.0, "components": {}}},
+            }
+        return result
     options = action_space.get(activity, [])
 
     if not options:
-        return fallback_action(activity)
+        result = fallback_action(activity)
+        if return_debug:
+            return result, {
+                "decision_driver": "动作空间缺省",
+                "commitment_level": _activity_commitment_level(activity),
+                "scores": {result: {"weight": 1.0, "components": {}}},
+            }
+        return result
 
     weights = []
+    score_map = {}
     s = agent["state"]
     recent_actions = []
     memory_hits = []
@@ -3493,6 +3790,8 @@ def choose_action(agent, activity, action_space, context=None, location_bias=Non
     habits = agent.get("habits", {}) if HUMAN_REALISM_ENABLED else {}
     behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
     inertia_weight = float(behavior_cfg.get("inertia_weight", 0.25))
+    decision_noise = float(behavior_cfg.get("decision_noise", 0.18))
+    avoidance_bonus_scale = float(behavior_cfg.get("avoidance_bonus_scale", 1.1))
     need_weights = behavior_cfg.get("need_weights", {}) if isinstance(behavior_cfg, dict) else {}
     energy_w = float(need_weights.get("energy", 0.45))
     hunger_w = float(need_weights.get("hunger", 0.30))
@@ -3504,59 +3803,163 @@ def choose_action(agent, activity, action_space, context=None, location_bias=Non
     energy = float(s.get("energy", 0.75))
     hunger = float(s.get("hunger", 0.25))
     social_need = float(s.get("social_need", 0.4))
+    fatigue = float(s.get("fatigue_debt", 0.20))
+    self_control = float(s.get("self_control", 0.60))
+    time_pressure = float(s.get("time_pressure", 0.25))
+    commitment_level = _activity_commitment_level(activity)
+    commitment_weight = _commitment_weight(commitment_level)
+    relation_snapshot = _social_relationship_snapshot(agent)
+    driver_labels = {
+        "stress_avoidance": "压力驱动",
+        "low_mood_avoidance": "低情绪回避",
+        "growth_drive": "成长动机",
+        "night_reflection": "夜间反思惯性",
+        "recent_repeat": "近期惯性",
+        "memory_recall": "记忆牵引",
+        "memory_penalty": "负面记忆提醒",
+        "memory_support": "正面记忆支撑",
+        "location_prefer": "地点偏好",
+        "location_avoid": "地点阻力",
+        "habit": "习惯惯性",
+        "activity_inertia": "延续当前节奏",
+        "action_inertia": "重复上一步做法",
+        "energy_need": "体力不足",
+        "hunger_need": "饥饿驱动",
+        "social_need": "社交需求",
+        "solitude_need": "想独处恢复",
+        "fatigue_pressure": "疲劳积累",
+        "commitment_guardrail": "现实承诺约束",
+        "commitment_slack": "低承诺时段更松",
+        "self_control_penalty": "低自控偏向省力",
+        "self_control_support": "自控尚可",
+        "time_pressure_bias": "时间压力",
+        "relation_pull": "关系牵引",
+        "relation_friction": "关系摩擦",
+    }
 
     for act in options:
-        w = 1.0
+        components = {}
+        styles = _action_style_tags(act)
+        avoidant = "avoidant" in styles
+        social = "social" in styles
+        progress = "progress" in styles
+        maintain = "maintain" in styles
+        restorative = "restorative" in styles
+        quick = "quick" in styles
 
-        # 压力高 → 更可能摸鱼 / 情绪化
-        if s["stress"] > 0.7 and any(k in act for k in ["摸鱼", "拖延", "发呆", "胡思乱想"]):
-            w += 1.5
-
-        # 情绪低 → 回避型行为
-        if s["emotion"] < 0.4 and any(k in act for k in ["刷手机", "放空", "无意识"]):
-            w += 1.2
-
-        # 经济安全感高 → 自我提升
-        if s["econ_security"] > 0.6 and any(k in act for k in ["读书", "学习", "规划"]):
-            w += 0.8
-
-        # 睡前更容易反思
+        if s["stress"] > 0.7 and avoidant:
+            components["stress_avoidance"] = 1.2 * avoidance_bonus_scale
+        if s["emotion"] < 0.4 and avoidant:
+            components["low_mood_avoidance"] = 1.0 * avoidance_bonus_scale
+        if s["econ_security"] > 0.6 and progress:
+            components["growth_drive"] = 0.6
         if activity == "睡前" and "回顾" in act:
-            w += 1.0
+            components["night_reflection"] = 1.0
 
-        # 历史行动偏好：更可能重复近期做过的行为
         if act in recent_actions:
-            w += 0.4
-        w += _memory_action_bias(act, memory_hits)
+            components["recent_repeat"] = 0.4
+        components["memory_recall"] = _memory_action_bias(act, memory_hits)
+        for hit in memory_hits[:4]:
+            if not isinstance(hit, dict):
+                continue
+            text = str(hit.get("text", ""))
+            if act not in text:
+                continue
+            if any(hint in text for hint in NEGATIVE_RECALL_HINTS):
+                components["memory_penalty"] = components.get("memory_penalty", 0.0) - 0.85
+            if any(hint in text for hint in POSITIVE_RECALL_HINTS):
+                components["memory_support"] = components.get("memory_support", 0.0) + 0.35
 
-        # 地点偏好：同一地点的行为倾向
         if act in prefer_set:
-            w += 1.0
+            components["location_prefer"] = 1.0
         if act in avoid_set:
-            w -= 0.6
+            components["location_avoid"] = -0.6
 
-        # 人类行为惯性与习惯
         if HUMAN_REALISM_ENABLED:
             if act == preferred_habit_action:
-                w += habit_strength * 0.9
+                components["habit"] = habit_strength * 0.9
             if agent.get("last_activity") == activity:
-                w += inertia_weight
+                components["activity_inertia"] = inertia_weight
             if agent.get("last_action") == act:
-                w += inertia_weight * 0.6
+                components["action_inertia"] = inertia_weight * 0.6
 
-            # 需求驱动
-            if energy < 0.35 and any(k in act for k in ["休息", "放松", "回家", "睡", "午休"]):
-                w += (0.35 - energy) * 2.2 * energy_w
+            if energy < 0.35 and restorative:
+                components["energy_need"] = (0.35 - energy) * 2.4 * energy_w
             if hunger > 0.65 and any(k in act for k in ["吃", "买菜", "做饭", "餐", "饭"]):
-                w += (hunger - 0.65) * 2.2 * hunger_w
-            if social_need > 0.65 and any(k in act for k in ["聊天", "联系", "社交", "聚会", "拜访"]):
-                w += (social_need - 0.65) * 2.2 * social_w
-            if social_need < 0.25 and any(k in act for k in ["独处", "安静", "放空"]):
-                w += (0.25 - social_need) * 1.8 * social_w
+                components["hunger_need"] = (hunger - 0.65) * 2.4 * hunger_w
+            if social_need > 0.65 and social:
+                components["social_need"] = (social_need - 0.65) * 2.4 * social_w
+            if social_need < 0.25 and any(k in act for k in ["独处", "安静", "放空", "回家"]):
+                components["solitude_need"] = (0.25 - social_need) * 2.0 * social_w
+            if fatigue > 0.60 and (avoidant or restorative):
+                components["fatigue_pressure"] = (fatigue - 0.60) * 2.6 * avoidance_bonus_scale
 
-        weights.append(max(w, 0.01))  # 防止权重为 0
+            if commitment_level == "high":
+                if progress or maintain:
+                    components["commitment_guardrail"] = commitment_weight * 0.75
+                elif avoidant:
+                    components["commitment_guardrail"] = -commitment_weight * 0.9
+            elif commitment_level == "medium":
+                if progress or social:
+                    components["commitment_guardrail"] = commitment_weight * 0.55
+                elif avoidant:
+                    components["commitment_guardrail"] = -commitment_weight * 0.35
+            else:
+                if avoidant or restorative:
+                    components["commitment_slack"] = commitment_weight * 0.55
 
-    return random.choices(options, weights=weights, k=1)[0]
+            if self_control < 0.40 and avoidant:
+                components["self_control_penalty"] = (0.40 - self_control) * 2.8
+            elif self_control > 0.70 and progress:
+                components["self_control_support"] = (self_control - 0.70) * 1.6
+
+            if time_pressure > 0.60:
+                if quick or progress or maintain:
+                    components["time_pressure_bias"] = (time_pressure - 0.60) * 2.0
+                elif social and not quick:
+                    components["time_pressure_bias"] = -(time_pressure - 0.60) * 1.2
+
+            if social:
+                relation_pull = (
+                    (relation_snapshot["obligation"] - 0.5) * 1.8
+                    + (relation_snapshot["support"] - 0.5) * 0.9
+                    - max(0.0, relation_snapshot["friction"] - 0.5) * 1.5
+                )
+                components["relation_pull"] = relation_pull
+            if relation_snapshot["friction"] > 0.65 and any(k in act for k in ["见面", "拜访", "聚会"]):
+                components["relation_friction"] = -(relation_snapshot["friction"] - 0.65) * 1.8
+
+        total_weight = 1.0 + sum(components.values())
+        if HUMAN_REALISM_ENABLED and decision_noise > 0:
+            total_weight *= random.uniform(max(0.5, 1.0 - decision_noise), 1.0 + decision_noise)
+        total_weight = max(total_weight, 0.01)
+        weights.append(total_weight)
+        score_map[act] = {
+            "weight": round(total_weight, 4),
+            "components": {k: round(v, 4) for k, v in components.items() if abs(v) > 0.0001},
+            "styles": sorted(styles),
+        }
+    choice = random.choices(options, weights=weights, k=1)[0]
+    if not return_debug:
+        return choice
+    chosen = score_map.get(choice, {})
+    components = chosen.get("components", {})
+    if components:
+        best_key, best_value = max(
+            components.items(),
+            key=lambda item: (item[1] > 0, abs(item[1])),
+        )
+        if best_value > 0:
+            driver = driver_labels.get(best_key, "多重因素")
+        else:
+            driver = f"{driver_labels.get(best_key, '约束因素')}压住了其他选择"
+    else:
+        driver = "惯性延续"
+    return choice, {
+        "decision_driver": driver,
+        "commitment_level": commitment_level,
+        "scores": score_map,
+    }
 
 # =========================================================
 # Policy effect inference
@@ -3612,8 +4015,23 @@ def get_social_context(agent, agents_by_id):
     else:
         sampled = random.sample(neighbors, k)
     agent["_recent_social_partners"] = sampled
-    names = [agents_by_id[n]["name"] for n in sampled]
-    return "、".join(names) + "等熟人的近况对你产生影响。"
+    fragments = []
+    relationships = agent.get("relationships", {})
+    for neighbor_id in sampled:
+        name = agents_by_id.get(neighbor_id, {}).get("name", str(neighbor_id))
+        rel = relationships.get(str(neighbor_id), {}) if isinstance(relationships, dict) else {}
+        closeness = float(rel.get("closeness", 0.5))
+        obligation = float(rel.get("obligation", 0.5))
+        friction = float(rel.get("friction", 0.5))
+        if friction > 0.62:
+            fragments.append(f"{name}最近让你有些顾虑，想到对方时会有一点摩擦感")
+        elif obligation > 0.65:
+            fragments.append(f"{name}最近可能等你回应或配合，这会带来一点责任压力")
+        elif closeness > 0.65:
+            fragments.append(f"{name}会给你支持感，你更容易想到和对方保持联系")
+        else:
+            fragments.append(f"{name}的近况会偶尔分散你的注意力")
+    return "；".join(fragments) if fragments else "今天几乎没有与熟人互动。"
 
 def perception(agent, time_str, social_context, env_context, policy_event):
     prompt = f"""
@@ -3649,9 +4067,26 @@ def planning(agent, perception_text, recall_context=None):
 你的近期历史片段：
 {history_hint}
 
-你此刻的短期计划是什么？（1-2句）
+请输出 JSON：
+{{
+  "goal": "...",
+  "constraint": "...",
+  "urge": "...",
+  "plan": "...",
+  "expected_outcome": "..."
+}}
+要求：
+1) 每个字段 8-30 字，中文。
+2) constraint 必须是现实约束，urge 必须是内心冲动或偷懒/回避/社交/恢复倾向之一。
+3) plan 要体现妥协，而不是完美理性答案。
+4) 仅输出 JSON，不要其他文字。
 """
-    return call_llm(prompt, task="planning", agent_id=agent["id"])
+    response = call_llm(prompt, task="planning", agent_id=agent["id"])
+    parsed = _parse_structured_json(
+        response,
+        ["goal", "constraint", "urge", "plan", "expected_outcome"],
+    )
+    return parsed or _fallback_plan_struct(response)
 
 def reflection(agent, outcome, recall_context=None):
     if not isinstance(recall_context, dict):
@@ -3664,9 +4099,26 @@ def reflection(agent, outcome, recall_context=None):
 你的相关记忆：{memory_hint}
 你此刻想起了：{recollection}
 
-你对此有何反思或情绪变化？（1-2句）
+请输出 JSON：
+{{
+  "result": "...",
+  "feeling": "...",
+  "lesson": "...",
+  "next_bias": "..."
+}}
+要求：
+1) 每个字段 8-30 字，中文。
+2) feeling 要体现真实情绪，不要只写“平静”。
+3) lesson 要体现模式或代价，不要重复流水账。
+4) next_bias 要体现接下来会更偏向什么做法。
+5) 仅输出 JSON，不要其他文字。
 """
-    return call_llm(prompt, task="reflection", agent_id=agent["id"])
+    response = call_llm(prompt, task="reflection", agent_id=agent["id"])
+    parsed = _parse_structured_json(
+        response,
+        ["result", "feeling", "lesson", "next_bias"],
+    )
+    return parsed or _fallback_reflection_struct(response)
 
 def _parse_interview(text, questions):
     json_blob = _extract_json_array_block(text)
@@ -3778,10 +4230,16 @@ def update_state(agent):
         s.setdefault("energy", 0.75)
         s.setdefault("hunger", 0.25)
         s.setdefault("social_need", 0.40)
+        s.setdefault("fatigue_debt", 0.20)
+        s.setdefault("self_control", 0.60)
+        s.setdefault("time_pressure", 0.25)
 
     energy = float(s.get("energy", 0.75))
     hunger = float(s.get("hunger", 0.25))
     social_need = float(s.get("social_need", 0.40))
+    fatigue = float(s.get("fatigue_debt", 0.20))
+    self_control = float(s.get("self_control", 0.60))
+    time_pressure = float(s.get("time_pressure", 0.25))
     need_strain = float(np.clip(0.42 * hunger + 0.38 * (1 - energy) + 0.20 * social_need, 0.0, 1.0))
 
     emotion_target = _bounded_state_target(
@@ -3790,6 +4248,9 @@ def update_state(agent):
         -0.30 * (s["stress"] - 0.5),
         0.16 * (s["city_identity"] - 0.5),
         -0.15 * (need_strain - 0.5),
+        -0.16 * (fatigue - 0.5),
+        0.12 * (self_control - 0.5),
+        -0.12 * (time_pressure - 0.5),
         -0.08 * (s["mobility_intent"] - 0.5),
     )
     stress_target = _bounded_state_target(
@@ -3797,6 +4258,9 @@ def update_state(agent):
         0.30 * (0.5 - s["econ_security"]),
         0.20 * (s["platform_dependence"] - 0.5),
         0.22 * (need_strain - 0.5),
+        0.16 * (fatigue - 0.5),
+        -0.18 * (self_control - 0.5),
+        0.18 * (time_pressure - 0.5),
         -0.18 * (s["emotion"] - 0.5),
         -0.10 * (s["city_identity"] - 0.5),
     )
@@ -3806,11 +4270,13 @@ def update_state(agent):
         -0.18 * (s["platform_dependence"] - 0.5),
         0.10 * (s["risk_preference"] - 0.5),
         -0.10 * (need_strain - 0.5),
+        -0.08 * (time_pressure - 0.5),
     )
     city_target = _bounded_state_target(
         0.58,
         0.24 * (s["emotion"] - 0.5),
         -0.18 * (s["mobility_intent"] - 0.5),
+        -0.08 * (time_pressure - 0.5),
         -0.10 * (s["stress"] - 0.5),
     )
     policy_target = _bounded_state_target(
@@ -3843,6 +4309,8 @@ def update_state(agent):
         0.22 * (s["stress"] - 0.5),
         -0.24 * (s["city_identity"] - 0.5),
         0.14 * (0.5 - s["econ_security"]),
+        0.12 * (time_pressure - 0.5),
+        0.08 * (fatigue - 0.5),
         -0.08 * (s["emotion"] - 0.5),
     )
 
@@ -3859,6 +4327,9 @@ def update_state(agent):
         _apply_state_tendency(s, "energy", 0.72, 0.08, -0.004, 0.004)
         _apply_state_tendency(s, "hunger", 0.35, 0.10, -0.003, 0.003)
         _apply_state_tendency(s, "social_need", 0.45, 0.08, -0.004, 0.004)
+        _apply_state_tendency(s, "fatigue_debt", 0.24, 0.08, -0.004, 0.004)
+        _apply_state_tendency(s, "self_control", 0.60, 0.10, -0.004, 0.004)
+        _apply_state_tendency(s, "time_pressure", 0.28, 0.08, -0.004, 0.004)
 
     for k in s:
         s[k] = float(np.clip(s[k], 0, 1))
@@ -3992,6 +4463,9 @@ def run_simulation():
                 state.setdefault("energy", 0.75)
                 state.setdefault("hunger", 0.25)
                 state.setdefault("social_need", 0.40)
+                state.setdefault("fatigue_debt", 0.20)
+                state.setdefault("self_control", 0.60)
+                state.setdefault("time_pressure", 0.25)
                 agent.setdefault("last_activity", "")
                 agent.setdefault("last_action", "")
     else:
@@ -4007,6 +4481,9 @@ def run_simulation():
                 state.setdefault("energy", 0.75)
                 state.setdefault("hunger", 0.25)
                 state.setdefault("social_need", 0.40)
+                state.setdefault("fatigue_debt", 0.20)
+                state.setdefault("self_control", 0.60)
+                state.setdefault("time_pressure", 0.25)
                 agent.setdefault("last_activity", "")
                 agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
@@ -4075,9 +4552,16 @@ def run_simulation():
                     {
                         "closeness": 0.5,
                         "trust": 0.5,
+                        "obligation": 0.5,
+                        "friction": 0.5,
                         "last_interaction_day": 0,
                     },
                 )
+                rel[key].setdefault("closeness", 0.5)
+                rel[key].setdefault("trust", 0.5)
+                rel[key].setdefault("obligation", 0.5)
+                rel[key].setdefault("friction", 0.5)
+                rel[key].setdefault("last_interaction_day", 0)
 
     for a in agents:
         if not a.get("locations"):
@@ -4127,12 +4611,15 @@ def run_simulation():
 
         cached_actions = load_agent_actions(agent_id)
         if cached_actions:
-            actions[agent_id] = cached_actions
+            actions[agent_id] = {
+                activity: _ensure_behavioral_action_balance(activity, acts)
+                for activity, acts in cached_actions.items()
+            }
         else:
             # Action space is expensive; cache for reuse across runs.
             base_actions = generate_actions(a, schedules[agent_id])
             actions[agent_id] = build_action_space_for_agent(a, base_actions)
-            save_agent_actions(agent_id, actions[agent_id])
+        save_agent_actions(agent_id, actions[agent_id])
 
     # Print each agent's base routine at the beginning of the simulation.
     for agent in agents:
@@ -4447,6 +4934,7 @@ def run_simulation():
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
                 step_recollections = []
+                plan_commitment = _activity_commitment_level(scheduled_activity)
                 plan_recall = evoke_memory(
                     agent,
                     "planning",
@@ -4455,16 +4943,24 @@ def run_simulation():
                     social_context,
                     env_context,
                     policy_desc,
+                    context_labels=_build_recall_context_labels(
+                        agent,
+                        activity=scheduled_activity,
+                        time_str=time_str,
+                        location=agent.get("locations", {}).get("current", ""),
+                        commitment_level=plan_commitment,
+                    ),
                 )
                 if plan_recall.get("recollection"):
                     step_recollections.append(plan_recall["recollection"])
                 plan = planning(agent, perc, recall_context=plan_recall)
+                plan_text = format_plan_text(plan)
                 activity, change_reason, changed = maybe_adjust_activity(
                     agent,
                     time_str,
                     scheduled_activity,
                     perc,
-                    plan,
+                    plan_text,
                     env_context,
                     env_events,
                     policy_desc,
@@ -4502,6 +4998,11 @@ def run_simulation():
                 effective_activity = activity
                 if travel.get("status") in {"departed", "in_transit"}:
                     act = f"乘坐{travel.get('mode', '交通工具')}移动"
+                    action_meta = {
+                        "decision_driver": "时空约束",
+                        "commitment_level": _activity_commitment_level(activity),
+                        "scores": {act: {"weight": 1.0, "components": {}, "styles": ["quick"]}},
+                    }
                     outcome = (
                         f"从【{resolved_location}】前往【{movement['target_location']}】，"
                         f"使用【{travel.get('mode', '未知方式')}】，路程约 {travel.get('distance_km', 0.0):.1f} km，"
@@ -4521,21 +5022,29 @@ def run_simulation():
                         "action",
                         activity,
                         perc,
-                        plan,
+                        plan_text,
                         resolved_location,
                         time_str,
+                        context_labels=_build_recall_context_labels(
+                            agent,
+                            activity=activity,
+                            time_str=time_str,
+                            location=resolved_location,
+                            commitment_level=_activity_commitment_level(activity),
+                        ),
                     )
                     if action_recall.get("recollection"):
                         step_recollections.append(action_recall["recollection"])
-                    act = choose_action(
+                    act, action_meta = choose_action(
                         agent,
                         activity,
                         actions[agent_id],
-                        context=f"{activity} {perc}",
+                        context=f"{activity} {perc} {plan_text}",
                         location_bias=location_bias,
                         location=resolved_location,
                         time_str=time_str,
                         recall_context=action_recall,
+                        return_debug=True,
                     )
                     outcome = f"在【{activity}】中执行了【{act}】"
                 reflection_recall = evoke_memory(
@@ -4545,12 +5054,27 @@ def run_simulation():
                     act,
                     outcome,
                     time_str,
+                    context_labels=_build_recall_context_labels(
+                        agent,
+                        activity=effective_activity,
+                        time_str=time_str,
+                        location=resolved_location,
+                        commitment_level=action_meta.get("commitment_level", _activity_commitment_level(effective_activity)),
+                    ),
                 )
                 if reflection_recall.get("recollection"):
                     step_recollections.append(reflection_recall["recollection"])
                 refl = reflection(agent, outcome, recall_context=reflection_recall)
+                refl_text = format_reflection_text(refl)
                 if HUMAN_REALISM_ENABLED:
-                    update_needs(agent, time_str, effective_activity)
+                    update_needs(
+                        agent,
+                        time_str,
+                        effective_activity,
+                        cfg=HUMAN_REALISM_CONFIG,
+                        changed=changed,
+                        travel=travel,
+                    )
 
                 if env_events:
                     for ev in env_events:
@@ -4572,7 +5096,7 @@ def run_simulation():
                         day=day,
                         time_str=time_str,
                         activity=effective_activity,
-                        reflection=refl,
+                        reflection=refl_text,
                         outcome=outcome,
                     )
                     if sent_remote_messages:
@@ -4600,7 +5124,7 @@ def run_simulation():
                     for sender_id in extract_sender_agent_ids(inbox_messages):
                         if sender_id not in partners:
                             partners.append(sender_id)
-                    signal = infer_interaction_signal(refl)
+                    signal = infer_interaction_signal(refl_text)
                     for pid in partners:
                         relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
                     state_after = dict(agent.get("state", {}))
@@ -4619,7 +5143,7 @@ def run_simulation():
                     priorities = agent.get("intentions", {}).get("priorities", [])
                     goal_relevance = 0.2
                     for p in priorities:
-                        if p and (p in effective_activity or p in plan or p in refl):
+                        if p and (p in effective_activity or p in plan_text or p in refl_text):
                             goal_relevance = 0.8
                             break
                     salience = compute_episode_salience(
@@ -4631,10 +5155,18 @@ def run_simulation():
                     tags = infer_episode_tags(
                         effective_activity,
                         act,
-                        refl,
+                        refl_text,
                         env_events=[ev.get("description", ev.get("name", "")) for ev in env_events],
                         policy_event=policy_desc if policy else "",
                     )
+                    need_snapshot = {
+                        "energy": round(float(state_after.get("energy", 0.75)), 3),
+                        "hunger": round(float(state_after.get("hunger", 0.25)), 3),
+                        "social_need": round(float(state_after.get("social_need", 0.40)), 3),
+                        "fatigue_debt": round(float(state_after.get("fatigue_debt", 0.20)), 3),
+                        "self_control": round(float(state_after.get("self_control", 0.60)), 3),
+                        "time_pressure": round(float(state_after.get("time_pressure", 0.25)), 3),
+                    }
                     episode = {
                         "episode_id": str(uuid.uuid4()),
                         "day": day,
@@ -4649,16 +5181,23 @@ def run_simulation():
                         "policy_event": policy_desc if policy else "",
                         "social_partners": partners,
                         "perception": perc,
-                        "plan": plan,
+                        "plan": plan_text,
+                        "plan_struct": plan,
                         "outcome": outcome,
-                        "reflection": refl,
+                        "reflection": refl_text,
+                        "reflection_struct": refl,
                         "state_before": state_before,
                         "state_after": state_after,
+                        "need_snapshot": need_snapshot,
                         "delta": delta,
                         "tags": tags,
                         "recollections": list(step_recollections),
                         "salience": salience,
                         "valence": float(np.clip(delta.get("emotion", 0.0), -1.0, 1.0)),
+                        "decision_driver": action_meta.get("decision_driver", "惯性延续"),
+                        "change_reason": change_reason or "",
+                        "commitment_level": action_meta.get("commitment_level", _activity_commitment_level(effective_activity)),
+                        "expected_outcome": str(plan.get("expected_outcome", "")).strip(),
                         "created_at_day": day,
                     }
                     agent.setdefault("episodes", []).append(episode)
@@ -4666,7 +5205,9 @@ def run_simulation():
                     append_agent_episode(agent_id, episode)
                     episode_text = (
                         f"Day {day} {time_str} {effective_activity}/{act} @ {location} "
-                        f"tags={','.join(tags)} salience={salience:.2f} reflection={refl}"
+                        f"driver={episode['decision_driver']} commitment={episode['commitment_level']} "
+                        f"needs={json.dumps(need_snapshot, ensure_ascii=False)} "
+                        f"tags={','.join(tags)} salience={salience:.2f} reflection={refl_text}"
                     )
                     vector_db_add_entry(agent_id, "episode", episode_text, sim_day=day, sim_time=time_str)
                     agent["last_activity"] = effective_activity
@@ -4696,6 +5237,23 @@ def run_simulation():
                 if unique_recollections:
                     recall_line = f"Recall: {' | '.join(unique_recollections)}\n"
                 memory_review_line = f"MemoryReview: {memory_review}\n" if memory_review else ""
+                decision_line = ""
+                if action_meta.get("decision_driver"):
+                    decision_line = (
+                        f"DecisionDriver: {action_meta.get('decision_driver')} "
+                        f"(commitment={action_meta.get('commitment_level', '')})\n"
+                    )
+                needs_line = ""
+                if HUMAN_REALISM_ENABLED:
+                    needs_line = (
+                        "Needs: "
+                        f"energy={agent['state'].get('energy', 0.75):.2f} "
+                        f"hunger={agent['state'].get('hunger', 0.25):.2f} "
+                        f"social_need={agent['state'].get('social_need', 0.40):.2f} "
+                        f"fatigue_debt={agent['state'].get('fatigue_debt', 0.20):.2f} "
+                        f"self_control={agent['state'].get('self_control', 0.60):.2f} "
+                        f"time_pressure={agent['state'].get('time_pressure', 0.25):.2f}\n"
+                    )
 
                 log = f"""
 [{agent['name']} @ {time_str}]
@@ -4710,26 +5268,28 @@ TravelMinutes: {travel.get('minutes', 0)}
 TravelStatus: {travel.get('status', 'stationary')}
 Environment: {env_context}
 Perception: {perc}
-Plan: {plan}
+Plan: {plan_text}
 {recall_line}Action: {act}
-Outcome: {outcome}
-Reflection: {refl}
+{decision_line}{needs_line}Outcome: {outcome}
+Reflection: {refl_text}
 {memory_review_line}
 """
                 print(log)
                 daily_logs[agent["id"]] += log
                 append_agent_log(agent, log)
                 vector_db_add_entry(agent["id"], "log", log, sim_day=day, sim_time=time_str)
-                vector_db_add_entry(agent["id"], "plan", plan, sim_day=day, sim_time=time_str)
-                vector_db_add_entry(agent["id"], "reflection", refl, sim_day=day, sim_time=time_str)
+                vector_db_add_entry(agent["id"], "plan", plan_text, sim_day=day, sim_time=time_str)
+                vector_db_add_entry(agent["id"], "reflection", refl_text, sim_day=day, sim_time=time_str)
                 vector_db_add_entry(agent["id"], "action", outcome, sim_day=day, sim_time=time_str)
                 step_ctx.update({
                     "perception": perc,
-                    "plan": plan,
+                    "plan": plan_text,
+                    "plan_struct": plan,
                     "activity": effective_activity,
                     "action": act,
                     "outcome": outcome,
-                    "reflection": refl,
+                    "reflection": refl_text,
+                    "reflection_struct": refl,
                     "log": log,
                     "changed": changed,
                     "change_reason": change_reason,
@@ -4751,8 +5311,8 @@ Reflection: {refl}
                             action=act,
                             outcome=outcome,
                             perception=perc,
-                            plan=plan,
-                            reflection=refl,
+                            plan=plan_text,
+                            reflection=refl_text,
                             changed=changed,
                             change_reason=change_reason,
                             travel=travel,

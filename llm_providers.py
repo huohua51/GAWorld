@@ -48,11 +48,24 @@ class OllamaProvider:
 class OpenAIProvider:
     """OpenAI Chat Completions wrapper (single-turn)."""
 
-    def __init__(self, base_url, model, api_key=None, api_key_env="OPENAI_API_KEY", timeout=120):
+    def __init__(
+        self,
+        base_url,
+        model,
+        api_key=None,
+        api_key_env="OPENAI_API_KEY",
+        timeout=120,
+        stream=False,
+        max_tokens=None,
+        temperature=None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key or os.getenv(api_key_env)
         self.timeout = timeout
+        self.stream = bool(stream)
+        self.max_tokens = max_tokens
+        self.temperature = temperature
 
     def call(self, prompt):
         headers = {
@@ -63,6 +76,70 @@ class OpenAIProvider:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
         }
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.stream:
+            payload["stream"] = True
+            with requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=(10, self.timeout),
+                stream=True,
+            ) as r:
+                r.raise_for_status()
+                parts = []
+                for raw_line in r.iter_lines(decode_unicode=True):
+                    if not raw_line:
+                        continue
+                    line = raw_line.strip()
+                    # Skip SSE metadata / keep-alive lines such as:
+                    # `event: message`, `: keep-alive`, or empty chunks.
+                    if not line or line.startswith(":") or line.startswith("event:"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    line = line[5:].strip()
+                    if not line:
+                        continue
+                    if line == "[DONE]":
+                        break
+                    try:
+                        data = requests.models.complexjson.loads(line)
+                    except ValueError:
+                        # Some OpenAI-compatible backends emit non-JSON
+                        # heartbeat payloads in `data:` frames.
+                        continue
+                    choices = data.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    chunk = delta.get("content")
+                    if isinstance(chunk, str) and chunk:
+                        parts.append(chunk)
+                        continue
+                    if isinstance(chunk, list):
+                        for item in chunk:
+                            if isinstance(item, dict):
+                                text = item.get("text")
+                                if isinstance(text, str) and text:
+                                    parts.append(text)
+                        continue
+                    message = choices[0].get("message") or {}
+                    chunk = message.get("content")
+                    if isinstance(chunk, str) and chunk:
+                        parts.append(chunk)
+                        continue
+                    if isinstance(chunk, list):
+                        for item in chunk:
+                            if isinstance(item, dict):
+                                text = item.get("text")
+                                if isinstance(text, str) and text:
+                                    parts.append(text)
+                return "".join(parts)
+
         r = requests.post(
             f"{self.base_url}/chat/completions",
             headers=headers,
@@ -150,6 +227,9 @@ class LLMRouter:
                     api_key=cfg.get("api_key"),
                     api_key_env=cfg.get("api_key_env", "OPENAI_API_KEY"),
                     timeout=cfg.get("timeout", 120),
+                    stream=cfg.get("stream", False),
+                    max_tokens=cfg.get("max_tokens"),
+                    temperature=cfg.get("temperature"),
                 )
             elif p_type in ("claude", "anthropic"):
                 providers[name] = AnthropicProvider(

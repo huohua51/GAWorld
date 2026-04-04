@@ -79,11 +79,24 @@ def compute_episode_salience(delta_stress, event_intensity, novelty, goal_releva
     return _clamp(salience)
 
 
-def update_needs(agent, time_str, activity):
+def _behavior_cfg(cfg=None):
+    root = cfg if isinstance(cfg, dict) else {}
+    return root.get("behavior", {}) if isinstance(root.get("behavior", {}), dict) else {}
+
+
+def update_needs(agent, time_str, activity, cfg=None, changed=False, travel=None):
+    behavior_cfg = _behavior_cfg(cfg)
+    fatigue_work_gain = float(behavior_cfg.get("fatigue_work_gain", 0.035))
+    fatigue_sleep_recovery = float(behavior_cfg.get("fatigue_sleep_recovery", 0.18))
+    self_control_recovery = float(behavior_cfg.get("self_control_recovery", 0.08))
+    time_pressure_decay = float(behavior_cfg.get("time_pressure_decay", 0.06))
     state = agent.setdefault("state", {})
     state["energy"] = float(state.get("energy", 0.75))
     state["hunger"] = float(state.get("hunger", 0.25))
     state["social_need"] = float(state.get("social_need", 0.40))
+    state["fatigue_debt"] = float(state.get("fatigue_debt", 0.20))
+    state["self_control"] = float(state.get("self_control", 0.60))
+    state["time_pressure"] = float(state.get("time_pressure", 0.25))
     text = str(activity or "")
     minutes = _time_str_to_minutes(time_str)
     work_like = _contains_any(
@@ -107,6 +120,7 @@ def update_needs(agent, time_str, activity):
             "报告",
         ],
     )
+    sleep_like = _contains_any(text, ["睡", "入睡", "就寝"])
     rest_like = _contains_any(text, ["休息", "睡", "午休", "睡前", "放松", "躺", "小憩"])
     meal_like = _contains_any(
         text,
@@ -151,6 +165,12 @@ def update_needs(agent, time_str, activity):
         ],
     )
     active_like = _contains_any(text, ["通勤", "散步", "运动", "健身", "跑步", "采购", "买菜", "出行"])
+    transit_like = str((travel or {}).get("status", "")).strip() in {"departed", "in_transit"} or _contains_any(
+        text,
+        ["通勤", "前往", "移动", "赶路"],
+    )
+    quiet_recovery = rest_like and not social_like and not work_like
+    late_hour = minutes is not None and (minutes >= 21 * 60 or minutes < 5 * 60)
 
     energy_delta = -0.012
     if work_like:
@@ -183,9 +203,63 @@ def update_needs(agent, time_str, activity):
         social_delta -= 0.08
     state["social_need"] += social_delta
 
+    fatigue_delta = 0.0
+    if work_like:
+        fatigue_delta += fatigue_work_gain
+    if active_like:
+        fatigue_delta += 0.018
+    if transit_like:
+        fatigue_delta += 0.025
+    if late_hour and not sleep_like:
+        fatigue_delta += 0.015
+    if sleep_like:
+        fatigue_delta -= fatigue_sleep_recovery
+    elif quiet_recovery:
+        fatigue_delta -= fatigue_sleep_recovery * 0.35
+    if meal_like:
+        fatigue_delta -= 0.015
+    state["fatigue_debt"] += fatigue_delta
+
+    time_pressure_delta = 0.008
+    if work_like:
+        time_pressure_delta += 0.015
+    if transit_like:
+        time_pressure_delta += 0.06
+    if changed:
+        time_pressure_delta += 0.10
+    if rest_like or sleep_like:
+        time_pressure_delta -= time_pressure_decay
+    elif meal_like:
+        time_pressure_delta -= time_pressure_decay * 0.35
+    state["time_pressure"] += time_pressure_delta
+
+    stress = float(state.get("stress", 0.5))
+    fatigue = float(state.get("fatigue_debt", 0.20))
+    hunger = float(state.get("hunger", 0.25))
+    strain = _clamp(0.42 * stress + 0.36 * fatigue + 0.22 * hunger)
+    self_control_delta = -0.01
+    if strain > 0.55:
+        self_control_delta -= (strain - 0.55) * 0.20
+    if sleep_like:
+        self_control_delta += self_control_recovery
+    elif quiet_recovery:
+        self_control_delta += self_control_recovery * 0.45
+    if meal_like:
+        self_control_delta += 0.03
+    if social_like and state["social_need"] > 0.60:
+        self_control_delta += 0.02
+    if changed:
+        self_control_delta -= 0.03
+    if late_hour and work_like:
+        self_control_delta -= 0.02
+    state["self_control"] += self_control_delta
+
     state["energy"] = _clamp(state["energy"])
     state["hunger"] = _clamp(state["hunger"])
     state["social_need"] = _clamp(state["social_need"])
+    state["fatigue_debt"] = _clamp(state["fatigue_debt"])
+    state["self_control"] = _clamp(state["self_control"])
+    state["time_pressure"] = _clamp(state["time_pressure"])
 
 
 def infer_episode_tags(activity, action, reflection, env_events=None, policy_event=None):
@@ -354,10 +428,22 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
             "top_episode_ids": [],
             "memory_text": f"[Day {day}] 今天整体较平稳，按常规节奏推进。",
         }
-    summary_lines = [
-        f"{e.get('time', '')} {e.get('final_activity', '')} -> {e.get('action', '')} (salience={float(e.get('salience', 0.0)):.2f})"
-        for e in selected[:5]
-    ]
+    summary_lines = []
+    for e in selected[:5]:
+        driver = str(e.get("decision_driver", "")).strip()
+        cost = str(e.get("change_reason", "")).strip()
+        expected = str(e.get("expected_outcome", "")).strip()
+        line = (
+            f"{e.get('time', '')} {e.get('final_activity', '')} -> {e.get('action', '')} "
+            f"(salience={float(e.get('salience', 0.0)):.2f})"
+        )
+        if driver:
+            line += f" driver={driver}"
+        if cost:
+            line += f" cost={cost}"
+        if expected:
+            line += f" expect={expected}"
+        summary_lines.append(line)
     base_summary = "；".join(summary_lines)
     result = {
         "summary": base_summary,
@@ -409,6 +495,8 @@ def relationship_update(agent, neighbor_id, interaction_signal, cfg):
         {
             "closeness": 0.5,
             "trust": 0.5,
+            "obligation": 0.5,
+            "friction": 0.5,
             "last_interaction_day": int(agent.get("current_day", 0)),
         },
     )
@@ -416,11 +504,17 @@ def relationship_update(agent, neighbor_id, interaction_signal, cfg):
     if signal == "positive":
         item["closeness"] = _clamp(float(item.get("closeness", 0.5)) + 0.03)
         item["trust"] = _clamp(float(item.get("trust", 0.5)) + 0.02)
+        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.015)
+        item["friction"] = _clamp(float(item.get("friction", 0.5)) - 0.02)
     elif signal == "negative":
         item["closeness"] = _clamp(float(item.get("closeness", 0.5)) - 0.04)
         item["trust"] = _clamp(float(item.get("trust", 0.5)) - 0.03)
+        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.01)
+        item["friction"] = _clamp(float(item.get("friction", 0.5)) + 0.05)
     else:
         item["closeness"] = _clamp(float(item.get("closeness", 0.5)) + 0.01)
+        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.015)
+        item["friction"] = _clamp(float(item.get("friction", 0.5)) - 0.005)
     item["last_interaction_day"] = int(agent.get("current_day", 0))
     return item
 
@@ -428,7 +522,11 @@ def relationship_update(agent, neighbor_id, interaction_signal, cfg):
 def relationship_weight(agent, neighbor_id):
     rel = agent.get("relationships", {})
     item = rel.get(str(neighbor_id), {})
-    return float(item.get("closeness", 0.5))
+    closeness = float(item.get("closeness", 0.5))
+    trust = float(item.get("trust", 0.5))
+    obligation = float(item.get("obligation", 0.5))
+    friction = float(item.get("friction", 0.5))
+    return max(0.01, closeness * 0.45 + trust * 0.30 + obligation * 0.20 - friction * 0.15)
 
 
 def infer_interaction_signal(reflection_text):

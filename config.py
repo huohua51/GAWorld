@@ -28,6 +28,21 @@ CONFIG = {
                 "model": "qwen3.5:9b",
                 "timeout": 600,
             },
+            "omlx_qwen": {
+                "type": "openai",
+                "base_url": "http://127.0.0.1:8000/v1",
+                "model": "Qwen3.5-9B-MLX-4bit",
+                # omlx exposes an OpenAI-compatible API locally.
+                # If your local server does not require auth, this placeholder is sufficient.
+                "api_key": os.environ.get("OMLX_API_KEY", "omlx-local"),
+                # Stream responses so the client receives incremental chunks
+                # during long local prefill/generation phases.
+                "stream": True,
+                # Keep local generations bounded; the simulator makes many calls.
+                "max_tokens": 256,
+                "temperature": 0.2,
+                "timeout": 600,
+            },
             "openai_gpt": {
                 "type": "openai",
                 "base_url": "https://api.openai.com/v1",
@@ -44,15 +59,15 @@ CONFIG = {
             },
         },
         "routing": {
-            "default": "ollama_local",
+            "default": "ollama_qwen",
             "tasks": {
-                "schedule": "ollama_local",
+                "schedule": "omlx_qwen",
             },
         },
     },
     # Simulation
-    "agent_ids": [43],
-    "sim_days": 50,
+    "agent_ids": [2],
+    "sim_days": 1,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,
@@ -141,7 +156,7 @@ CONFIG = {
     },
     # Memory model compatibility gate.
     # When version changes and stateful mode is enabled, run `reset` once.
-    "memory_model_version": 2,
+    "memory_model_version": 3,
     "require_clean_reset_on_memory_model_change": True,
     # Vector DB (memory + logs)
     "vector_db_path": "output/memory/vector_db.sqlite",
@@ -224,6 +239,17 @@ CONFIG = {
         "behavior": {
             "habit_learning_rate": 0.08,
             "inertia_weight": 0.25,
+            "decision_noise": 0.18,
+            "fatigue_work_gain": 0.035,
+            "fatigue_sleep_recovery": 0.18,
+            "self_control_recovery": 0.08,
+            "time_pressure_decay": 0.06,
+            "commitment_weights": {
+                "high": 1.2,
+                "medium": 0.6,
+                "low": 0.2,
+            },
+            "avoidance_bonus_scale": 1.1,
             "need_weights": {
                 "energy": 0.45,
                 "hunger": 0.30,

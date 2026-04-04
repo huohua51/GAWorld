@@ -16,6 +16,9 @@ class TestMemoryRecallAndReview(unittest.TestCase):
                 "energy": 0.6,
                 "hunger": 0.4,
                 "social_need": 0.4,
+                "fatigue_debt": 0.3,
+                "self_control": 0.6,
+                "time_pressure": 0.3,
             },
             "habits": {},
             "last_activity": "",
@@ -31,7 +34,18 @@ class TestMemoryRecallAndReview(unittest.TestCase):
                 }
             ]
         }
-        with patch.object(sim, "STATEFUL", False):
+        behavior_cfg = {
+            "behavior": {
+                "inertia_weight": 0.25,
+                "decision_noise": 0.0,
+                "avoidance_bonus_scale": 1.1,
+                "need_weights": {"energy": 0.45, "hunger": 0.30, "social_need": 0.25},
+                "commitment_weights": {"high": 1.2, "medium": 0.6, "low": 0.2},
+            }
+        }
+        with patch.object(sim, "STATEFUL", False), patch.object(
+            sim, "HUMAN_REALISM_CONFIG", behavior_cfg
+        ):
             random.seed(11)
             productive = 0
             for _ in range(200):
@@ -48,6 +62,63 @@ class TestMemoryRecallAndReview(unittest.TestCase):
                 if choice == "推进方案":
                     productive += 1
         self.assertGreater(productive, 115)
+
+    def test_positive_recall_reinforces_repeating_good_action(self):
+        agent = {
+            "id": 25,
+            "state": {
+                "emotion": 0.55,
+                "stress": 0.45,
+                "econ_security": 0.5,
+                "energy": 0.65,
+                "hunger": 0.3,
+                "social_need": 0.35,
+                "fatigue_debt": 0.2,
+                "self_control": 0.7,
+                "time_pressure": 0.25,
+            },
+            "habits": {},
+            "last_activity": "",
+            "last_action": "",
+        }
+        action_space = {"上午工作": ["推进方案", "拖一会儿再开始，先刷手机分心"]}
+        recall_context = {
+            "hits": [
+                {
+                    "type": "episode",
+                    "text": "上次推进方案进展很顺利，得到认可，自己也更放松。",
+                    "score": 0.9,
+                }
+            ]
+        }
+        behavior_cfg = {
+            "behavior": {
+                "inertia_weight": 0.25,
+                "decision_noise": 0.0,
+                "avoidance_bonus_scale": 1.1,
+                "need_weights": {"energy": 0.45, "hunger": 0.30, "social_need": 0.25},
+                "commitment_weights": {"high": 1.2, "medium": 0.6, "low": 0.2},
+            }
+        }
+        with patch.object(sim, "STATEFUL", False), patch.object(
+            sim, "HUMAN_REALISM_CONFIG", behavior_cfg
+        ):
+            random.seed(29)
+            productive = 0
+            for _ in range(200):
+                choice = sim.choose_action(
+                    agent,
+                    "上午工作",
+                    action_space,
+                    context="上午工作",
+                    location_bias={},
+                    location="Office",
+                    time_str="10:00",
+                    recall_context=recall_context,
+                )
+                if choice == "推进方案":
+                    productive += 1
+        self.assertGreater(productive, 140)
 
     def test_evoke_memory_surfaces_recollection_and_changes_state(self):
         agent = {
@@ -93,7 +164,7 @@ class TestMemoryRecallAndReview(unittest.TestCase):
         agent = {
             "id": 24,
             "name": "复盘者",
-            "state": {"emotion": 0.5, "stress": 0.5},
+            "state": {"emotion": 0.5, "stress": 0.5, "fatigue_debt": 0.4, "self_control": 0.5},
             "memory": [],
             "episodes": [
                 {
@@ -103,6 +174,7 @@ class TestMemoryRecallAndReview(unittest.TestCase):
                     "final_activity": "上午工作",
                     "action": "推进项目",
                     "reflection": "这次推进很顺利",
+                    "decision_driver": "现实承诺约束",
                     "tags": ["work", "success"],
                     "salience": 0.8,
                 }

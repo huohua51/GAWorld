@@ -44,6 +44,9 @@ class TestStateDynamicsRebalancing(unittest.TestCase):
                 "energy": 0.75,
                 "hunger": 0.25,
                 "social_need": 0.4,
+                "fatigue_debt": 0.2,
+                "self_control": 0.6,
+                "time_pressure": 0.25,
             }
         }
         tracked = {k: [] for k in agent["state"]}
@@ -68,6 +71,9 @@ class TestStateDynamicsRebalancing(unittest.TestCase):
             "energy",
             "hunger",
             "social_need",
+            "fatigue_debt",
+            "self_control",
+            "time_pressure",
         ]:
             self.assertGreater(min(tracked[key]), 0.05, key)
             self.assertLess(max(tracked[key]), 0.95, key)

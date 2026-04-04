@@ -29,6 +29,18 @@ class TestEpisodePersistenceAcrossDays(unittest.TestCase):
                     "time": "10:00",
                     "final_activity": "上午工作",
                     "action": "推进项目",
+                    "decision_driver": "现实承诺约束",
+                    "need_snapshot": {
+                        "energy": 0.62,
+                        "hunger": 0.31,
+                        "social_need": 0.42,
+                        "fatigue_debt": 0.28,
+                        "self_control": 0.66,
+                        "time_pressure": 0.24,
+                    },
+                    "change_reason": "",
+                    "commitment_level": "high",
+                    "expected_outcome": "希望把项目按时推进",
                     "salience": 0.6,
                     "created_at_day": 2,
                 },
@@ -38,6 +50,10 @@ class TestEpisodePersistenceAcrossDays(unittest.TestCase):
             self.assertEqual(2, len(episodes))
             self.assertEqual("e1", episodes[0]["episode_id"])
             self.assertEqual("e2", episodes[1]["episode_id"])
+            self.assertEqual("现实承诺约束", episodes[1]["decision_driver"])
+            self.assertEqual("high", episodes[1]["commitment_level"])
+            self.assertIn("fatigue_debt", episodes[1]["need_snapshot"])
+            self.assertEqual("", episodes[0].get("change_reason", ""))
 
 
 if __name__ == "__main__":
