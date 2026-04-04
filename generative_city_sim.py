@@ -1203,7 +1203,7 @@ def reset_simulation():
                 os.remove(vector_db_path)
         except OSError:
             pass
-    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR, ENV_OUTPUT_DIR, VISUALIZATION_OUTPUT_DIR]:
+    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR, ENV_OUTPUT_DIR, DIARY_OUTPUT_DIR, VISUALIZATION_OUTPUT_DIR]:
         if output_dir not in (memory_dir, log_dir):
             _clear_dir(output_dir)
     save_sim_state({
@@ -1381,6 +1381,7 @@ MEMORY_REVIEW_CONFIG = HUMAN_MEMORY_CONFIG.get("review", {}) if HUMAN_REALISM_EN
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
 ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
+DIARY_OUTPUT_DIR = CONFIG.get("diary_output_dir", "output/diaries")
 VISUALIZATION_CONFIG = CONFIG.get("visualization", {})
 VISUALIZATION_ENABLED = bool(VISUALIZATION_CONFIG.get("enabled", True))
 VISUALIZATION_OUTPUT_DIR = VISUALIZATION_CONFIG.get("output_dir", "output/visualization")
@@ -2727,6 +2728,175 @@ def _social_relationship_snapshot(agent):
     }
 
 
+def _current_emotion_text(agent):
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    emotion = float(state.get("emotion", 0.5))
+    stress = float(state.get("stress", 0.5))
+    if emotion >= 0.7:
+        mood = "明显偏积极"
+    elif emotion <= 0.35:
+        mood = "明显偏低落"
+    else:
+        mood = "中性偏波动"
+    if stress >= 0.72:
+        pressure = "压力偏高"
+    elif stress <= 0.35:
+        pressure = "压力较低"
+    else:
+        pressure = "压力中等"
+    return f"当前情绪：{mood}（emotion={emotion:.2f}）；当前压力：{pressure}（stress={stress:.2f}）"
+
+
+def _is_meaningful_text(text):
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return False
+    return cleaned not in {"无", "无特殊变化", "今天几乎没有与熟人互动。"}
+
+
+def _activity_matches_keywords(activity, keywords):
+    text = str(activity or "")
+    return any(keyword in text for keyword in keywords)
+
+
+def _is_location_time_relevant(activity, time_str="", location=""):
+    if _activity_matches_keywords(
+        activity,
+        [
+            "通勤", "前往", "移动", "会面", "拜访", "上班", "工作", "上课", "学习",
+            "买菜", "购物", "吃饭", "早餐", "午饭", "晚饭", "散步", "运动", "看病",
+            "医院", "诊所", "睡前", "休息",
+        ],
+    ):
+        return True
+    if is_sleep_activity(str(activity or "")):
+        return True
+    return bool(str(time_str).strip() and str(location).strip())
+
+
+def _is_social_context_relevant(agent, activity, social_context):
+    if not _is_meaningful_text(social_context):
+        return False
+    if _activity_matches_keywords(
+        activity,
+        ["社交", "联系", "沟通", "拜访", "会面", "聚会", "聊天", "会议", "组会", "讨论", "协作", "家人", "朋友"],
+    ):
+        return True
+    snapshot = _social_relationship_snapshot(agent)
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    if snapshot["obligation"] > 0.65 or snapshot["friction"] > 0.65:
+        return True
+    if float(state.get("social_need", 0.4)) > 0.65:
+        return True
+    return False
+
+
+def _is_physical_environment_relevant(activity, env_context, env_events):
+    if not _is_meaningful_text(env_context) and not env_events:
+        return False
+    combined = " ".join(
+        [str(env_context or "")] + [str(ev.get("description", ev.get("name", ""))) for ev in (env_events or [])]
+    )
+    physical_keywords = ["雨", "雪", "风", "高温", "降温", "寒潮", "拥堵", "封路", "施工", "停电", "噪音", "天气", "路况"]
+    activity_keywords = ["通勤", "前往", "移动", "散步", "运动", "买菜", "购物", "拜访", "会面", "看病"]
+    return any(keyword in combined for keyword in physical_keywords) and _activity_matches_keywords(activity, activity_keywords)
+
+
+def _is_social_environment_relevant(activity, env_events, policy_desc):
+    combined = " ".join(
+        [str(policy_desc or "")] + [str(ev.get("description", ev.get("name", ""))) for ev in (env_events or [])]
+    )
+    if not _is_meaningful_text(combined):
+        return False
+    social_keywords = ["政策", "工资", "就业", "监管", "物价", "裁员", "舆论", "抗议", "社区", "学校", "医院", "平台"]
+    activity_keywords = ["工作", "上班", "学习", "上课", "买菜", "购物", "社交", "联系", "沟通", "社区", "看病"]
+    return any(keyword in combined for keyword in social_keywords) and _activity_matches_keywords(activity, activity_keywords)
+
+
+def _summarize_environment_refs(env_context, env_events, policy_desc):
+    physical = []
+    social = []
+    for ev in env_events or []:
+        desc = str(ev.get("description", ev.get("name", ""))).strip()
+        if not desc:
+            continue
+        ev_type = str(ev.get("type", "")).strip().lower()
+        if ev_type in {"natural", "weather"} or any(k in desc for k in ["雨", "雪", "风", "高温", "拥堵", "封路", "施工", "停电"]):
+            physical.append(desc)
+        else:
+            social.append(desc)
+    if _is_meaningful_text(env_context) and not physical and not social:
+        physical.append(str(env_context).strip())
+    if _is_meaningful_text(policy_desc):
+        social.append(str(policy_desc).strip())
+    return {
+        "physical": "；".join(dict.fromkeys(physical)),
+        "social": "；".join(dict.fromkeys(social)),
+    }
+
+
+def _build_decision_reference_bundle(
+    agent,
+    activity,
+    memory_hint="",
+    recollection="",
+    time_str="",
+    location="",
+    env_context="",
+    env_events=None,
+    policy_desc="",
+    social_context="",
+):
+    env_summary = _summarize_environment_refs(env_context, env_events or [], policy_desc)
+    refs = {
+        "emotion_text": _current_emotion_text(agent),
+        "memory_hint": memory_hint or "暂无重要经验",
+        "recollection": recollection or "无明显回忆",
+        "physical_env_relevant": _is_physical_environment_relevant(activity, env_context, env_events or []),
+        "social_env_relevant": _is_social_environment_relevant(activity, env_events or [], policy_desc),
+        "location_time_relevant": _is_location_time_relevant(activity, time_str=time_str, location=location),
+        "social_network_relevant": _is_social_context_relevant(agent, activity, social_context),
+        "physical_env_text": env_summary.get("physical", ""),
+        "social_env_text": env_summary.get("social", ""),
+        "location_time_text": (
+            f"当前地点：{location or '未知'}；当前时间：{time_str or '未知'}"
+            if _is_location_time_relevant(activity, time_str=time_str, location=location)
+            else ""
+        ),
+        "social_network_text": social_context if _is_social_context_relevant(agent, activity, social_context) else "",
+    }
+    return refs
+
+
+def _same_activity_habit_entry(agent, activity):
+    habits = agent.get("habits", {}) if isinstance(agent, dict) else {}
+    if not isinstance(habits, dict):
+        return {}
+    counts = defaultdict(int)
+    strength_total = 0.0
+    strength_count = 0
+    for key, item in habits.items():
+        if not str(key).endswith(f"|{activity}"):
+            continue
+        if not isinstance(item, dict):
+            continue
+        for action, count in item.get("action_counts", {}).items():
+            try:
+                counts[str(action)] += int(count)
+            except (TypeError, ValueError):
+                continue
+        strength_total += float(item.get("strength", 0.0))
+        strength_count += 1
+    if not counts:
+        return {}
+    preferred_action = max(counts.items(), key=lambda x: x[1])[0]
+    avg_strength = strength_total / max(1, strength_count)
+    return {
+        "preferred_action": preferred_action,
+        "strength": avg_strength,
+    }
+
+
 def _clip01(value):
     return float(np.clip(float(value), 0.0, 1.0))
 
@@ -3741,6 +3911,7 @@ def choose_action(
     location=None,
     time_str=None,
     recall_context=None,
+    decision_refs=None,
     return_debug=False,
 ):
     if is_sleep_activity(activity):
@@ -3771,6 +3942,16 @@ def choose_action(
     memory_hits = []
     if STATEFUL:
         recent_actions = load_recent_actions(agent["id"], max_items=6)
+    refs = decision_refs or {}
+    use_location_time = bool(refs.get("location_time_relevant", True))
+    default_social_relevant = _activity_matches_keywords(
+        activity,
+        ["社交", "联系", "沟通", "拜访", "会面", "聚会", "聊天", "会议", "组会", "讨论", "协作", "家人", "朋友"],
+    )
+    if not default_social_relevant:
+        snapshot = _social_relationship_snapshot(agent)
+        default_social_relevant = snapshot["obligation"] > 0.65 or snapshot["friction"] > 0.65
+    use_social_network = bool(refs.get("social_network_relevant", default_social_relevant))
     if isinstance(recall_context, dict):
         memory_hits = list(recall_context.get("hits", []) or [])
     elif context or activity:
@@ -3780,13 +3961,19 @@ def choose_action(
             "action",
             activity,
             query,
-            location or "",
-            time_str or "",
+            (location or "") if use_location_time else "",
+            (time_str or "") if use_location_time else "",
+            context_labels=_build_recall_context_labels(
+                agent,
+                activity=activity,
+                time_str=time_str if use_location_time else "",
+                location=location if use_location_time else "",
+                commitment_level=_activity_commitment_level(activity),
+            ),
         ).get("hits", [])
-
     bias = (location_bias or {}).get(activity, {})
-    prefer_set = set(bias.get("prefer", [])) if isinstance(bias, dict) else set()
-    avoid_set = set(bias.get("avoid", [])) if isinstance(bias, dict) else set()
+    prefer_set = set(bias.get("prefer", [])) if isinstance(bias, dict) and use_location_time else set()
+    avoid_set = set(bias.get("avoid", [])) if isinstance(bias, dict) and use_location_time else set()
     habits = agent.get("habits", {}) if HUMAN_REALISM_ENABLED else {}
     behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
     inertia_weight = float(behavior_cfg.get("inertia_weight", 0.25))
@@ -3796,8 +3983,11 @@ def choose_action(
     energy_w = float(need_weights.get("energy", 0.45))
     hunger_w = float(need_weights.get("hunger", 0.30))
     social_w = float(need_weights.get("social_need", 0.25))
-    context_key = build_context_key(time_str or "", location or "", activity)
-    habit_entry = habits.get(context_key, {}) if isinstance(habits, dict) else {}
+    context_key = build_context_key(time_str or "", location or "", activity) if use_location_time else ""
+    if use_location_time:
+        habit_entry = habits.get(context_key, {}) if isinstance(habits, dict) else {}
+    else:
+        habit_entry = _same_activity_habit_entry(agent, activity)
     preferred_habit_action = str(habit_entry.get("preferred_action", ""))
     habit_strength = float(habit_entry.get("strength", 0.0))
     energy = float(s.get("energy", 0.75))
@@ -3808,7 +3998,11 @@ def choose_action(
     time_pressure = float(s.get("time_pressure", 0.25))
     commitment_level = _activity_commitment_level(activity)
     commitment_weight = _commitment_weight(commitment_level)
-    relation_snapshot = _social_relationship_snapshot(agent)
+    relation_snapshot = _social_relationship_snapshot(agent) if use_social_network else {
+        "obligation": 0.5,
+        "friction": 0.5,
+        "support": 0.5,
+    }
     driver_labels = {
         "stress_avoidance": "压力驱动",
         "low_mood_avoidance": "低情绪回避",
@@ -4045,11 +4239,24 @@ def perception(agent, time_str, social_context, env_context, policy_event):
 """
     return call_llm(prompt, task="perception", agent_id=agent["id"])
 
-def planning(agent, perception_text, recall_context=None):
+def planning(agent, perception_text, recall_context=None, decision_refs=None):
     if not isinstance(recall_context, dict):
         recall_context = evoke_memory(agent, "planning", perception_text)
     memory_hint = recall_context.get("hint", "暂无重要经验")
     recollection = recall_context.get("recollection", "").strip() or "无明显回忆"
+    refs = decision_refs or {
+        "emotion_text": _current_emotion_text(agent),
+        "memory_hint": memory_hint,
+        "recollection": recollection,
+        "physical_env_relevant": False,
+        "social_env_relevant": False,
+        "location_time_relevant": False,
+        "social_network_relevant": False,
+        "physical_env_text": "",
+        "social_env_text": "",
+        "location_time_text": "",
+        "social_network_text": "",
+    }
     external_hint = _external_rag_hint(agent, perception_text)
     history_hint = "暂无历史"
     if STATEFUL:
@@ -4057,13 +4264,26 @@ def planning(agent, perception_text, recall_context=None):
         if history_blocks:
             history_hint = "\n---\n".join(history_blocks)
     intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
+    optional_sections = []
+    if refs.get("physical_env_relevant") and refs.get("physical_env_text"):
+        optional_sections.append(f"相关物理环境：{refs['physical_env_text']}")
+    if refs.get("social_env_relevant") and refs.get("social_env_text"):
+        optional_sections.append(f"相关社会事件与社会环境：{refs['social_env_text']}")
+    if refs.get("location_time_relevant") and refs.get("location_time_text"):
+        optional_sections.append(refs["location_time_text"])
+    if refs.get("social_network_relevant") and refs.get("social_network_text"):
+        optional_sections.append(f"相关社交网络情况：{refs['social_network_text']}")
+    optional_text = "\n".join(optional_sections) if optional_sections else "无其他与当前规划强相关的补充参考。"
     prompt = f"""
 你是{agent['name']}。
 你的感知是：{perception_text}
-你的近期经验：{memory_hint}
-你此刻被唤起的回忆：{recollection}
+{refs.get('emotion_text', _current_emotion_text(agent))}
+你的近期经验：{refs.get('memory_hint', memory_hint)}
+你此刻被唤起的回忆：{refs.get('recollection', recollection)}
 可用额外信息：{external_hint}
 你今天的行为意图：{intent_hint}
+其他可选参考（仅保留与当前规划强相关的部分）：
+{optional_text}
 你的近期历史片段：
 {history_hint}
 
@@ -4348,6 +4568,113 @@ def daily_summary(agent, logs, day=None):
     memory = call_llm(prompt, task="summary", agent_id=agent["id"])
     _append_memory_record(agent, memory, entry_type="memory", day=day, time_str="end_of_day")
     return memory
+
+
+def _daily_diary_path(agent_id, day, output_dir=None):
+    base_dir = output_dir or DIARY_OUTPUT_DIR
+    return os.path.join(base_dir, f"agent_{int(agent_id)}", f"day_{int(day):03d}.md")
+
+
+def _top_day_episode_lines(agent, day, max_items=4):
+    episodes = [
+        ep for ep in agent.get("episodes", [])
+        if int(ep.get("day", ep.get("created_at_day", 0)) or 0) == int(day)
+    ]
+    episodes = sorted(
+        episodes,
+        key=lambda e: float(e.get("decayed_salience", e.get("salience", 0.0))),
+        reverse=True,
+    )[:max(1, int(max_items))]
+    lines = []
+    for ep in episodes:
+        piece = (
+            f"{ep.get('time', '')}，{ep.get('final_activity', '')}，做了{ep.get('action', '')}。"
+            f" 当时觉得：{ep.get('reflection', '')}"
+        ).strip()
+        lines.append(_compact_text(piece, max_chars=140))
+    return lines
+
+
+def _fallback_daily_diary(agent, day, day_context=None, day_memory="", consolidation_text="", intentions=None):
+    diary_date = ""
+    if isinstance(day_context, dict):
+        diary_date = " ".join(
+            str(day_context.get(key, "")).strip()
+            for key in ("sim_date", "weekday_zh", "day_type_zh")
+            if str(day_context.get(key, "")).strip()
+        ).strip()
+    episode_lines = _top_day_episode_lines(agent, day, max_items=3)
+    major = "今天整体比较平稳。" if not episode_lines else "；".join(episode_lines)
+    feelings = _compact_text(consolidation_text or day_memory or "今天的起伏让我更清楚自己在意什么。", max_chars=120)
+    plan_text = intention_text(intentions or agent.get("intentions", {}))
+    return (
+        f"# {agent.get('name', 'Agent')} 的 Day {int(day)} 日记\n\n"
+        f"{diary_date}\n\n"
+        "## 今天主要发生的事情\n"
+        f"{major}\n\n"
+        "## 今天的感想\n"
+        f"{feelings}\n\n"
+        "## 明天的计划\n"
+        f"{plan_text}\n"
+    )
+
+
+def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", consolidation_text="", intentions=None):
+    episode_lines = _top_day_episode_lines(agent, day, max_items=4)
+    intent_hint = intention_text(intentions or agent.get("intentions", {}))
+    diary_date = ""
+    if isinstance(day_context, dict):
+        diary_date = " ".join(
+            str(day_context.get(key, "")).strip()
+            for key in ("sim_date", "weekday_zh", "day_type_zh")
+            if str(day_context.get(key, "")).strip()
+        ).strip()
+    log_excerpt = _compact_text(logs, max_chars=1600)
+    prompt = f"""
+你是{agent.get('name', '某位居民')}，请以第一人称写一篇日记。
+
+日期：Day {int(day)} {diary_date}
+今天的重要经历：
+{json.dumps(episode_lines, ensure_ascii=False, indent=2)}
+
+今天的详细日志摘录：
+{log_excerpt}
+
+今天形成的长期记忆：{day_memory}
+今天的经验整合：{consolidation_text}
+明天的行为意图：{intent_hint}
+
+要求：
+1) 输出 markdown。
+2) 必须包含且只包含这三个二级标题：`## 今天主要发生的事情`、`## 今天的感想`、`## 明天的计划`。
+3) 语气像这个 agent 自己写的日记，聚焦今天最重要的几件事、真实感受、以及明天的打算。
+4) 不要写成流水账，也不要输出 JSON。
+"""
+    try:
+        response = call_llm(prompt, task="daily_diary", agent_id=agent["id"]).strip()
+    except Exception:
+        response = ""
+    if not response or "## 今天主要发生的事情" not in response or "## 今天的感想" not in response or "## 明天的计划" not in response:
+        return _fallback_daily_diary(
+            agent,
+            day,
+            day_context=day_context,
+            day_memory=day_memory,
+            consolidation_text=consolidation_text,
+            intentions=intentions,
+        )
+    title = f"# {agent.get('name', 'Agent')} 的 Day {int(day)} 日记"
+    if not response.lstrip().startswith("#"):
+        response = f"{title}\n\n{response}"
+    return response
+
+
+def save_daily_diary(agent, day, diary_text, output_dir=None):
+    path = _daily_diary_path(agent["id"], day, output_dir=output_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(str(diary_text or "").strip() + "\n")
+    return path
 
 # =========================================================
 # C. 主循环
@@ -4935,25 +5262,38 @@ def run_simulation():
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
                 step_recollections = []
                 plan_commitment = _activity_commitment_level(scheduled_activity)
+                plan_prefetch_refs = _build_decision_reference_bundle(
+                    agent,
+                    scheduled_activity,
+                    time_str=time_str,
+                    location=agent.get("locations", {}).get("current", ""),
+                    env_context=env_context,
+                    env_events=env_events,
+                    policy_desc=policy_desc,
+                    social_context=social_context,
+                )
                 plan_recall = evoke_memory(
                     agent,
                     "planning",
                     scheduled_activity,
                     perc,
-                    social_context,
-                    env_context,
-                    policy_desc,
+                    social_context if plan_prefetch_refs.get("social_network_relevant") else "",
+                    plan_prefetch_refs.get("physical_env_text", "") if plan_prefetch_refs.get("physical_env_relevant") else "",
+                    plan_prefetch_refs.get("social_env_text", "") if plan_prefetch_refs.get("social_env_relevant") else "",
                     context_labels=_build_recall_context_labels(
                         agent,
                         activity=scheduled_activity,
-                        time_str=time_str,
-                        location=agent.get("locations", {}).get("current", ""),
+                        time_str=time_str if plan_prefetch_refs.get("location_time_relevant") else "",
+                        location=agent.get("locations", {}).get("current", "") if plan_prefetch_refs.get("location_time_relevant") else "",
                         commitment_level=plan_commitment,
                     ),
                 )
                 if plan_recall.get("recollection"):
                     step_recollections.append(plan_recall["recollection"])
-                plan = planning(agent, perc, recall_context=plan_recall)
+                plan_refs = dict(plan_prefetch_refs)
+                plan_refs["memory_hint"] = plan_recall.get("hint", "")
+                plan_refs["recollection"] = plan_recall.get("recollection", "")
+                plan = planning(agent, perc, recall_context=plan_recall, decision_refs=plan_refs)
                 plan_text = format_plan_text(plan)
                 activity, change_reason, changed = maybe_adjust_activity(
                     agent,
@@ -5017,24 +5357,41 @@ def run_simulation():
                         city_map_text,
                         actions[agent_id],
                     )
+                    location_time_relevant = _is_location_time_relevant(activity, time_str=time_str, location=resolved_location)
+                    action_prefetch_refs = _build_decision_reference_bundle(
+                        agent,
+                        activity,
+                        time_str=time_str,
+                        location=resolved_location,
+                        env_context=env_context,
+                        env_events=env_events,
+                        policy_desc=policy_desc,
+                        social_context=social_context,
+                    )
                     action_recall = evoke_memory(
                         agent,
                         "action",
                         activity,
                         perc,
                         plan_text,
-                        resolved_location,
-                        time_str,
+                        social_context if action_prefetch_refs.get("social_network_relevant") else "",
+                        action_prefetch_refs.get("physical_env_text", "") if action_prefetch_refs.get("physical_env_relevant") else "",
+                        action_prefetch_refs.get("social_env_text", "") if action_prefetch_refs.get("social_env_relevant") else "",
+                        resolved_location if location_time_relevant else "",
+                        time_str if location_time_relevant else "",
                         context_labels=_build_recall_context_labels(
                             agent,
                             activity=activity,
-                            time_str=time_str,
-                            location=resolved_location,
+                            time_str=time_str if location_time_relevant else "",
+                            location=resolved_location if location_time_relevant else "",
                             commitment_level=_activity_commitment_level(activity),
                         ),
                     )
                     if action_recall.get("recollection"):
                         step_recollections.append(action_recall["recollection"])
+                    action_refs = dict(action_prefetch_refs)
+                    action_refs["memory_hint"] = action_recall.get("hint", "")
+                    action_refs["recollection"] = action_recall.get("recollection", "")
                     act, action_meta = choose_action(
                         agent,
                         activity,
@@ -5044,6 +5401,7 @@ def run_simulation():
                         location=resolved_location,
                         time_str=time_str,
                         recall_context=action_recall,
+                        decision_refs=action_refs,
                         return_debug=True,
                     )
                     outcome = f"在【{activity}】中执行了【{act}】"
@@ -5053,12 +5411,12 @@ def run_simulation():
                     effective_activity,
                     act,
                     outcome,
-                    time_str,
+                    time_str if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
                     context_labels=_build_recall_context_labels(
                         agent,
                         activity=effective_activity,
-                        time_str=time_str,
-                        location=resolved_location,
+                        time_str=time_str if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
+                        location=resolved_location if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
                         commitment_level=action_meta.get("commitment_level", _activity_commitment_level(effective_activity)),
                     ),
                 )
@@ -5353,6 +5711,7 @@ Reflection: {refl_text}
                 time.sleep(sleep_step)
 
         for agent in agents:
+            day_consolidation_text = ""
             if HUMAN_REALISM_ENABLED:
                 agent_id = agent["id"]
                 budget = llm_budget_by_agent.get(agent_id, {"remaining": 0})
@@ -5378,6 +5737,7 @@ Reflection: {refl_text}
                     agent["episodes"] = load_agent_episodes(agent_id)
                 memory_text = consolidated.get("memory_text", "").strip()
                 if memory_text:
+                    day_consolidation_text = memory_text
                     _append_memory_record(
                         agent,
                         memory_text,
@@ -5388,6 +5748,27 @@ Reflection: {refl_text}
                     print(f"🧩 {agent['name']} 的经验整合：{memory_text}")
             mem = daily_summary(agent, daily_logs[agent["id"]], day=day)
             print(f"🧠 {agent['name']} 的今日长期记忆：{mem}")
+            diary_text = generate_daily_diary(
+                agent,
+                day,
+                daily_logs[agent["id"]],
+                day_context=day_context,
+                day_memory=mem,
+                consolidation_text=day_consolidation_text,
+                intentions=agent.get("intentions", {}),
+            )
+            diary_path = save_daily_diary(agent, day, diary_text)
+            vector_db_add_entry(
+                agent["id"],
+                "diary",
+                diary_text,
+                sim_day=day,
+                sim_time="end_of_day_diary",
+            )
+            diary_log = f"[DailyDiary Day {day}] {diary_path}\n"
+            daily_logs[agent["id"]] += diary_log
+            append_agent_log(agent, diary_log)
+            print(f"📓 {agent['name']} 的日记已写入：{diary_path}")
         hook_bus.emit(
             "on_day_end",
             day=day,

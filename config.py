@@ -59,7 +59,7 @@ CONFIG = {
             },
         },
         "routing": {
-            "default": "ollama_qwen",
+            "default": "omlx_qwen",
             "tasks": {
                 "schedule": "omlx_qwen",
             },
@@ -104,6 +104,7 @@ CONFIG = {
     "stateful": True,
     "memory_dir": "output/memory",
     "log_dir": "output/logs",
+    "diary_output_dir": "output/diaries",
     "environment_output_dir": "output/environment",
     "visualization": {
         "enabled": True,

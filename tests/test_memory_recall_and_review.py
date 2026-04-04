@@ -160,6 +160,75 @@ class TestMemoryRecallAndReview(unittest.TestCase):
         self.assertIn("聚会后明显感到疲惫", prompt)
         self.assertEqual("因为前几次聚会让我有点疲惫。", answers[0]["answer"])
 
+    def test_planning_prompt_always_includes_emotion_and_memory(self):
+        agent = {
+            "id": 26,
+            "name": "规划者",
+            "state": {"emotion": 0.33, "stress": 0.71},
+            "intentions": {},
+        }
+        recall_context = {
+            "hint": "最近几次临近中午时容易分心。",
+            "recollection": "你想起一段经历：上次拖到中午后效率明显下降。",
+        }
+        llm_output = (
+            '{"goal":"先把上午最关键的事推进一点","constraint":"状态一般而且时间不宽裕",'
+            '"urge":"有点想先拖一下缓口气","plan":"先做最小推进再决定要不要休息","expected_outcome":"希望别把下午也拖乱"}'
+        )
+        decision_refs = {
+            "emotion_text": "当前情绪：明显偏低落（emotion=0.33）；当前压力：压力偏高（stress=0.71）",
+            "memory_hint": recall_context["hint"],
+            "recollection": recall_context["recollection"],
+            "physical_env_relevant": False,
+            "social_env_relevant": False,
+            "location_time_relevant": False,
+            "social_network_relevant": False,
+            "physical_env_text": "",
+            "social_env_text": "",
+            "location_time_text": "",
+            "social_network_text": "",
+        }
+        with patch.object(sim, "call_llm", return_value=llm_output) as mock_call:
+            plan = sim.planning(agent, "你感觉注意力有些散。", recall_context=recall_context, decision_refs=decision_refs)
+        prompt = mock_call.call_args.args[0]
+        self.assertIn("当前情绪", prompt)
+        self.assertIn("你的近期经验", prompt)
+        self.assertIn("你此刻被唤起的回忆", prompt)
+        self.assertEqual("先把上午最关键的事推进一点", plan["goal"])
+
+    def test_planning_prompt_only_includes_relevant_optional_references(self):
+        agent = {
+            "id": 27,
+            "name": "选择者",
+            "state": {"emotion": 0.52, "stress": 0.48},
+            "intentions": {},
+        }
+        recall_context = {"hint": "最近的记忆", "recollection": "想到之前类似情况。"}
+        llm_output = (
+            '{"goal":"先把路上的变量控制住","constraint":"外面下雨而且时间卡得紧",'
+            '"urge":"想直接取消外出","plan":"先看路况再决定是否绕路","expected_outcome":"希望别迟到太久"}'
+        )
+        decision_refs = {
+            "emotion_text": "当前情绪：中性偏波动（emotion=0.52）；当前压力：压力中等（stress=0.48）",
+            "memory_hint": recall_context["hint"],
+            "recollection": recall_context["recollection"],
+            "physical_env_relevant": True,
+            "social_env_relevant": False,
+            "location_time_relevant": True,
+            "social_network_relevant": False,
+            "physical_env_text": "下雨且路况拥堵",
+            "social_env_text": "这里不应出现",
+            "location_time_text": "当前地点：Central Block；当前时间：08:30",
+            "social_network_text": "这里也不应出现",
+        }
+        with patch.object(sim, "call_llm", return_value=llm_output) as mock_call:
+            sim.planning(agent, "你担心出门会被路况拖慢。", recall_context=recall_context, decision_refs=decision_refs)
+        prompt = mock_call.call_args.args[0]
+        self.assertIn("相关物理环境：下雨且路况拥堵", prompt)
+        self.assertIn("当前地点：Central Block；当前时间：08:30", prompt)
+        self.assertNotIn("这里不应出现", prompt)
+        self.assertNotIn("这里也不应出现", prompt)
+
     def test_memory_review_generates_meta_memory(self):
         agent = {
             "id": 24,
