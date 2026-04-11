@@ -16,6 +16,12 @@ CONFIG = {
                 "model": "gemma3n:e4b",
                 "timeout": 120,
             },
+            "ollama_gemma4": {
+                "type": "ollama",
+                "url": "http://localhost:11434/api/generate",
+                "model": "gemma4:e4b",
+                "timeout": 120,
+            },
             "ollama_gemma12": {
                 "type": "ollama",
                 "url": "http://localhost:11434/api/generate",
@@ -52,22 +58,31 @@ CONFIG = {
             },
             "claude": {
                 "type": "claude",
-                "base_url": "https://www.packyapi.com",
+                "base_url": os.environ.get("ANTHROPIC_BASE_URL", "https://www.packyapi.com"),
                 "model": "gpt-4.1",
                 "ANTHROPIC_AUTH_TOKEN": "sk-b0n7ujizk2dHMXnuiWUzHJ6tnGzbRRdPP2YK7hdxV0Xk5Pt7",
                 "timeout": 120,
             },
+            "minimax": {
+                "type": "anthropic",
+                "base_url": os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
+                "model": os.environ.get("MINIMAX_MODEL", "MiniMax-M2.7"),
+                "api_key_env": "ANTHROPIC_API_KEY",
+                "api_key_envs": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "MINIMAX_API_KEY"],
+                "timeout": 120,
+                "max_tokens": 512,
+            },
         },
         "routing": {
-            "default": "omlx_qwen",
+            "default": "minimax",
             "tasks": {
-                "schedule": "omlx_qwen",
+                "schedule": "minimax",
             },
         },
     },
     # Simulation
-    "agent_ids": [2],
-    "sim_days": 1,
+    "agent_ids": [3],
+    "sim_days": 3,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,

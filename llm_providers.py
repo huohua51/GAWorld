@@ -160,6 +160,7 @@ class AnthropicProvider:
         model,
         api_key=None,
         api_key_env="ANTHROPIC_API_KEY",
+        api_key_envs=None,
         anthropic_version="2023-06-01",
         timeout=120,
         max_tokens=512,
@@ -168,7 +169,16 @@ class AnthropicProvider:
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.api_key = api_key or os.getenv(api_key_env)
+        env_names = list(api_key_envs or [])
+        if api_key_env and api_key_env not in env_names:
+            env_names.insert(0, api_key_env)
+        self.api_key = api_key
+        if not self.api_key:
+            for env_name in env_names:
+                self.api_key = os.getenv(env_name)
+                if self.api_key:
+                    break
+        self.api_key_envs = env_names
         self.anthropic_version = anthropic_version
         self.timeout = timeout
         self.max_tokens = max_tokens
@@ -176,6 +186,9 @@ class AnthropicProvider:
         self.beta = beta
 
     def call(self, prompt):
+        if not self.api_key:
+            env_names = ", ".join(self.api_key_envs) or "ANTHROPIC_API_KEY"
+            raise ValueError(f"Anthropic provider API key not found. Set one of: {env_names}")
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": self.anthropic_version,
@@ -198,7 +211,11 @@ class AnthropicProvider:
         )
         r.raise_for_status()
         data = r.json()
-        return data.get("content", [{}])[0].get("text", "")
+        parts = []
+        for block in data.get("content", []):
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "".join(parts)
 
 
 class LLMRouter:
@@ -237,6 +254,7 @@ class LLMRouter:
                     cfg["model"],
                     api_key=cfg.get("api_key") or cfg.get("ANTHROPIC_AUTH_TOKEN"),
                     api_key_env=cfg.get("api_key_env", "ANTHROPIC_API_KEY"),
+                    api_key_envs=cfg.get("api_key_envs"),
                     anthropic_version=cfg.get("anthropic_version", "2023-06-01"),
                     timeout=cfg.get("timeout", 120),
                     max_tokens=cfg.get("max_tokens", 512),
