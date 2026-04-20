@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GAWorld Console</title>
+  <meta name="description" content="GAWorld 本地仿真控制台" />
+  <link rel="stylesheet" href="/site/dashboard/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div class="masthead-copy">
+        <p class="kicker">GAWorld Console</p>
+        <h1>仿真控制台</h1>
+        <p>配置、人物、运行、采访与记忆观察集中在一个本地面板中。</p>
+      </div>
+      <img src="/video/public/gaworld-graphical-abstract.png" alt="GAWorld abstract map" />
+    </header>
+
+    <section class="toolbar panel">
+      <label>
+        <span>Agent IDs</span>
+        <input id="agentIdsInput" placeholder="1,2,3" />
+      </label>
+      <label>
+        <span>仿真天数</span>
+        <input id="simDaysInput" type="number" min="1" />
+      </label>
+      <label>
+        <span>每天秒数</span>
+        <input id="secondsPerDayInput" type="number" min="1" />
+      </label>
+      <label>
+        <span>时间步长</span>
+        <input id="timeStepInput" placeholder="None / 60 / 2 hours" />
+      </label>
+      <label>
+        <span>默认 LLM</span>
+        <select id="defaultProviderSelect"></select>
+      </label>
+      <label>
+        <span>日程 LLM</span>
+        <select id="scheduleProviderSelect"></select>
+      </label>
+      <label class="checkline">
+        <input id="realtimeInput" type="checkbox" />
+        <span>实时等待</span>
+      </label>
+      <div class="button-row">
+        <button id="saveConfigBtn" class="button">保存配置</button>
+        <button id="runBtn" class="button primary">运行仿真</button>
+        <button id="resetRunBtn" class="button">重置并运行</button>
+        <button id="stopBtn" class="button danger">停止</button>
+      </div>
+    </section>
+
+    <section class="status-line">
+      <span id="runStatusBadge" class="status-badge">读取状态</span>
+      <span id="traceStatus">等待轨迹数据</span>
+      <span id="messageLine"></span>
+    </section>
+
+    <section class="workspace">
+      <section class="panel map-panel">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Live Trace</p>
+            <h2 id="frameTitle">未加载轨迹</h2>
+          </div>
+          <button id="reloadTraceBtn" class="button small">刷新轨迹</button>
+        </div>
+        <canvas id="mapCanvas" width="1440" height="900" aria-label="simulation map"></canvas>
+        <div class="timeline">
+          <input id="timelineSlider" type="range" min="0" max="0" value="0" />
+          <span id="timelineLabel">暂无帧</span>
+        </div>
+        <pre id="latestFrameBox" class="codebox">暂无当前帧。</pre>
+      </section>
+
+      <aside class="right-stack">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Agent Profile</p>
+              <h2>人物设定</h2>
+            </div>
+            <select id="agentSelect"></select>
+          </div>
+          <textarea id="profileEditor" class="profile-editor" spellcheck="false"></textarea>
+          <div class="button-row end">
+            <button id="saveProfileBtn" class="button">保存 Profile</button>
+            <button id="refreshAgentBtn" class="button">刷新</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Interview</p>
+              <h2>采访</h2>
+            </div>
+          </div>
+          <textarea id="interviewContext" class="compact-editor" placeholder="可选背景上下文"></textarea>
+          <textarea id="interviewQuestions" class="compact-editor" placeholder="每行一个问题"></textarea>
+          <div class="button-row end">
+            <button id="interviewBtn" class="button primary">开始采访</button>
+          </div>
+          <pre id="interviewOutput" class="codebox">采访结果会显示在这里。</pre>
+        </section>
+      </aside>
+    </section>
+
+    <section class="lower-grid">
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Memory</p>
+            <h2>记忆与习惯</h2>
+          </div>
+          <button id="reloadMemoryBtn" class="button small">刷新记忆</button>
+        </div>
+        <div class="memory-grid">
+          <article><h3>长期记忆</h3><pre id="memoryBox" class="codebox"></pre></article>
+          <article><h3>日程/习惯/意图</h3><pre id="stateMemoryBox" class="codebox"></pre></article>
+          <article><h3>近期 episode</h3><pre id="episodesBox" class="codebox"></pre></article>
+          <article><h3>Agent 日志</h3><pre id="agentLogBox" class="codebox"></pre></article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Run Log</p>
+            <h2>运行输出</h2>
+          </div>
+          <button id="reloadStatusBtn" class="button small">刷新状态</button>
+        </div>
+        <pre id="runLogBox" class="codebox run-log">暂无运行日志。</pre>
+      </section>
+    </section>
+  </main>
+  <script src="/site/dashboard/app.js"></script>
+</body>
+</html>
