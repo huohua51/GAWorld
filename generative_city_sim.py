@@ -1399,6 +1399,20 @@ ROUTINE_CHANGE_BASE_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("base_chance", 0.08
 ROUTINE_CHANGE_EVENT_BOOST = float(ROUTINE_CHANGE_CONFIG.get("event_boost", 0.08))
 ROUTINE_CHANGE_POLICY_BOOST = float(ROUTINE_CHANGE_CONFIG.get("policy_boost", 0.05))
 ROUTINE_CHANGE_MAX_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("max_chance", 0.45))
+SPONTANEITY_CONFIG = CONFIG.get("spontaneity", {})
+SPONTANEITY_ENABLED = bool(SPONTANEITY_CONFIG.get("enabled", True))
+SPONTANEITY_BASE_THOUGHT_CHANCE = float(SPONTANEITY_CONFIG.get("base_thought_chance", 0.18))
+SPONTANEITY_MAX_THOUGHT_CHANCE = float(SPONTANEITY_CONFIG.get("max_thought_chance", 0.68))
+SPONTANEITY_EVENT_BOOST = float(SPONTANEITY_CONFIG.get("event_boost", 0.10))
+SPONTANEITY_POLICY_BOOST = float(SPONTANEITY_CONFIG.get("policy_boost", 0.08))
+SPONTANEITY_SOCIAL_BOOST = float(SPONTANEITY_CONFIG.get("social_boost", 0.08))
+SPONTANEITY_LOW_SELF_CONTROL_BOOST = float(SPONTANEITY_CONFIG.get("low_self_control_boost", 0.22))
+SPONTANEITY_STRESS_BOOST = float(SPONTANEITY_CONFIG.get("stress_boost", 0.18))
+SPONTANEITY_FATIGUE_BOOST = float(SPONTANEITY_CONFIG.get("fatigue_boost", 0.14))
+SPONTANEITY_HUNGER_BOOST = float(SPONTANEITY_CONFIG.get("hunger_boost", 0.12))
+SPONTANEITY_IMPULSE_ACTIVITY_CHANCE = float(SPONTANEITY_CONFIG.get("impulse_activity_chance", 0.10))
+SPONTANEITY_RANDOM_ACTION_CHANCE = float(SPONTANEITY_CONFIG.get("random_action_chance", 0.05))
+SPONTANEITY_MAX_OVERRIDE_BONUS = float(SPONTANEITY_CONFIG.get("max_override_bonus", 0.35))
 NEWS_CONFIG = CONFIG.get("news", {})
 NEWS_ENABLED = bool(NEWS_CONFIG.get("enabled", False))
 NEWS_SOURCES_PATH = NEWS_CONFIG.get("sources_path", "news_source.md")
@@ -1413,6 +1427,13 @@ INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_
 DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
 DAILY_PLAN_ANCHOR_MINUTES = max(1, int(DAILY_PLANNING_CONFIG.get("anchor_minutes", 30)))
 DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES = max(0, int(DAILY_PLANNING_CONFIG.get("random_delay_max_minutes", 10)))
+DAILY_PLAN_FLEX_CONFIG = DAILY_PLANNING_CONFIG.get("flexible", {})
+DAILY_PLAN_FLEX_ENABLED = bool(DAILY_PLAN_FLEX_CONFIG.get("enabled", True))
+DAILY_PLAN_MIN_ITEMS = max(3, int(DAILY_PLAN_FLEX_CONFIG.get("min_items", 6)))
+DAILY_PLAN_MAX_ITEMS = max(DAILY_PLAN_MIN_ITEMS, int(DAILY_PLAN_FLEX_CONFIG.get("max_items", 12)))
+DAILY_PLAN_MAX_SHIFT_MINUTES = max(0, int(DAILY_PLAN_FLEX_CONFIG.get("max_time_shift_minutes", 120)))
+DAILY_PLAN_MIN_GAP_MINUTES = max(1, int(DAILY_PLAN_FLEX_CONFIG.get("min_gap_minutes", 15)))
+DAILY_PLAN_ALLOW_INSERTIONS = bool(DAILY_PLAN_FLEX_CONFIG.get("allow_insertions", True))
 EXTERNAL_RAG_CONFIG = CONFIG.get("external_rag", {})
 EXTERNAL_RAG_TOP_K = max(1, int(EXTERNAL_RAG_CONFIG.get("top_k", 2)))
 CALENDAR_CONFIG = CONFIG.get("calendar", {})
@@ -3413,15 +3434,91 @@ def normalize_schedule_to_base(base_schedule, candidate_schedule):
         normalized.append((t, act))
     return normalized
 
+def _dedupe_schedule_items(schedule):
+    seen_times = set()
+    seen_pairs = set()
+    cleaned = []
+    for time_str, activity in schedule or []:
+        time_str = str(time_str).strip()
+        activity = str(activity).strip()
+        if not activity or _time_str_to_minutes(time_str) is None:
+            continue
+        pair = (time_str, activity)
+        if time_str in seen_times or pair in seen_pairs:
+            continue
+        seen_times.add(time_str)
+        seen_pairs.add(pair)
+        cleaned.append(pair)
+    return cleaned
+
+def _enforce_schedule_min_gap(schedule, min_gap=15):
+    if not schedule:
+        return []
+    sorted_schedule = sorted(schedule, key=lambda x: _time_str_to_minutes(x[0]) or 0)
+    kept = []
+    prev_minutes = None
+    for time_str, activity in sorted_schedule:
+        minutes = _time_str_to_minutes(time_str)
+        if minutes is None:
+            continue
+        if prev_minutes is not None and minutes - prev_minutes < max(1, int(min_gap)):
+            continue
+        kept.append((time_str, activity))
+        prev_minutes = minutes
+    return kept
+
+def _has_enough_schedule_anchors(base_schedule, candidate_schedule, max_shift_minutes):
+    if not base_schedule or not candidate_schedule:
+        return False
+    if max_shift_minutes <= 0:
+        return True
+    base_minutes = [
+        _time_str_to_minutes(t)
+        for t, activity in base_schedule
+        if _time_str_to_minutes(t) is not None and not is_sleep_activity(activity)
+    ]
+    candidate_minutes = [
+        _time_str_to_minutes(t)
+        for t, _ in candidate_schedule
+        if _time_str_to_minutes(t) is not None
+    ]
+    if not base_minutes or not candidate_minutes:
+        return True
+    close_count = 0
+    for base_minute in base_minutes:
+        if any(abs(candidate_minute - base_minute) <= max_shift_minutes for candidate_minute in candidate_minutes):
+            close_count += 1
+    required = min(len(base_minutes), max(2, int(round(len(base_minutes) * 0.45))))
+    return close_count >= required
+
 def normalize_flexible_schedule(base_schedule, candidate_schedule):
     if not candidate_schedule or not base_schedule:
         return None
-    if len(candidate_schedule) != len(base_schedule):
+    cleaned = _dedupe_schedule_items(candidate_schedule)
+    if not cleaned:
         return None
-    sorted_candidate = sorted(candidate_schedule, key=lambda x: _time_str_to_minutes(x[0]) or 0)
-    if not _is_strictly_increasing_times(sorted_candidate):
+    if not DAILY_PLAN_FLEX_ENABLED:
+        if len(cleaned) != len(base_schedule):
+            return None
+        sorted_candidate = sorted(cleaned, key=lambda x: _time_str_to_minutes(x[0]) or 0)
+        if not _is_strictly_increasing_times(sorted_candidate):
+            return None
+        return sorted_candidate
+
+    cleaned = _enforce_schedule_min_gap(cleaned, min_gap=DAILY_PLAN_MIN_GAP_MINUTES)
+    if not _is_strictly_increasing_times(cleaned):
         return None
-    return sorted_candidate
+    if not DAILY_PLAN_ALLOW_INSERTIONS and len(cleaned) != len(base_schedule):
+        return None
+    if len(cleaned) < DAILY_PLAN_MIN_ITEMS or len(cleaned) > DAILY_PLAN_MAX_ITEMS:
+        return None
+    if not _has_enough_schedule_anchors(
+        base_schedule,
+        cleaned,
+        max_shift_minutes=DAILY_PLAN_MAX_SHIFT_MINUTES,
+    ):
+        return None
+    return cleaned
 
 def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     if not base_schedule:
@@ -3440,6 +3537,16 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
         day_rule = "今天是周末：安排应与工作日节奏有明显区别；对上班族尽量不安排通勤/工作/加班，多安排休闲、社交、家务或外出。"
     else:
         day_rule = "今天是工作日：保持较稳定的工作/学习节奏，可有少量弹性调整。"
+    if DAILY_PLAN_FLEX_ENABLED:
+        flexibility_rule = (
+            f"今天的日程可以有 {DAILY_PLAN_MIN_ITEMS}-{DAILY_PLAN_MAX_ITEMS} 项；"
+            f"可增删低承诺活动，允许插入临时任务、休息、社交回应、购物/办事或短暂走神；"
+            f"高承诺活动尽量保留在原时间前后 {DAILY_PLAN_MAX_SHIFT_MINUTES} 分钟内。"
+        )
+    else:
+        flexibility_rule = (
+            "活动数量必须与基础日程一致，只允许改活动文本和小幅调整时间。"
+        )
     profile_text = "\n".join([
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
@@ -3462,24 +3569,30 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 角色资料：
 {profile_text}
 日期类型：{day_label}，{sim_date_text}，{weekday_zh}，{day_type_zh}
-基础日程（作为框架，可在时间点上做 0-60 分钟内的微调）：
+基础日程（作为框架，不是死板脚本）：
 {base_text}
 可参考的近期记忆：{memory_hint}
 可参考的额外信息：{external_hint}
 今日行为意图：{intent_hint}
 日程约束：{day_rule}
+弹性约束：{flexibility_rule}
 要求：
 1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
-2) 时间点需保持顺序，可在基础时间上做小幅调整（0-60 分钟），不要大幅偏离。
+2) 时间点需保持顺序，活动为中文短语；不要所有人都套同一个模板。
 3) 必须包含“睡前/睡觉/睡眠”类活动，并给出具体时间。
-4) 仅输出 JSON，不要其他文字。
+4) 活动可以包含临时念头或外界触发，但要符合角色职业、状态、星期和近期意图。
+5) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="daily_routine", agent_id=agent["id"])
     schedule = _parse_schedule(response)
     normalized = normalize_flexible_schedule(base_schedule, schedule)
     if normalized:
-        if _schedule_times(normalized) == _schedule_times(base_schedule):
-            normalized = _jitter_schedule_times(base_schedule)
+        if len(normalized) == len(base_schedule) and _schedule_times(normalized) == _schedule_times(base_schedule):
+            normalized = _jitter_schedule_times(
+                normalized,
+                max_shift=min(60, max(1, DAILY_PLAN_MAX_SHIFT_MINUTES)),
+                min_gap=DAILY_PLAN_MIN_GAP_MINUTES,
+            )
         normalized = ensure_sleep_in_schedule(agent, normalized)
         normalized = _align_daily_planning_start_time(
             normalized,
@@ -3492,7 +3605,11 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
             day_context=day_context,
             day=day,
         )
-    jittered = _jitter_schedule_times(base_schedule)
+    jittered = _jitter_schedule_times(
+        base_schedule,
+        max_shift=min(60, max(1, DAILY_PLAN_MAX_SHIFT_MINUTES)),
+        min_gap=DAILY_PLAN_MIN_GAP_MINUTES,
+    )
     jittered = ensure_sleep_in_schedule(agent, jittered)
     jittered = _align_daily_planning_start_time(
         jittered,
@@ -3619,13 +3736,273 @@ def _routine_change_resistance(agent, activity):
     return commitment_level, float(np.clip(resistance, 0.0, 1.0))
 
 
+def _social_context_has_trigger(social_context, inbox_messages=None):
+    text = str(social_context or "")
+    if inbox_messages:
+        return True
+    keywords = [
+        "等你回应",
+        "责任压力",
+        "顾虑",
+        "摩擦",
+        "消息",
+        "回复",
+        "配合",
+        "分工",
+        "安排",
+        "支持感",
+    ]
+    return any(k in text for k in keywords)
+
+
+def _top_env_event(env_events):
+    best = None
+    best_score = -1.0
+    for ev in env_events or []:
+        if not isinstance(ev, dict):
+            continue
+        try:
+            severity = float(ev.get("severity", 0.0))
+        except (TypeError, ValueError):
+            severity = 0.0
+        desc = str(ev.get("description", ev.get("name", ""))).strip()
+        score = severity + (0.08 if desc else 0.0)
+        if score > best_score:
+            best = ev
+            best_score = score
+    return best
+
+
+def _suggest_activity_for_event(event, policy_desc, scheduled_activity):
+    event_text = ""
+    event_type = ""
+    impact_tags = []
+    if isinstance(event, dict):
+        event_text = str(event.get("description", event.get("name", "")))
+        event_type = str(event.get("type", "")).lower()
+        impact_tags = [str(x).lower() for x in event.get("impact_tags", []) if str(x).strip()]
+    if policy_desc:
+        event_text = f"{event_text} {policy_desc}".strip()
+        if not event_type:
+            event_type = "policy"
+    activity_text = str(scheduled_activity or "")
+    combined = f"{event_text} {activity_text}"
+    if any(k in combined for k in ["雨", "雪", "风", "高温", "寒潮", "拥堵", "封路", "施工", "停电", "天气", "路况"]) or "mobility" in impact_tags:
+        if any(k in activity_text for k in ["通勤", "前往", "散步", "运动", "买菜", "购物", "会面", "拜访"]):
+            return "调整出行"
+        return "查看天气"
+    if any(k in combined for k in ["工资", "就业", "裁员", "收入", "物价", "市场", "经济"]):
+        return "盘算开支"
+    if any(k in combined for k in ["政策", "监管", "制度", "社区", "通知"]):
+        return "查看通知"
+    if any(k in combined for k in ["平台", "技术", "服务", "系统", "应用"]):
+        return "查看消息"
+    if event_type:
+        return "关注事件"
+    return ""
+
+
+def _spontaneity_probability(agent, env_events, policy_desc, social_context, inbox_messages=None):
+    if not SPONTANEITY_ENABLED:
+        return 0.0
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    prob = SPONTANEITY_BASE_THOUGHT_CHANCE
+    if env_events:
+        prob += min(0.30, SPONTANEITY_EVENT_BOOST * len(env_events))
+        top_event = _top_env_event(env_events)
+        if isinstance(top_event, dict):
+            try:
+                severity = float(top_event.get("severity", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                severity = 0.0
+            prob += 0.08 * severity
+    if policy_desc:
+        prob += SPONTANEITY_POLICY_BOOST
+    if _social_context_has_trigger(social_context, inbox_messages=inbox_messages):
+        prob += SPONTANEITY_SOCIAL_BOOST
+    stress = float(state.get("stress", 0.5))
+    hunger = float(state.get("hunger", 0.25))
+    fatigue = float(state.get("fatigue_debt", 0.2))
+    self_control = float(state.get("self_control", 0.6))
+    if self_control < 0.5:
+        prob += (0.5 - self_control) * SPONTANEITY_LOW_SELF_CONTROL_BOOST
+    if stress > 0.55:
+        prob += (stress - 0.55) * SPONTANEITY_STRESS_BOOST
+    if fatigue > 0.5:
+        prob += (fatigue - 0.5) * SPONTANEITY_FATIGUE_BOOST
+    if hunger > 0.55:
+        prob += (hunger - 0.55) * SPONTANEITY_HUNGER_BOOST
+    return float(np.clip(prob, 0.0, SPONTANEITY_MAX_THOUGHT_CHANCE))
+
+
+def _weighted_thought_pick(candidates):
+    if not candidates:
+        return {}
+    weights = [max(0.01, float(item.get("intensity", 0.1))) for item in candidates]
+    return random.choices(candidates, weights=weights, k=1)[0]
+
+
+def maybe_generate_transient_thought(
+    agent,
+    time_str,
+    scheduled_activity,
+    perception_text,
+    env_events=None,
+    policy_desc=None,
+    social_context="",
+    inbox_messages=None,
+):
+    prob = _spontaneity_probability(
+        agent,
+        env_events or [],
+        policy_desc,
+        social_context,
+        inbox_messages=inbox_messages,
+    )
+    if prob <= 0 or random.random() > prob:
+        return {}
+
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+    candidates = []
+    top_event = _top_env_event(env_events or [])
+    if top_event or policy_desc:
+        try:
+            severity = float(top_event.get("severity", 0.35) if isinstance(top_event, dict) else 0.45)
+        except (TypeError, ValueError):
+            severity = 0.35
+        suggestion = _suggest_activity_for_event(top_event, policy_desc, scheduled_activity)
+        event_desc = ""
+        if isinstance(top_event, dict):
+            event_desc = str(top_event.get("description", top_event.get("name", ""))).strip()
+        if policy_desc:
+            event_desc = f"{event_desc} {policy_desc}".strip()
+        candidates.append({
+            "source": "external_event" if top_event else "policy",
+            "kind": "event_trigger",
+            "thought": f"外面的变化可能会影响原安排，想先处理一下：{_compact_text(event_desc, max_chars=54)}",
+            "activity_suggestion": suggestion or "关注事件",
+            "reason": _compact_text(event_desc, max_chars=80) or "外部环境变化",
+            "intensity": float(np.clip(0.35 + 0.55 * severity, 0.0, 1.0)),
+        })
+
+    if _social_context_has_trigger(social_context, inbox_messages=inbox_messages):
+        candidates.append({
+            "source": "social",
+            "kind": "social_trigger",
+            "thought": "突然想到有人可能在等回应，想先处理一下关系或消息。",
+            "activity_suggestion": "回复消息",
+            "reason": _compact_text(social_context, max_chars=80) or "社交消息触发",
+            "intensity": float(np.clip(0.45 + 0.25 * float(state.get("social_need", 0.4)), 0.0, 1.0)),
+        })
+
+    hunger = float(state.get("hunger", 0.25))
+    energy = float(state.get("energy", 0.75))
+    fatigue = float(state.get("fatigue_debt", 0.2))
+    stress = float(state.get("stress", 0.5))
+    emotion = float(state.get("emotion", 0.5))
+    self_control = float(state.get("self_control", 0.6))
+    time_pressure = float(state.get("time_pressure", 0.25))
+    if hunger > 0.62:
+        candidates.append({
+            "source": "need",
+            "kind": "hunger",
+            "thought": "肚子有点占据注意力，想先找点吃的。",
+            "activity_suggestion": "找点吃的",
+            "reason": f"hunger={hunger:.2f}",
+            "intensity": float(np.clip((hunger - 0.45) * 1.25, 0.0, 1.0)),
+        })
+    if energy < 0.42 or fatigue > 0.62:
+        candidates.append({
+            "source": "need",
+            "kind": "recovery",
+            "thought": "身体有点撑不住，想临时缓一缓。",
+            "activity_suggestion": "休息片刻",
+            "reason": f"energy={energy:.2f}, fatigue={fatigue:.2f}",
+            "intensity": float(np.clip(max(0.42 - energy, fatigue - 0.55) * 1.4, 0.0, 1.0)),
+        })
+    if time_pressure > 0.66:
+        candidates.append({
+            "source": "task",
+            "kind": "time_pressure",
+            "thought": "时间压力突然冒出来，想先把最急的事处理掉。",
+            "activity_suggestion": "处理待办",
+            "reason": f"time_pressure={time_pressure:.2f}",
+            "intensity": float(np.clip((time_pressure - 0.55) * 1.35, 0.0, 1.0)),
+        })
+
+    impulse_chance = SPONTANEITY_IMPULSE_ACTIVITY_CHANCE
+    impulse_chance += max(0.0, 0.48 - self_control) * 0.35
+    impulse_chance += max(0.0, stress - 0.62) * 0.22
+    impulse_chance += max(0.0, 0.42 - emotion) * 0.18
+    if random.random() < min(0.55, impulse_chance):
+        impulse_pool = [
+            ("刷手机", "想逃开当前节奏，手已经想去刷手机。"),
+            ("临时散步", "突然想出去走几分钟，换一下脑子。"),
+            ("买杯咖啡", "突然想买点喝的，让自己重新提神。"),
+            ("发消息聊天", "突然想找人说两句，缓一下心情。"),
+            ("查看新闻", "突然想看看外面又发生了什么。"),
+            ("顺手购物", "突然想顺手买点东西，满足一下即时念头。"),
+            ("整理待办", "突然觉得脑子乱，想先整理一下接下来要做什么。"),
+        ]
+        suggestion, thought_text = random.choice(impulse_pool)
+        candidates.append({
+            "source": "impulse",
+            "kind": "random_impulse",
+            "thought": thought_text,
+            "activity_suggestion": suggestion,
+            "reason": f"self_control={self_control:.2f}, stress={stress:.2f}",
+            "intensity": float(np.clip(0.35 + max(0.0, 0.55 - self_control) + max(0.0, stress - 0.60), 0.0, 1.0)),
+        })
+
+    picked = _weighted_thought_pick(candidates)
+    if not picked:
+        return {}
+    picked["time"] = str(time_str)
+    picked["scheduled_activity"] = str(scheduled_activity)
+    picked["probability"] = round(prob, 3)
+    picked["perception_excerpt"] = _compact_text(perception_text, max_chars=70)
+    picked["intensity"] = round(float(np.clip(picked.get("intensity", 0.0), 0.0, 1.0)), 3)
+    return picked
+
+
+def format_transient_thought(thought):
+    if not isinstance(thought, dict) or not thought:
+        return ""
+    source = str(thought.get("source", "thought"))
+    kind = str(thought.get("kind", ""))
+    intensity = float(thought.get("intensity", 0.0) or 0.0)
+    suggestion = str(thought.get("activity_suggestion", "")).strip()
+    body = str(thought.get("thought", "")).strip()
+    reason = str(thought.get("reason", "")).strip()
+    parts = [f"{source}/{kind}({intensity:.2f})"]
+    if body:
+        parts.append(body)
+    if suggestion:
+        parts.append(f"倾向：{suggestion}")
+    if reason:
+        parts.append(f"原因：{reason}")
+    return "；".join(parts)
+
+
 def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, plan_text,
-                          env_context, env_events, policy_desc):
+                          env_context, env_events, policy_desc, transient_thought=None, social_context=""):
     prob = _routine_change_probability(agent, env_events, policy_desc)
     if prob <= 0:
         return scheduled_activity, "", False
     commitment_level, resistance = _routine_change_resistance(agent, scheduled_activity)
     trigger = _routine_change_trigger_strength(agent, env_events, policy_desc)
+    thought = transient_thought if isinstance(transient_thought, dict) else {}
+    thought_intensity = float(thought.get("intensity", 0.0) or 0.0)
+    if thought:
+        prob = min(ROUTINE_CHANGE_MAX_CHANCE, prob + min(SPONTANEITY_MAX_OVERRIDE_BONUS, thought_intensity * 0.40))
+        trigger = float(np.clip(trigger + thought_intensity * 0.55, 0.0, 1.0))
+        source = str(thought.get("source", ""))
+        if source in {"external_event", "policy", "social", "task"}:
+            resistance = max(0.0, resistance - 0.08)
+        elif source == "impulse":
+            self_control = float(agent.get("state", {}).get("self_control", 0.6))
+            if self_control < 0.45:
+                resistance = max(0.0, resistance - 0.10)
     if trigger <= resistance:
         return scheduled_activity, "", False
     activation = min(0.95, prob + max(0.0, trigger - resistance) * 0.9)
@@ -3662,6 +4039,8 @@ def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, 
 当前计划：{plan_text}
 环境事件：{env_context if env_context else "无"}
 政策事件：{policy_desc if policy_desc else "无"}
+社交/任务触发：{social_context if social_context else "无"}
+临时念头：{format_transient_thought(thought) if thought else "无"}
 改程触发强度：{trigger:.2f}
 原计划承诺阻力：{resistance:.2f}
 
@@ -3671,11 +4050,15 @@ def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, 
 2) 若不改变，change=false，activity 可留空。
 3) 若改变，activity 为中文短语（2-8字），能合理反映动机与情境。
 4) 高承诺活动除非触发很强，否则尽量不改；低承诺活动可以更灵活。
-4) 不要输出其他文字。
+5) 不要输出其他文字。
 """
     response = call_llm(prompt, task="routine_change", agent_id=agent["id"])
     parsed = _parse_schedule_change(response)
     if not parsed:
+        suggestion = str(thought.get("activity_suggestion", "")).strip()
+        if suggestion and suggestion != scheduled_activity:
+            reason = str(thought.get("reason", "")).strip() or "临时念头触发"
+            return suggestion, reason, True
         return scheduled_activity, "", False
     if not parsed.get("change"):
         return scheduled_activity, parsed.get("reason", ""), False
@@ -3943,6 +4326,11 @@ def choose_action(
     if STATEFUL:
         recent_actions = load_recent_actions(agent["id"], max_items=6)
     refs = decision_refs or {}
+    transient_thought = refs.get("transient_thought") if isinstance(refs.get("transient_thought"), dict) else {}
+    thought_intensity = float(transient_thought.get("intensity", 0.0) or 0.0)
+    thought_source = str(transient_thought.get("source", ""))
+    thought_kind = str(transient_thought.get("kind", ""))
+    thought_suggestion = str(transient_thought.get("activity_suggestion", "")).strip()
     use_location_time = bool(refs.get("location_time_relevant", True))
     default_social_relevant = _activity_matches_keywords(
         activity,
@@ -4029,6 +4417,12 @@ def choose_action(
         "time_pressure_bias": "时间压力",
         "relation_pull": "关系牵引",
         "relation_friction": "关系摩擦",
+        "external_trigger": "外界事件触发",
+        "social_trigger": "他人/消息触发",
+        "need_trigger": "身体需求插队",
+        "task_trigger": "任务压力触发",
+        "impulse_pull": "临时冲动",
+        "suggested_by_thought": "临时念头牵引",
     }
 
     for act in options:
@@ -4068,6 +4462,24 @@ def choose_action(
             components["location_prefer"] = 1.0
         if act in avoid_set:
             components["location_avoid"] = -0.6
+
+        if transient_thought:
+            act_blob = f"{act} {thought_suggestion}"
+            if thought_suggestion and (thought_suggestion in act or act in thought_suggestion):
+                components["suggested_by_thought"] = 0.85 * thought_intensity
+            if thought_source in {"external_event", "policy"}:
+                if quick or progress or maintain or any(k in act_blob for k in ["查看", "调整", "确认", "避开", "改线", "通知", "消息"]):
+                    components["external_trigger"] = 0.65 * thought_intensity
+            if thought_source == "social" and (social or any(k in act_blob for k in ["回复", "联系", "消息", "沟通", "确认"])):
+                components["social_trigger"] = 0.75 * thought_intensity
+            if thought_source == "task" and (quick or progress or maintain or any(k in act_blob for k in ["待办", "处理", "确认", "完成"])):
+                components["task_trigger"] = 0.70 * thought_intensity
+            if thought_kind == "hunger" and any(k in act_blob for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]):
+                components["need_trigger"] = 0.80 * thought_intensity
+            if thought_kind == "recovery" and (restorative or any(k in act_blob for k in ["休息", "放松", "缓", "散步", "咖啡"])):
+                components["need_trigger"] = 0.70 * thought_intensity
+            if thought_source == "impulse" and (avoidant or quick or restorative or social):
+                components["impulse_pull"] = 0.65 * thought_intensity
 
         if HUMAN_REALISM_ENABLED:
             if act == preferred_habit_action:
@@ -4133,12 +4545,45 @@ def choose_action(
             "components": {k: round(v, 4) for k, v in components.items() if abs(v) > 0.0001},
             "styles": sorted(styles),
         }
-    choice = random.choices(options, weights=weights, k=1)[0]
+    impulse_choice = False
+    if transient_thought and SPONTANEITY_ENABLED:
+        random_action_chance = SPONTANEITY_RANDOM_ACTION_CHANCE + thought_intensity * 0.12
+        if thought_source == "impulse":
+            random_action_chance += 0.08
+        if random.random() < min(0.40, random_action_chance):
+            impulse_pool = []
+            for option in options:
+                option_styles = _action_style_tags(option)
+                if thought_source == "impulse" and option_styles & {"avoidant", "quick", "restorative", "social"}:
+                    impulse_pool.append(option)
+                elif thought_source == "social" and "social" in option_styles:
+                    impulse_pool.append(option)
+                elif thought_kind == "recovery" and "restorative" in option_styles:
+                    impulse_pool.append(option)
+                elif thought_kind == "hunger" and any(k in option for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]):
+                    impulse_pool.append(option)
+                elif thought_source in {"external_event", "policy", "task"} and option_styles & {"quick", "progress", "maintain"}:
+                    impulse_pool.append(option)
+            choice = random.choice(impulse_pool or options)
+            impulse_choice = True
+        else:
+            choice = random.choices(options, weights=weights, k=1)[0]
+    else:
+        choice = random.choices(options, weights=weights, k=1)[0]
     if not return_debug:
         return choice
     chosen = score_map.get(choice, {})
     components = chosen.get("components", {})
-    if components:
+    if impulse_choice:
+        if thought_source == "impulse":
+            driver = "临时冲动"
+        elif thought_source in {"external_event", "policy"}:
+            driver = "外界事件触发"
+        elif thought_source == "social":
+            driver = "他人/消息触发"
+        else:
+            driver = "临时念头"
+    elif components:
         best_key, best_value = max(
             components.items(),
             key=lambda item: (item[1] > 0, abs(item[1])),
@@ -4273,6 +4718,8 @@ def planning(agent, perception_text, recall_context=None, decision_refs=None):
         optional_sections.append(refs["location_time_text"])
     if refs.get("social_network_relevant") and refs.get("social_network_text"):
         optional_sections.append(f"相关社交网络情况：{refs['social_network_text']}")
+    if refs.get("transient_thought"):
+        optional_sections.append(f"临时念头：{format_transient_thought(refs.get('transient_thought'))}")
     optional_text = "\n".join(optional_sections) if optional_sections else "无其他与当前规划强相关的补充参考。"
     prompt = f"""
 你是{agent['name']}。
@@ -5260,6 +5707,16 @@ def run_simulation():
                 policy_desc = step_ctx.get("policy_desc", policy_desc)
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
+                transient_thought = maybe_generate_transient_thought(
+                    agent,
+                    time_str,
+                    scheduled_activity,
+                    perc,
+                    env_events=env_events,
+                    policy_desc=policy_desc,
+                    social_context=social_context,
+                    inbox_messages=inbox_messages,
+                )
                 step_recollections = []
                 plan_commitment = _activity_commitment_level(scheduled_activity)
                 plan_prefetch_refs = _build_decision_reference_bundle(
@@ -5293,6 +5750,7 @@ def run_simulation():
                 plan_refs = dict(plan_prefetch_refs)
                 plan_refs["memory_hint"] = plan_recall.get("hint", "")
                 plan_refs["recollection"] = plan_recall.get("recollection", "")
+                plan_refs["transient_thought"] = transient_thought
                 plan = planning(agent, perc, recall_context=plan_recall, decision_refs=plan_refs)
                 plan_text = format_plan_text(plan)
                 activity, change_reason, changed = maybe_adjust_activity(
@@ -5304,6 +5762,8 @@ def run_simulation():
                     env_context,
                     env_events,
                     policy_desc,
+                    transient_thought=transient_thought,
+                    social_context=social_context,
                 )
                 activity = step_ctx.get("activity", activity)
                 if activity != scheduled_activity and not changed:
@@ -5392,6 +5852,7 @@ def run_simulation():
                     action_refs = dict(action_prefetch_refs)
                     action_refs["memory_hint"] = action_recall.get("hint", "")
                     action_refs["recollection"] = action_recall.get("recollection", "")
+                    action_refs["transient_thought"] = transient_thought
                     act, action_meta = choose_action(
                         agent,
                         activity,
@@ -5491,7 +5952,15 @@ def run_simulation():
                         after_v = state_after.get(key)
                         if isinstance(before_v, (int, float)) and isinstance(after_v, (int, float)):
                             delta[key] = float(after_v) - float(before_v)
-                    event_intensity = min(1.0, 0.2 * len(env_events) + (0.2 if policy else 0.0))
+                    thought_intensity = (
+                        float(transient_thought.get("intensity", 0.0))
+                        if isinstance(transient_thought, dict)
+                        else 0.0
+                    )
+                    event_intensity = min(
+                        1.0,
+                        0.2 * len(env_events) + (0.2 if policy else 0.0) + 0.18 * thought_intensity,
+                    )
                     recent_actions = [
                         e.get("action", "")
                         for e in agent.get("episodes", [])[-20:]
@@ -5544,6 +6013,7 @@ def run_simulation():
                         "outcome": outcome,
                         "reflection": refl_text,
                         "reflection_struct": refl,
+                        "transient_thought": transient_thought or {},
                         "state_before": state_before,
                         "state_after": state_after,
                         "need_snapshot": need_snapshot,
@@ -5564,6 +6034,7 @@ def run_simulation():
                     episode_text = (
                         f"Day {day} {time_str} {effective_activity}/{act} @ {location} "
                         f"driver={episode['decision_driver']} commitment={episode['commitment_level']} "
+                        f"thought={format_transient_thought(transient_thought) if transient_thought else 'none'} "
                         f"needs={json.dumps(need_snapshot, ensure_ascii=False)} "
                         f"tags={','.join(tags)} salience={salience:.2f} reflection={refl_text}"
                     )
@@ -5594,6 +6065,9 @@ def run_simulation():
                         unique_recollections.append(text)
                 if unique_recollections:
                     recall_line = f"Recall: {' | '.join(unique_recollections)}\n"
+                transient_thought_line = ""
+                if transient_thought:
+                    transient_thought_line = f"TransientThought: {format_transient_thought(transient_thought)}\n"
                 memory_review_line = f"MemoryReview: {memory_review}\n" if memory_review else ""
                 decision_line = ""
                 if action_meta.get("decision_driver"):
@@ -5627,7 +6101,7 @@ TravelStatus: {travel.get('status', 'stationary')}
 Environment: {env_context}
 Perception: {perc}
 Plan: {plan_text}
-{recall_line}Action: {act}
+{transient_thought_line}{recall_line}Action: {act}
 {decision_line}{needs_line}Outcome: {outcome}
 Reflection: {refl_text}
 {memory_review_line}
@@ -5643,6 +6117,7 @@ Reflection: {refl_text}
                     "perception": perc,
                     "plan": plan_text,
                     "plan_struct": plan,
+                    "transient_thought": transient_thought or {},
                     "activity": effective_activity,
                     "action": act,
                     "outcome": outcome,
@@ -6551,6 +7026,13 @@ def _build_arg_parser():
     serve_viz.add_argument("--host", default="127.0.0.1", help="Bind host")
     serve_viz.add_argument("--port", type=int, default=8000, help="Bind port")
 
+    dashboard = subparsers.add_parser(
+        "dashboard",
+        help="Serve the local simulation dashboard with configuration and run controls",
+    )
+    dashboard.add_argument("--host", default="127.0.0.1", help="Bind host")
+    dashboard.add_argument("--port", type=int, default=8766, help="Bind port")
+
     distributed_cfg = CONFIG.get("distributed", {})
     distributed_server_cfg = (
         distributed_cfg.get("server", {})
@@ -6680,6 +7162,12 @@ def _main():
 
     if args.command == "serve-viz":
         _cli_serve_viz(host=args.host, port=args.port)
+        return
+
+    if args.command == "dashboard":
+        from dashboard_server import run_server
+
+        run_server(host=args.host, port=args.port)
         return
 
     if args.command == "serve-distributed":

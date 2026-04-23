@@ -166,6 +166,10 @@ class AnthropicProvider:
         max_tokens=512,
         system=None,
         beta=None,
+        authorization_bearer=False,
+        authorization_scheme=None,
+        include_x_api_key=True,
+        authorization_retry_schemes=None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -173,10 +177,12 @@ class AnthropicProvider:
         if api_key_env and api_key_env not in env_names:
             env_names.insert(0, api_key_env)
         self.api_key = api_key
+        self.api_key_source = "config.api_key" if api_key else ""
         if not self.api_key:
             for env_name in env_names:
                 self.api_key = os.getenv(env_name)
                 if self.api_key:
+                    self.api_key_source = env_name
                     break
         self.api_key_envs = env_names
         self.anthropic_version = anthropic_version
@@ -184,18 +190,21 @@ class AnthropicProvider:
         self.max_tokens = max_tokens
         self.system = system
         self.beta = beta
+        if authorization_scheme is None and authorization_bearer:
+            authorization_scheme = "bearer"
+        self.authorization_scheme = str(authorization_scheme or "").strip().lower()
+        self.authorization_bearer = self.authorization_scheme == "bearer"
+        self.include_x_api_key = bool(include_x_api_key)
+        self.authorization_retry_schemes = [
+            str(item or "").strip().lower()
+            for item in (authorization_retry_schemes or [])
+            if str(item or "").strip()
+        ]
 
     def call(self, prompt):
         if not self.api_key:
             env_names = ", ".join(self.api_key_envs) or "ANTHROPIC_API_KEY"
             raise ValueError(f"Anthropic provider API key not found. Set one of: {env_names}")
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": self.anthropic_version,
-            "Content-Type": "application/json",
-        }
-        if self.beta:
-            headers["anthropic-beta"] = self.beta
         payload = {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -203,19 +212,66 @@ class AnthropicProvider:
         }
         if self.system:
             payload["system"] = self.system
-        r = requests.post(
-            f"{self.base_url}/v1/messages",
-            headers=headers,
-            json=payload,
-            timeout=self.timeout,
-        )
-        r.raise_for_status()
-        data = r.json()
-        parts = []
-        for block in data.get("content", []):
-            if isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-        return "".join(parts)
+
+        schemes = [self.authorization_scheme]
+        for scheme in self.authorization_retry_schemes:
+            if scheme not in schemes:
+                schemes.append(scheme)
+        attempts = []
+        last_response = None
+        last_exc = None
+        for scheme in schemes:
+            headers = {
+                "anthropic-version": self.anthropic_version,
+                "Content-Type": "application/json",
+            }
+            if self.include_x_api_key:
+                headers["x-api-key"] = self.api_key
+            if scheme == "bearer":
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            elif scheme == "raw":
+                headers["Authorization"] = self.api_key
+            if self.beta:
+                headers["anthropic-beta"] = self.beta
+            r = requests.post(
+                f"{self.base_url}/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+            try:
+                r.raise_for_status()
+                data = r.json()
+                parts = []
+                for block in data.get("content", []):
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        parts.append(block["text"])
+                return "".join(parts)
+            except requests.exceptions.HTTPError as exc:
+                last_response = r
+                last_exc = exc
+                attempts.append({
+                    "scheme": scheme or "none",
+                    "status": r.status_code,
+                    "authorization_sent": "Authorization" in headers,
+                    "x_api_key_sent": "x-api-key" in headers,
+                })
+                if r.status_code != 401:
+                    break
+                continue
+
+        body = last_response.text.strip() if last_response is not None else ""
+        if len(body) > 800:
+            body = body[:800] + "..."
+        env_names = ", ".join(self.api_key_envs) or "ANTHROPIC_API_KEY"
+        status = last_response.status_code if last_response is not None else "unknown"
+        raise requests.exceptions.HTTPError(
+            f"Anthropic provider request failed with HTTP {status}. "
+            f"base_url={self.base_url!r}, model={self.model!r}, "
+            f"api_key_present={bool(self.api_key)}, api_key_envs=[{env_names}], "
+            f"api_key_source={self.api_key_source!r}, attempts={attempts!r}, "
+            f"response={body!r}"
+        ) from last_exc
 
 
 class LLMRouter:
@@ -260,6 +316,10 @@ class LLMRouter:
                     max_tokens=cfg.get("max_tokens", 512),
                     system=cfg.get("system"),
                     beta=cfg.get("anthropic_beta"),
+                    authorization_bearer=cfg.get("authorization_bearer", False),
+                    authorization_scheme=cfg.get("authorization_scheme"),
+                    include_x_api_key=cfg.get("include_x_api_key", True),
+                    authorization_retry_schemes=cfg.get("authorization_retry_schemes"),
                 )
             else:
                 print(f"⚠️ 跳过不支持的 LLM provider 类型: {name} ({p_type})")

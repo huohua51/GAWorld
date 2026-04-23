@@ -22,12 +22,6 @@ CONFIG = {
                 "model": "gemma4:e4b",
                 "timeout": 120,
             },
-            "ollama_gemma12": {
-                "type": "ollama",
-                "url": "http://localhost:11434/api/generate",
-                "model": "gemma3:12b",
-                "timeout": 120,
-            },
             "ollama_qwen": {
                 "type": "ollama",
                 "url": "http://localhost:11434/api/generate",
@@ -56,19 +50,17 @@ CONFIG = {
                 "api_key_env": "OPENAI_API_KEY",
                 "timeout": 120,
             },
-            "claude": {
-                "type": "claude",
-                "base_url": os.environ.get("ANTHROPIC_BASE_URL", "https://www.packyapi.com"),
-                "model": "gpt-4.1",
-                "ANTHROPIC_AUTH_TOKEN": "sk-b0n7ujizk2dHMXnuiWUzHJ6tnGzbRRdPP2YK7hdxV0Xk5Pt7",
-                "timeout": 120,
-            },
             "minimax": {
                 "type": "anthropic",
                 "base_url": os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
                 "model": os.environ.get("MINIMAX_MODEL", "MiniMax-M2.7"),
-                "api_key_env": "ANTHROPIC_API_KEY",
-                "api_key_envs": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "MINIMAX_API_KEY"],
+                "api_key_env": "MINIMAX_API_KEY",
+                "api_key_envs": ["MINIMAX_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+                # China-region Minimax expects the raw secret key in Authorization.
+                # Set MINIMAX_AUTHORIZATION_SCHEME=bearer for endpoints that require Bearer tokens.
+                "authorization_scheme": os.environ.get("MINIMAX_AUTHORIZATION_SCHEME", "raw"),
+                "authorization_retry_schemes": ["bearer"],
+                "include_x_api_key": False,
                 "timeout": 120,
                 "max_tokens": 512,
             },
@@ -81,8 +73,8 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [3],
-    "sim_days": 3,
+    "agent_ids": [4,5,6,7,8,9,10],
+    "sim_days": 30,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,
@@ -195,6 +187,33 @@ CONFIG = {
         "event_boost": 0.08,
         "policy_boost": 0.05,
         "max_chance": 0.45,
+    },
+    "daily_planning": {
+        "anchor_minutes": 30,
+        "random_delay_max_minutes": 10,
+        "flexible": {
+            "enabled": True,
+            "min_items": 6,
+            "max_items": 12,
+            "max_time_shift_minutes": 120,
+            "min_gap_minutes": 15,
+            "allow_insertions": True,
+        },
+    },
+    "spontaneity": {
+        "enabled": True,
+        "base_thought_chance": 0.18,
+        "max_thought_chance": 0.68,
+        "event_boost": 0.10,
+        "policy_boost": 0.08,
+        "social_boost": 0.08,
+        "low_self_control_boost": 0.22,
+        "stress_boost": 0.18,
+        "fatigue_boost": 0.14,
+        "hunger_boost": 0.12,
+        "impulse_activity_chance": 0.10,
+        "random_action_chance": 0.05,
+        "max_override_bonus": 0.35,
     },
     # News / social media reading
     "news": {
@@ -359,6 +378,23 @@ def _load_env_override():
         return {}
     return payload if isinstance(payload, dict) else {}
 
+def _load_json_override(path):
+    if not path:
+        return {}
+    target = str(path).strip()
+    if not target:
+        return {}
+    if not os.path.isabs(target):
+        target = os.path.join(os.path.dirname(__file__), target)
+    if not os.path.exists(target):
+        return {}
+    try:
+        with open(target, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
 def _load_environment_config(path):
     if not path:
         return {}
@@ -388,6 +424,7 @@ def _load_environment_config(path):
     return allowed
 
 _OVERRIDES = _load_env_override()
+_deep_update(CONFIG, _load_json_override("dashboard_config.json"))
 _deep_update(CONFIG, _OVERRIDES)
 _deep_update(CONFIG, _load_environment_config(CONFIG.get("environment_config_path")))
 _deep_update(CONFIG, _OVERRIDES)
