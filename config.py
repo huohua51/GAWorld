@@ -242,6 +242,39 @@ CONFIG = {
             "user_agent": "GAWorld/1.0",
         },
     },
+    # PolicySim-inspired lightweight intervention evaluation.
+    # This is deterministic and does not call external moderation or training APIs.
+    "intervention": {
+        "enabled": True,
+        "output_dir": "output/intervention",
+        "recommendation": {
+            "max_items": 5,
+            "source_weights": {
+                "relational": 1.0,
+                "personalized": 0.85,
+                "headline": 0.75,
+            },
+        },
+        "exposure_control": {
+            "enabled": True,
+            "toxicity_threshold": 0.45,
+            "misinformation_threshold": 0.35,
+            "suppression_factor": 0.25,
+        },
+        "stance": {
+            "alpha": 0.8,
+            "positive_keywords": ["支持", "赞成", "改善", "安心", "信任", "机会", "合作", "透明", "保护"],
+            "negative_keywords": ["反对", "担心", "不满", "风险", "冲突", "失望", "质疑", "压力", "限制"],
+        },
+        "toxicity_keywords": ["辱骂", "攻击", "仇恨", "歧视", "极端", "滚", "骗子", "垃圾"],
+        "misinformation_keywords": ["谣言", "假消息", "未经证实", "阴谋", "伪造", "骗局", "造假", "不实"],
+        "objectives": {
+            "cross_viewpoint_weight": 0.55,
+            "engagement_weight": 0.20,
+            "toxicity_penalty_weight": 0.15,
+            "misinformation_penalty_weight": 0.10,
+        },
+    },
     # Human realism (experience accumulation + habit/need dynamics)
     "human_realism": {
         "enabled": True,

@@ -4,7 +4,8 @@
 
 GAWorld is a generative multi-agent simulator for urban social behavior experiments.
 It combines agent profiles, memory, social influence, environment events, policy shocks,
-economy, map-based movement, and LLM-driven decision making into a replayable simulation workflow.
+economy, map-based movement, lightweight platform-intervention evaluation, and LLM-driven
+decision making into a replayable simulation workflow.
 
 ## Overview
 
@@ -15,6 +16,7 @@ You can:
 - compare counterfactual scenarios in parallel
 - preserve memory, habits, and relationships across days
 - inspect traces, logs, interviews, and per-agent memory artifacts
+- evaluate PolicySim-style recommendation / exposure interventions without extra APIs
 - edit runtime parameters and profiles through a local dashboard
 
 Typical use cases:
@@ -50,6 +52,7 @@ Across days, the simulator accumulates:
 - Multi-backend LLM routing: Ollama, OpenAI-compatible, Anthropic-compatible
 - External RAG injection from CLI or files
 - Policy events and environment events
+- PolicySim-inspired recommendation / exposure intervention metrics
 - Economy / wealth module
 - Location-aware actions and travel
 - City map generation and route playback
@@ -64,6 +67,7 @@ Across days, the simulator accumulates:
 - `config.py`: runtime configuration
 - `llm_providers.py`: provider wrappers and task routing
 - `environment.py`: environment event system
+- `intervention_policy.py`: lightweight recommendation, exposure control, stance, and risk metrics
 - `human_realism.py`: realism helpers, intentions, habits, memory consolidation
 - `economy_module.py`: economy / wealth layer
 - `memory_store.py`: memory persistence and vector DB helpers
@@ -174,7 +178,7 @@ python generative_city_sim.py rag-import \
   --source "profile_notes"
 ```
 
-Compare an event with and without intervention:
+Compare an event against a no-event baseline:
 
 ```bash
 python generative_city_sim.py compare-event \
@@ -186,6 +190,10 @@ python generative_city_sim.py compare-event \
   --llm-provider minimax \
   --seed 42
 ```
+
+The comparison report includes regular city-state metrics and intervention metrics such as
+`stance_score`, `toxicity_score`, `misinformation_risk`, `cross_viewpoint_exposure`, and
+`intervention_reward`.
 
 Generate a city map:
 
@@ -230,8 +238,18 @@ Important fields:
 - `llm.routing.tasks`: task-specific provider overrides
 - `memory_dir`, `log_dir`, `vector_db_path`: persistence locations
 - `visualization.output_dir`: trace output folder
+- `intervention`: lightweight recommendation / exposure control and evaluation settings
 - `policy_events`: scheduled policy shocks
 - `distributed`: multi-machine communication settings
+
+### PolicySim-Style Intervention Evaluation
+
+`CONFIG["intervention"]` enables a deterministic, no-network intervention layer inspired by
+PolicySim. At each agent step, the simulator builds a small feed from relational, personalized,
+and headline-like sources, applies local exposure-control heuristics, injects the feed into
+perception, and records stance / toxicity / misinformation / cross-viewpoint reward metrics.
+
+This feature does not perform SFT/DPO model training and does not call external moderation APIs.
 
 ### LLM Backends
 
@@ -256,6 +274,7 @@ Generated artifacts are written under `output/`, including:
 - `output/memory/vector_db.sqlite`
 - `output/economy/`
 - `output/environment/timeline.jsonl`
+- `output/intervention/intervention_metrics.csv`
 - `output/visualization/simulation_trace.json`
 - `output/visualization/latest_frame.json`
 - `output/network/`

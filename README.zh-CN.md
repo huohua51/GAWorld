@@ -3,7 +3,7 @@
 [English](./README.md) | [中文](./README.zh-CN.md)
 
 GAWorld 是一个面向城市社会行为实验的生成式多智能体仿真项目。
-它把人物画像、长期记忆、社会影响、环境扰动、政策事件、经济状态、地图移动和 LLM 决策过程组合到一个可回放、可对照、可扩展的模拟流程中。
+它把人物画像、长期记忆、社会影响、环境扰动、政策事件、经济状态、地图移动、轻量平台干预评估和 LLM 决策过程组合到一个可回放、可对照、可扩展的模拟流程中。
 
 ## 项目概览
 
@@ -13,6 +13,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 并行比较有事件和无事件的反事实场景
 - 保留跨天记忆、习惯、意图和关系变化
 - 检查轨迹、日志、访谈结果和记忆文件
+- 在不增加外部 API 的情况下评估 PolicySim 风格的推荐 / 曝光干预
 - 通过本地 dashboard 修改配置、人物 profile 并控制运行
 
 适用场景包括：
@@ -48,6 +49,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 多后端 LLM 路由：Ollama、OpenAI 兼容、Anthropic 兼容
 - 支持通过 CLI 或文件注入外部 RAG 信息
 - 政策事件和环境事件模拟
+- PolicySim 风格的推荐 / 曝光干预指标
 - 经济 / 财富模块
 - 基于位置和出行的动作决策
 - 城市地图生成与轨迹回放
@@ -62,6 +64,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - `config.py`：运行配置
 - `llm_providers.py`：模型 provider 封装和路由逻辑
 - `environment.py`：环境事件系统
+- `intervention_policy.py`：轻量推荐、曝光控制、立场和风险指标
 - `human_realism.py`：真实感增强、习惯、意图、记忆整合
 - `economy_module.py`：经济 / 财富模块
 - `memory_store.py`：记忆持久化和向量库辅助
@@ -185,6 +188,9 @@ python generative_city_sim.py compare-event \
   --seed 42
 ```
 
+对照报告会同时包含常规城市状态指标和干预指标，例如 `stance_score`、`toxicity_score`、
+`misinformation_risk`、`cross_viewpoint_exposure`、`intervention_reward`。
+
 生成城市地图：
 
 ```bash
@@ -228,8 +234,17 @@ dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 - `llm.routing.tasks`：按任务覆盖 provider
 - `memory_dir`、`log_dir`、`vector_db_path`：持久化路径
 - `visualization.output_dir`：轨迹输出目录
+- `intervention`：轻量推荐 / 曝光控制和干预评估配置
 - `policy_events`：政策事件
 - `distributed`：多机通信配置
+
+### PolicySim 风格干预评估
+
+`CONFIG["intervention"]` 默认开启一个确定性、无网络依赖的干预层。每个智能体 step 会从关系动态、
+个性化内容和公共议题中构造小型 feed，经过本地曝光控制启发式处理后注入感知，并记录立场、毒性、
+误信息、跨观点曝光和干预奖励指标。
+
+该功能不执行 SFT/DPO 模型训练，也不会调用外部内容审核 API。
 
 ### LLM 后端
 
@@ -254,6 +269,7 @@ dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 - `output/memory/vector_db.sqlite`
 - `output/economy/`
 - `output/environment/timeline.jsonl`
+- `output/intervention/intervention_metrics.csv`
 - `output/visualization/simulation_trace.json`
 - `output/visualization/latest_frame.json`
 - `output/network/`

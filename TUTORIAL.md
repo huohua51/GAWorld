@@ -43,6 +43,7 @@ python generative_city_sim.py run
 - `output/logs/`：运行日志
 - `output/memory/`：Agent 记忆与状态
 - `output/state/agent_state_history.csv`：状态时间序列
+- `output/intervention/intervention_metrics.csv`：PolicySim 风格干预指标
 - `output/network/social_network.png`：社交网络图
 
 ## 4. 重置并重新开始
@@ -111,6 +112,17 @@ python generative_city_sim.py compare-event \
 
 输出会写入 `output/comparisons/<时间戳_事件名>/`。
 
+重点查看：
+
+- `comparison_summary.md`：常规状态指标和 PolicySim 干预指标摘要
+- `comparison_metrics.csv`：所有指标的 baseline / event / delta 明细
+- `with_event/intervention/intervention_metrics.csv`：有事件分支的干预评估时间序列
+- `without_event/intervention/intervention_metrics.csv`：无事件分支的干预评估时间序列
+
+默认干预评估不会调用额外 API。它会在每个 step 构造关系推荐、个性化推荐和公共议题 feed，
+再记录 `stance_score`、`toxicity_score`、`misinformation_risk`、
+`cross_viewpoint_exposure` 和 `intervention_reward`。
+
 ## 8. 生成新城市地图（可选）
 
 ```bash
@@ -126,6 +138,8 @@ python generate_citymap.py --description "a small city with about 1000 residents
 
 2. 运行很慢  
 在 `config.py` 中降低 `sim_days`、减少 `agent_ids`，或减少额外 LLM 调用配置。
+
+如果只想关闭干预评估，在 `config.py` 中设置 `intervention.enabled = False`。
 
 3. 修改配置后行为异常  
 先执行 `python generative_city_sim.py reset`，再重新运行。
