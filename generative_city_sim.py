@@ -62,6 +62,19 @@ from human_realism import (
     update_habits_from_episode,
     update_needs,
 )
+from intervention_policy import (
+    INTERVENTION_METRICS,
+    append_intervention_metrics,
+    build_intervention_feed,
+    initialize_agent_intervention_state,
+    update_agent_intervention_metrics,
+)
+from life_events import (
+    drain_due_life_events,
+    format_life_event,
+    life_event_dir,
+    life_events_for_agent,
+)
 from memory_store import (
     append_agent_log,
     load_agent_actions,
@@ -1203,7 +1216,15 @@ def reset_simulation():
                 os.remove(vector_db_path)
         except OSError:
             pass
-    for output_dir in [STATE_OUTPUT_DIR, NETWORK_OUTPUT_DIR, ENV_OUTPUT_DIR, DIARY_OUTPUT_DIR, VISUALIZATION_OUTPUT_DIR]:
+    for output_dir in [
+        STATE_OUTPUT_DIR,
+        NETWORK_OUTPUT_DIR,
+        ENV_OUTPUT_DIR,
+        DIARY_OUTPUT_DIR,
+        VISUALIZATION_OUTPUT_DIR,
+        INTERVENTION_OUTPUT_DIR,
+        life_event_dir(CONFIG),
+    ]:
         if output_dir not in (memory_dir, log_dir):
             _clear_dir(output_dir)
     save_sim_state({
@@ -1350,6 +1371,67 @@ def append_jsonl(path, row):
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def _life_event_as_env_event(event):
+    return {
+        "id": str(event.get("id", "")),
+        "type": "life_event",
+        "topic": str(event.get("template_key", "custom") or "custom"),
+        "name": str(event.get("title", "人生事件") or "人生事件"),
+        "description": str(event.get("description", "") or ""),
+        "severity": float(event.get("severity", 0.6) or 0.6),
+        "scope": "agent",
+        "impact_tags": list(event.get("impact_tags", []) or []),
+        "life_event": True,
+    }
+
+
+def _format_life_event_context(events):
+    lines = [format_life_event(event) for event in (events or [])]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+    return "人生事件：" + "；".join(lines)
+
+
+def _record_life_events_for_agent(agent, events, day, time_str, daily_logs):
+    recorded_ids = agent.setdefault("_recorded_life_event_ids", set())
+    for event in events or []:
+        event_id = str(event.get("id", ""))
+        if event_id and event_id in recorded_ids:
+            continue
+        if event_id:
+            recorded_ids.add(event_id)
+        text = (
+            f"[LifeEvent Day {day} {time_str}] "
+            f"{agent.get('name', agent.get('id', 'agent'))}: {format_life_event(event)}"
+        )
+        print(text)
+        daily_logs[agent["id"]] += text + "\n"
+        append_agent_log(agent, text + "\n")
+        _append_memory_record(
+            agent,
+            text,
+            entry_type="life_event",
+            day=day,
+            time_str=time_str,
+        )
+
+
+def _apply_life_event_state_effects(agent, events):
+    state = agent.setdefault("state", {})
+    for event in events or []:
+        effects = event.get("state_effects", {})
+        if not isinstance(effects, dict):
+            continue
+        for key, delta in effects.items():
+            if key not in state:
+                continue
+            try:
+                state[key] = _clip01(float(state.get(key, 0.5)) + float(delta))
+            except (TypeError, ValueError):
+                continue
+
+
 # =========================================================
 # 参数
 # =========================================================
@@ -1390,6 +1472,9 @@ VISUALIZATION_FLUSH_EVERY_FRAMES = max(
     0,
     int(VISUALIZATION_CONFIG.get("flush_every_frames", 24)),
 )
+INTERVENTION_CONFIG = CONFIG.get("intervention", {})
+INTERVENTION_ENABLED = bool(INTERVENTION_CONFIG.get("enabled", False))
+INTERVENTION_OUTPUT_DIR = INTERVENTION_CONFIG.get("output_dir", "output/intervention")
 SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
@@ -1782,6 +1867,11 @@ def build_agent(agent_id, df, city_map=None):
             "fatigue_debt": float(row.get("fatigue_debt", 0.20)),
             "self_control": float(row.get("self_control", 0.60)),
             "time_pressure": float(row.get("time_pressure", 0.25)),
+            "stance_score": float(row.get("stance_score", 0.0)),
+            "toxicity_score": float(row.get("toxicity_score", 0.0)),
+            "misinformation_risk": float(row.get("misinformation_risk", 0.0)),
+            "cross_viewpoint_exposure": float(row.get("cross_viewpoint_exposure", 0.0)),
+            "intervention_reward": float(row.get("intervention_reward", 0.0)),
         },
         "memory": [],
         "social_neighbors": []
@@ -5214,6 +5304,8 @@ def run_simulation():
     hook_bus = HookBus(CONFIG.get("extensions", {}))
     extension_state = {}
     agents = [build_agent(i, df, city_map=city_map) for i in AGENT_IDS]
+    for agent in agents:
+        initialize_agent_intervention_state(agent, INTERVENTION_CONFIG)
     if PRINT_AGENT_PROFILE:
         print_agent_profiles([a["id"] for a in agents])
     start_day = 1
@@ -5566,10 +5658,22 @@ def run_simulation():
         for time_index, time_str in enumerate(timeline):
             step_minutes = _timeline_step_minutes(timeline, time_index)
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
+            due_life_events = drain_due_life_events(day, time_str, CONFIG)
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
             frame_steps = []
+            if due_life_events:
+                append_jsonl(
+                    env_timeline_path,
+                    {
+                        "scope": "life_event",
+                        "day": int(day),
+                        "date": day_context.get("sim_date", ""),
+                        "time": str(time_str),
+                        "events": due_life_events,
+                    },
+                )
             if env_events:
                 append_jsonl(
                     env_timeline_path,
@@ -5653,6 +5757,18 @@ def run_simulation():
                             sim_day=day,
                             sim_time=time_str,
                         )
+                agent_life_events = life_events_for_agent(due_life_events, agent_id)
+                if agent_life_events:
+                    _record_life_events_for_agent(
+                        agent,
+                        agent_life_events,
+                        day,
+                        time_str,
+                        daily_logs,
+                    )
+                agent_env_events = list(env_events or []) + [
+                    _life_event_as_env_event(event) for event in agent_life_events
+                ]
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
                 inbox_messages = distributed_inbox.get(agent_id, [])
@@ -5683,6 +5799,7 @@ def run_simulation():
                     "activity": scheduled_activity,
                     "social_context": social_context,
                     "policy_desc": policy_desc,
+                    "life_events": agent_life_events,
                 }
                 hook_bus.emit(
                     "on_agent_pre_step",
@@ -5696,7 +5813,7 @@ def run_simulation():
                     city_map_text=city_map_text,
                     schedule_map=schedule_map,
                     actions=actions,
-                    env_events=env_events,
+                    env_events=agent_env_events,
                     env_context=env_context,
                     policy=policy,
                     step=step_ctx,
@@ -5705,14 +5822,42 @@ def run_simulation():
                 scheduled_activity = step_ctx.get("scheduled_activity", scheduled_activity)
                 social_context = step_ctx.get("social_context", social_context)
                 policy_desc = step_ctx.get("policy_desc", policy_desc)
+                intervention_feed = {}
+                step_env_context = env_context
+                life_event_context = _format_life_event_context(agent_life_events)
+                if life_event_context:
+                    step_env_context = (
+                        f"{step_env_context}\n{life_event_context}"
+                        if step_env_context
+                        else life_event_context
+                    )
+                if INTERVENTION_ENABLED:
+                    intervention_feed = build_intervention_feed(
+                        agent,
+                        agents_by_id=agents_by_id,
+                        day=day,
+                        time_str=time_str,
+                        env_events=agent_env_events,
+                        policy_event=policy or policy_desc,
+                        news_items=news_cache[:5],
+                        config=INTERVENTION_CONFIG,
+                    )
+                    feed_context = intervention_feed.get("context_text", "")
+                    if feed_context:
+                        step_env_context = (
+                            f"{env_context}\n平台干预推荐：{feed_context}"
+                            if env_context
+                            else f"平台干预推荐：{feed_context}"
+                        )
+                        step_ctx["intervention_feed"] = intervention_feed
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
-                perc = perception(agent, time_str, social_context, env_context, policy_desc if policy else None)
+                perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
                 transient_thought = maybe_generate_transient_thought(
                     agent,
                     time_str,
                     scheduled_activity,
                     perc,
-                    env_events=env_events,
+                    env_events=agent_env_events,
                     policy_desc=policy_desc,
                     social_context=social_context,
                     inbox_messages=inbox_messages,
@@ -5724,8 +5869,8 @@ def run_simulation():
                     scheduled_activity,
                     time_str=time_str,
                     location=agent.get("locations", {}).get("current", ""),
-                    env_context=env_context,
-                    env_events=env_events,
+                    env_context=step_env_context,
+                    env_events=agent_env_events,
                     policy_desc=policy_desc,
                     social_context=social_context,
                 )
@@ -5759,8 +5904,8 @@ def run_simulation():
                     scheduled_activity,
                     perc,
                     plan_text,
-                    env_context,
-                    env_events,
+                    step_env_context,
+                    agent_env_events,
                     policy_desc,
                     transient_thought=transient_thought,
                     social_context=social_context,
@@ -5823,8 +5968,8 @@ def run_simulation():
                         activity,
                         time_str=time_str,
                         location=resolved_location,
-                        env_context=env_context,
-                        env_events=env_events,
+                        env_context=step_env_context,
+                        env_events=agent_env_events,
                         policy_desc=policy_desc,
                         social_context=social_context,
                     )
@@ -5895,11 +6040,13 @@ def run_simulation():
                         travel=travel,
                     )
 
-                if env_events:
-                    for ev in env_events:
+                if agent_env_events:
+                    for ev in agent_env_events:
                         inferred = infer_event_effect(agent, ev.get("description", ev.get("name", "")), ev.get("type", "event"))
                         for k, v in inferred.items():
                             agent["state"][k] += v
+                if agent_life_events:
+                    _apply_life_event_state_effects(agent, agent_life_events)
 
                 if policy:
                     inferred = infer_event_effect(agent, policy_desc, "policy")
@@ -5908,6 +6055,31 @@ def run_simulation():
 
                 social_influence(agent, agents_by_id)
                 update_state(agent)
+                intervention_metrics = {}
+                if INTERVENTION_ENABLED:
+                    intervention_metrics = update_agent_intervention_metrics(
+                        agent,
+                        feed=intervention_feed,
+                        action=act,
+                        outcome=outcome,
+                        reflection=refl_text,
+                        agents_by_id=agents_by_id,
+                        config=INTERVENTION_CONFIG,
+                    )
+                    source_counts = intervention_feed.get("source_counts", {}) if isinstance(intervention_feed, dict) else {}
+                    append_intervention_metrics(
+                        INTERVENTION_OUTPUT_DIR,
+                        {
+                            "day": day,
+                            "time": time_str,
+                            "agent_id": agent_id,
+                            "feed_items": len(intervention_feed.get("items", [])) if isinstance(intervention_feed, dict) else 0,
+                            "relational_items": source_counts.get("relational", 0),
+                            "personalized_items": source_counts.get("personalized", 0),
+                            "headline_items": source_counts.get("headline", 0),
+                            **intervention_metrics,
+                        },
+                    )
                 sent_remote_messages = []
                 if distributed_client.enabled:
                     sent_remote_messages = distributed_client.send_agent_messages(
@@ -5959,7 +6131,7 @@ def run_simulation():
                     )
                     event_intensity = min(
                         1.0,
-                        0.2 * len(env_events) + (0.2 if policy else 0.0) + 0.18 * thought_intensity,
+                        0.2 * len(agent_env_events) + (0.2 if policy else 0.0) + 0.18 * thought_intensity,
                     )
                     recent_actions = [
                         e.get("action", "")
@@ -5983,7 +6155,7 @@ def run_simulation():
                         effective_activity,
                         act,
                         refl_text,
-                        env_events=[ev.get("description", ev.get("name", "")) for ev in env_events],
+                        env_events=[ev.get("description", ev.get("name", "")) for ev in agent_env_events],
                         policy_event=policy_desc if policy else "",
                     )
                     need_snapshot = {
@@ -6004,7 +6176,8 @@ def run_simulation():
                         "location": location,
                         "target_location": movement["target_location"],
                         "travel": travel,
-                        "env_events": [ev.get("description", ev.get("name", "")) for ev in env_events],
+                        "env_events": [ev.get("description", ev.get("name", "")) for ev in agent_env_events],
+                        "life_events": [dict(event) for event in agent_life_events],
                         "policy_event": policy_desc if policy else "",
                         "social_partners": partners,
                         "perception": perc,
@@ -6050,6 +6223,9 @@ def run_simulation():
                     )
                 else:
                     memory_review = ""
+                    agent["last_activity"] = effective_activity
+                    agent["last_action"] = act
+                agent["last_reflection"] = refl_text
                 for metric in state_history[agent["id"]]:
                     state_history[agent["id"]][metric].append(agent["state"][metric])
 
@@ -6098,7 +6274,7 @@ TravelMode: {travel.get('mode', 'N/A')}
 TravelDistanceKm: {travel.get('distance_km', 0.0):.2f}
 TravelMinutes: {travel.get('minutes', 0)}
 TravelStatus: {travel.get('status', 'stationary')}
-Environment: {env_context}
+Environment: {step_env_context}
 Perception: {perc}
 Plan: {plan_text}
 {transient_thought_line}{recall_line}Action: {act}
@@ -6124,6 +6300,8 @@ Reflection: {refl_text}
                     "reflection": refl_text,
                     "reflection_struct": refl,
                     "log": log,
+                    "env_context": step_env_context,
+                    "intervention_metrics": intervention_metrics,
                     "changed": changed,
                     "change_reason": change_reason,
                     "location": location,
@@ -6643,6 +6821,9 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
         "state_output_dir": os.path.join(scenario_dir, "state"),
         "network_output_dir": os.path.join(scenario_dir, "network"),
         "environment_output_dir": os.path.join(scenario_dir, "environment"),
+        "intervention": {
+            "output_dir": os.path.join(scenario_dir, "intervention"),
+        },
         "visualization": {
             "enabled": True,
             "output_dir": os.path.join(scenario_dir, "visualization"),
@@ -6770,6 +6951,16 @@ def _impact_hint(metric, delta):
         direction = "城市认同" + sign
     elif metric == "mobility_intent":
         direction = "流动意愿" + sign
+    elif metric == "stance_score":
+        direction = "平均立场分数" + sign
+    elif metric == "toxicity_score":
+        direction = "毒性风险" + sign
+    elif metric == "misinformation_risk":
+        direction = "误信息风险" + sign
+    elif metric == "cross_viewpoint_exposure":
+        direction = "跨观点曝光" + sign
+    elif metric == "intervention_reward":
+        direction = "干预奖励" + sign
     else:
         direction = f"{metric}" + sign
     return f"{direction}（Δ={amount:.4f}）"
@@ -6801,6 +6992,21 @@ def _write_comparison_report(output_root, event_payload, rows):
     lines.append("")
     if rows:
         top = rows[:5]
+        intervention_rows = [
+            row for row in rows
+            if row.get("metric") in set(INTERVENTION_METRICS)
+        ]
+        intervention_rows.sort(key=lambda x: abs(x["delta_final"]), reverse=True)
+        if intervention_rows:
+            lines.append("## PolicySim 干预指标")
+            lines.append("")
+            for item in intervention_rows:
+                hint = _impact_hint(item["metric"], item["delta_final"])
+                lines.append(
+                    f"- `{item['metric']}`: baseline={item['baseline_final']:.4f}, "
+                    f"event={item['event_final']:.4f}, Δ={item['delta_final']:.4f}，{hint}"
+                )
+            lines.append("")
         lines.append("## 关键差异（按终值绝对差排序）")
         lines.append("")
         for item in top:

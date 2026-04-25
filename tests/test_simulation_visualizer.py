@@ -58,7 +58,10 @@ class TestSimulationVisualizer(unittest.TestCase):
                 payload = json.load(f)
             self.assertTrue(payload["meta"]["finished"])
             self.assertEqual(1, payload["meta"]["frame_count"])
+            self.assertEqual("avatars/agent_1.svg", payload["agents"][0]["avatar_path"])
+            self.assertTrue(os.path.exists(os.path.join(tmpdir, "avatars", "agent_1.svg")))
             self.assertEqual("Hangzhou Tech Labs", payload["frames"][0]["agents"][0]["target_location"])
+            self.assertEqual("avatars/agent_1.svg", payload["frames"][0]["agents"][0]["avatar_path"])
             self.assertEqual("bus", payload["frames"][0]["agents"][0]["travel"]["mode"])
 
 
