@@ -180,6 +180,13 @@ CONFIG = {
             "description": "Increase social security coverage and wage transparency, strengthen platform labor oversight."
         }
     ],
+    # Manual "life events" queue. The dashboard can add targeted events while
+    # a simulation is running; the simulator consumes due events on each tick.
+    "life_events": {
+        "enabled": True,
+        "event_dir": "output/life_events",
+        "events_file": "events.json",
+    },
     # Routine change (chance to deviate from schedule during the day)
     "routine_change": {
         "enabled": True,

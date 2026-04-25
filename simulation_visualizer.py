@@ -2,6 +2,7 @@ import json
 import os
 from datetime import UTC, datetime
 
+from avatar_generator import ensure_agent_avatar
 from city_map_system import project_to_tile
 
 
@@ -68,8 +69,26 @@ class SimulationVisualizer:
         self.output_dir = output_dir
         self.trace_path = os.path.join(output_dir, "simulation_trace.json")
         self.latest_frame_path = os.path.join(output_dir, "latest_frame.json")
+        self.avatar_dir = os.path.join(output_dir, "avatars")
         self.flush_every_frames = max(0, int(flush_every_frames or 0))
         layout = build_map_layout(city_map)
+        trace_agents = []
+        self.agent_avatar_map = {}
+        for agent in agents:
+            agent_id = int(agent.get("id", 0) or 0)
+            avatar_path = os.path.join("avatars", f"agent_{agent_id}.svg")
+            ensure_agent_avatar(agent, self.avatar_dir, filename=f"agent_{agent_id}.svg")
+            self.agent_avatar_map[agent_id] = avatar_path
+            agent["avatar_path"] = avatar_path
+            trace_agents.append(
+                {
+                    "id": agent_id,
+                    "name": agent.get("name", str(agent.get("id", "agent"))),
+                    "home": agent.get("locations", {}).get("home", ""),
+                    "workplace": agent.get("locations", {}).get("workplace", ""),
+                    "avatar_path": avatar_path,
+                }
+            )
         self.trace = {
             "meta": {
                 "generated_at": _utc_timestamp(),
@@ -79,15 +98,7 @@ class SimulationVisualizer:
                 "sim_meta": sim_meta or {},
             },
             "map": layout,
-            "agents": [
-                {
-                    "id": int(agent.get("id", 0) or 0),
-                    "name": agent.get("name", str(agent.get("id", "agent"))),
-                    "home": agent.get("locations", {}).get("home", ""),
-                    "workplace": agent.get("locations", {}).get("workplace", ""),
-                }
-                for agent in agents
-            ],
+            "agents": trace_agents,
             "frames": [],
         }
         self._write_trace()
@@ -147,6 +158,7 @@ def build_agent_step_payload(agent, time_str, location, resolved_location, targe
     return {
         "agent_id": int(agent.get("id", 0) or 0),
         "name": agent.get("name", str(agent.get("id", "agent"))),
+        "avatar_path": str(agent.get("avatar_path", "") or ""),
         "time": str(time_str),
         "location": str(location or ""),
         "resolved_location": str(resolved_location or ""),

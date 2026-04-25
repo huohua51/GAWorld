@@ -69,6 +69,12 @@ from intervention_policy import (
     initialize_agent_intervention_state,
     update_agent_intervention_metrics,
 )
+from life_events import (
+    drain_due_life_events,
+    format_life_event,
+    life_event_dir,
+    life_events_for_agent,
+)
 from memory_store import (
     append_agent_log,
     load_agent_actions,
@@ -1217,6 +1223,7 @@ def reset_simulation():
         DIARY_OUTPUT_DIR,
         VISUALIZATION_OUTPUT_DIR,
         INTERVENTION_OUTPUT_DIR,
+        life_event_dir(CONFIG),
     ]:
         if output_dir not in (memory_dir, log_dir):
             _clear_dir(output_dir)
@@ -1362,6 +1369,67 @@ def append_jsonl(path, row):
         os.makedirs(directory, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _life_event_as_env_event(event):
+    return {
+        "id": str(event.get("id", "")),
+        "type": "life_event",
+        "topic": str(event.get("template_key", "custom") or "custom"),
+        "name": str(event.get("title", "人生事件") or "人生事件"),
+        "description": str(event.get("description", "") or ""),
+        "severity": float(event.get("severity", 0.6) or 0.6),
+        "scope": "agent",
+        "impact_tags": list(event.get("impact_tags", []) or []),
+        "life_event": True,
+    }
+
+
+def _format_life_event_context(events):
+    lines = [format_life_event(event) for event in (events or [])]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+    return "人生事件：" + "；".join(lines)
+
+
+def _record_life_events_for_agent(agent, events, day, time_str, daily_logs):
+    recorded_ids = agent.setdefault("_recorded_life_event_ids", set())
+    for event in events or []:
+        event_id = str(event.get("id", ""))
+        if event_id and event_id in recorded_ids:
+            continue
+        if event_id:
+            recorded_ids.add(event_id)
+        text = (
+            f"[LifeEvent Day {day} {time_str}] "
+            f"{agent.get('name', agent.get('id', 'agent'))}: {format_life_event(event)}"
+        )
+        print(text)
+        daily_logs[agent["id"]] += text + "\n"
+        append_agent_log(agent, text + "\n")
+        _append_memory_record(
+            agent,
+            text,
+            entry_type="life_event",
+            day=day,
+            time_str=time_str,
+        )
+
+
+def _apply_life_event_state_effects(agent, events):
+    state = agent.setdefault("state", {})
+    for event in events or []:
+        effects = event.get("state_effects", {})
+        if not isinstance(effects, dict):
+            continue
+        for key, delta in effects.items():
+            if key not in state:
+                continue
+            try:
+                state[key] = _clip01(float(state.get(key, 0.5)) + float(delta))
+            except (TypeError, ValueError):
+                continue
 
 
 # =========================================================
@@ -5590,10 +5658,22 @@ def run_simulation():
         for time_index, time_str in enumerate(timeline):
             step_minutes = _timeline_step_minutes(timeline, time_index)
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
+            due_life_events = drain_due_life_events(day, time_str, CONFIG)
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
             frame_steps = []
+            if due_life_events:
+                append_jsonl(
+                    env_timeline_path,
+                    {
+                        "scope": "life_event",
+                        "day": int(day),
+                        "date": day_context.get("sim_date", ""),
+                        "time": str(time_str),
+                        "events": due_life_events,
+                    },
+                )
             if env_events:
                 append_jsonl(
                     env_timeline_path,
@@ -5677,6 +5757,18 @@ def run_simulation():
                             sim_day=day,
                             sim_time=time_str,
                         )
+                agent_life_events = life_events_for_agent(due_life_events, agent_id)
+                if agent_life_events:
+                    _record_life_events_for_agent(
+                        agent,
+                        agent_life_events,
+                        day,
+                        time_str,
+                        daily_logs,
+                    )
+                agent_env_events = list(env_events or []) + [
+                    _life_event_as_env_event(event) for event in agent_life_events
+                ]
                 #act = random.choice(actions.get(activity, ["继续当前活动"]))
                 scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
                 inbox_messages = distributed_inbox.get(agent_id, [])
@@ -5707,6 +5799,7 @@ def run_simulation():
                     "activity": scheduled_activity,
                     "social_context": social_context,
                     "policy_desc": policy_desc,
+                    "life_events": agent_life_events,
                 }
                 hook_bus.emit(
                     "on_agent_pre_step",
@@ -5720,7 +5813,7 @@ def run_simulation():
                     city_map_text=city_map_text,
                     schedule_map=schedule_map,
                     actions=actions,
-                    env_events=env_events,
+                    env_events=agent_env_events,
                     env_context=env_context,
                     policy=policy,
                     step=step_ctx,
@@ -5731,13 +5824,20 @@ def run_simulation():
                 policy_desc = step_ctx.get("policy_desc", policy_desc)
                 intervention_feed = {}
                 step_env_context = env_context
+                life_event_context = _format_life_event_context(agent_life_events)
+                if life_event_context:
+                    step_env_context = (
+                        f"{step_env_context}\n{life_event_context}"
+                        if step_env_context
+                        else life_event_context
+                    )
                 if INTERVENTION_ENABLED:
                     intervention_feed = build_intervention_feed(
                         agent,
                         agents_by_id=agents_by_id,
                         day=day,
                         time_str=time_str,
-                        env_events=env_events,
+                        env_events=agent_env_events,
                         policy_event=policy or policy_desc,
                         news_items=news_cache[:5],
                         config=INTERVENTION_CONFIG,
@@ -5749,7 +5849,7 @@ def run_simulation():
                             if env_context
                             else f"平台干预推荐：{feed_context}"
                         )
-                    step_ctx["intervention_feed"] = intervention_feed
+                        step_ctx["intervention_feed"] = intervention_feed
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
                 transient_thought = maybe_generate_transient_thought(
@@ -5757,7 +5857,7 @@ def run_simulation():
                     time_str,
                     scheduled_activity,
                     perc,
-                    env_events=env_events,
+                    env_events=agent_env_events,
                     policy_desc=policy_desc,
                     social_context=social_context,
                     inbox_messages=inbox_messages,
@@ -5770,7 +5870,7 @@ def run_simulation():
                     time_str=time_str,
                     location=agent.get("locations", {}).get("current", ""),
                     env_context=step_env_context,
-                    env_events=env_events,
+                    env_events=agent_env_events,
                     policy_desc=policy_desc,
                     social_context=social_context,
                 )
@@ -5805,7 +5905,7 @@ def run_simulation():
                     perc,
                     plan_text,
                     step_env_context,
-                    env_events,
+                    agent_env_events,
                     policy_desc,
                     transient_thought=transient_thought,
                     social_context=social_context,
@@ -5869,7 +5969,7 @@ def run_simulation():
                         time_str=time_str,
                         location=resolved_location,
                         env_context=step_env_context,
-                        env_events=env_events,
+                        env_events=agent_env_events,
                         policy_desc=policy_desc,
                         social_context=social_context,
                     )
@@ -5940,11 +6040,13 @@ def run_simulation():
                         travel=travel,
                     )
 
-                if env_events:
-                    for ev in env_events:
+                if agent_env_events:
+                    for ev in agent_env_events:
                         inferred = infer_event_effect(agent, ev.get("description", ev.get("name", "")), ev.get("type", "event"))
                         for k, v in inferred.items():
                             agent["state"][k] += v
+                if agent_life_events:
+                    _apply_life_event_state_effects(agent, agent_life_events)
 
                 if policy:
                     inferred = infer_event_effect(agent, policy_desc, "policy")
@@ -6029,7 +6131,7 @@ def run_simulation():
                     )
                     event_intensity = min(
                         1.0,
-                        0.2 * len(env_events) + (0.2 if policy else 0.0) + 0.18 * thought_intensity,
+                        0.2 * len(agent_env_events) + (0.2 if policy else 0.0) + 0.18 * thought_intensity,
                     )
                     recent_actions = [
                         e.get("action", "")
@@ -6053,7 +6155,7 @@ def run_simulation():
                         effective_activity,
                         act,
                         refl_text,
-                        env_events=[ev.get("description", ev.get("name", "")) for ev in env_events],
+                        env_events=[ev.get("description", ev.get("name", "")) for ev in agent_env_events],
                         policy_event=policy_desc if policy else "",
                     )
                     need_snapshot = {
@@ -6074,7 +6176,8 @@ def run_simulation():
                         "location": location,
                         "target_location": movement["target_location"],
                         "travel": travel,
-                        "env_events": [ev.get("description", ev.get("name", "")) for ev in env_events],
+                        "env_events": [ev.get("description", ev.get("name", "")) for ev in agent_env_events],
+                        "life_events": [dict(event) for event in agent_life_events],
                         "policy_event": policy_desc if policy else "",
                         "social_partners": partners,
                         "perception": perc,
