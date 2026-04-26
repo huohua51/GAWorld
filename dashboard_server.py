@@ -9,6 +9,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from config import CONFIG
+from gaworld.logging_setup import get_logger
+
+_LOG = get_logger("gaworld.dashboard")
 
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -376,6 +379,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 return self._handle_api_get(path, parse_qs(parsed.query))
             except Exception as exc:
+                # HTTP boundary: log the full traceback and surface a 500.
+                _LOG.exception("GET %s failed: %s", path, exc)
                 return self._json_response({"error": str(exc)}, status=500)
         if path in ("/", "/dashboard", "/dashboard/"):
             self.path = "/site/dashboard/index.html"
@@ -396,6 +401,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             return self._handle_api_post(path)
         except Exception as exc:
+            # HTTP boundary: log the full traceback and surface a 500.
+            _LOG.exception("POST %s failed: %s", path, exc)
             return self._json_response({"error": str(exc)}, status=500)
 
 

@@ -2,7 +2,12 @@ import json
 import random
 import re
 
+import requests
+
+from gaworld.logging_setup import get_logger
 from llm_providers import call_llm
+
+_LOG = get_logger("gaworld.realism")
 
 
 def _clamp(value, lo=0.0, hi=1.0):
@@ -363,7 +368,8 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx):
     llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
     try:
         resp = call_llm(prompt, task="daily_intentions", agent_id=agent["id"])
-    except Exception:
+    except (requests.RequestException, ValueError, RuntimeError) as exc:
+        _LOG.warning("daily_intentions LLM call failed for agent %s: %s", agent.get("id"), exc)
         return fallback
     parsed = _parse_json_dict(resp)
     if not parsed:
@@ -470,7 +476,8 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
         llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
         try:
             resp = call_llm(prompt, task="memory_consolidation", agent_id=agent["id"])
-        except Exception:
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            _LOG.warning("memory_consolidation LLM call failed for agent %s: %s", agent.get("id"), exc)
             resp = ""
         parsed = _parse_json_dict(resp)
         if parsed:

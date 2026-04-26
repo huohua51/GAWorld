@@ -1,7 +1,12 @@
 import json
 import random
 import re
+
 import requests
+
+from gaworld.logging_setup import get_logger
+
+_LOG = get_logger("gaworld.environment")
 
 
 def _clip(value, lo=0.0, hi=1.0):
@@ -144,7 +149,9 @@ class EnvironmentSystem:
 """
         try:
             resp = self.llm_fn(prompt, task="external_environment", agent_id=None)
-        except Exception:
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            # LLM may fail with network errors, HTTP errors, or auth/config issues.
+            _LOG.warning("LLM env generation failed: %s", exc)
             return None
         parsed = self._extract_json_object(resp)
         if not parsed:
@@ -622,7 +629,9 @@ class RemoteEnvironmentClient:
             resp.raise_for_status()
             data = resp.json()
             return data if isinstance(data, dict) else {}
-        except Exception:
+        except (requests.RequestException, ValueError) as exc:
+            # ValueError covers JSONDecodeError; remote service may be down.
+            _LOG.warning("Remote env POST %s failed: %s", url, exc)
             return {}
 
     def start_day(self, day, day_context=None, agents=None):

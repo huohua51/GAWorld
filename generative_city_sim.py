@@ -18,6 +18,10 @@ from html import unescape
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
+from gaworld.logging_setup import get_logger
+
+_LOG = get_logger("gaworld.sim")
+
 from city_map_system import (
     all_locations as city_all_locations,
     distance_between as city_distance_between,
@@ -261,124 +265,25 @@ def _coerce_positive_int_list(values):
         out.append(value)
     return out
 
-def _strip_html(text):
-    if not text:
-        return ""
-    text = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", text)
-    text = re.sub(r"(?is)<[^>]+>", " ", text)
-    text = unescape(text)
-    text = re.sub(r"\\s+", " ", text)
-    return text.strip()
+# --------------------------------------------------------------------
+# HTML extraction helpers — delegated to gaworld.io.web_scrape.
+# Legacy private names are kept as aliases so internal callers keep
+# working unchanged. New code should import from `gaworld.io` directly.
+# --------------------------------------------------------------------
+from gaworld.io.web_scrape import (  # noqa: E402
+    extract_meta_description as _extract_meta_content,
+    extract_news_main_content as _extract_news_main_content,
+    extract_title as _extract_title,
+    fetch_news_excerpt,
+    normalize_text as _normalize_text,
+    strip_html as _strip_html,
+)
+from gaworld.io.web_scrape import (  # noqa: E402
+    _extract_article_like_block,
+    _extract_ld_json_article_body,
+    _extract_paragraph_fallback,
+)
 
-def _extract_title(text):
-    if not text:
-        return ""
-    match = re.search(r"(?is)<title[^>]*>(.*?)</title>", text)
-    if not match:
-        return ""
-    title = _strip_html(match.group(1))
-    return re.sub(r"\\s+", " ", title).strip()
-
-def _normalize_text(text):
-    if not text:
-        return ""
-    text = unescape(text)
-    text = re.sub(r"\u00a0", " ", text)
-    text = re.sub(r"\\s+", " ", text)
-    return text.strip()
-
-def _extract_ld_json_article_body(text):
-    if not text:
-        return ""
-    scripts = re.findall(
-        r'(?is)<script[^>]*type=["\']application/ld\\+json["\'][^>]*>(.*?)</script>',
-        text,
-    )
-    for block in scripts:
-        candidate = block.strip()
-        if not candidate:
-            continue
-        try:
-            payload = json.loads(candidate)
-        except Exception:
-            continue
-        nodes = payload if isinstance(payload, list) else [payload]
-        for node in nodes:
-            if not isinstance(node, dict):
-                continue
-            article_body = node.get("articleBody")
-            if isinstance(article_body, str) and len(article_body.strip()) > 80:
-                return _normalize_text(article_body)
-    return ""
-
-def _extract_article_like_block(text):
-    if not text:
-        return ""
-    candidate_patterns = [
-        r"(?is)<article[^>]*>(.*?)</article>",
-        r"(?is)<main[^>]*>(.*?)</main>",
-        r'(?is)<div[^>]+(?:id|class)=["\'][^"\']*(?:article|content|story|post|entry|news|正文)[^"\']*["\'][^>]*>(.*?)</div>',
-    ]
-    for pattern in candidate_patterns:
-        blocks = re.findall(pattern, text)
-        for block in blocks:
-            paragraphs = re.findall(r"(?is)<p[^>]*>(.*?)</p>", block)
-            parts = [_normalize_text(_strip_html(p)) for p in paragraphs]
-            parts = [p for p in parts if len(p) >= 25]
-            joined = "\n".join(parts)
-            if len(joined) >= 180:
-                return joined
-    return ""
-
-def _extract_paragraph_fallback(text):
-    if not text:
-        return ""
-    paragraphs = re.findall(r"(?is)<p[^>]*>(.*?)</p>", text)
-    cleaned = []
-    blacklist = ("copyright", "subscribe", "登录", "注册", "隐私", "cookie", "版权所有")
-    for p in paragraphs:
-        line = _normalize_text(_strip_html(p))
-        lower = line.lower()
-        if len(line) < 25:
-            continue
-        if any(b in lower for b in blacklist):
-            continue
-        cleaned.append(line)
-    if not cleaned:
-        return ""
-    return "\n".join(cleaned[:16])
-
-def _extract_news_main_content(html_text):
-    # Prefer structured article content, then paragraph extraction, and finally full-page text.
-    for extractor in (_extract_ld_json_article_body, _extract_article_like_block, _extract_paragraph_fallback):
-        content = extractor(html_text)
-        if content and len(content) >= 120:
-            return content
-    return _strip_html(html_text)
-
-def _extract_meta_content(text, *names):
-    if not text or not names:
-        return ""
-    for name in names:
-        pattern = (
-            r'(?is)<meta[^>]+(?:name|property)=["\']%s["\'][^>]+content=["\'](.*?)["\'][^>]*>'
-            % re.escape(name)
-        )
-        match = re.search(pattern, text)
-        if match:
-            content = _normalize_text(_strip_html(match.group(1)))
-            if content:
-                return content
-        pattern_rev = (
-            r'(?is)<meta[^>]+content=["\'](.*?)["\'][^>]+(?:name|property)=["\']%s["\'][^>]*>'
-            % re.escape(name)
-        )
-        match = re.search(pattern_rev, text)
-        if match:
-            content = _normalize_text(_strip_html(match.group(1)))
-            if content:
-                return content
-    return ""
 
 def fetch_social_page_profile_source(
     url,
@@ -467,39 +372,6 @@ def load_news_cache(path):
             "title": str(item.get("title", "")).strip(),
             "fetched_at": str(item.get("fetched_at", "")).strip(),
         })
-    return cleaned
-
-def fetch_news_excerpt(
-    url,
-    timeout=8,
-    max_chars=2000,
-    user_agent="GAWorld/1.0",
-    return_title=False,
-):
-    if not url:
-        return ("", "") if return_title else ""
-    try:
-        headers = {"User-Agent": user_agent}
-        resp = requests.get(url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        if not resp.encoding:
-            resp.encoding = resp.apparent_encoding
-        raw_text = resp.text or ""
-    except requests.RequestException:
-        return ("", "") if return_title else ""
-    if not raw_text:
-        return ("", "") if return_title else ""
-    content_type = (resp.headers.get("content-type") or "").lower()
-    title = ""
-    if "text/html" in content_type or "<html" in raw_text.lower():
-        title = _extract_title(raw_text)
-        cleaned = _extract_news_main_content(raw_text)
-    else:
-        cleaned = re.sub(r"\\s+", " ", raw_text).strip()
-    if max_chars and len(cleaned) > max_chars:
-        cleaned = cleaned[:max_chars].rsplit(" ", 1)[0].strip() if " " in cleaned else cleaned[:max_chars]
-    if return_title:
-        return cleaned, title
     return cleaned
 
 def update_news_cache(path, sources, config=None):
@@ -1623,7 +1495,8 @@ def _next_profile_id(df, md_path):
     if df is not None and not df.empty and "id" in df.columns:
         try:
             max_id = max(max_id, int(pd.to_numeric(df["id"], errors="coerce").max()))
-        except Exception:
+        except (ValueError, TypeError):
+            # All-NaN column → max() returns NaN which can't be cast to int.
             pass
     try:
         with open(md_path, "r", encoding="utf-8") as f:
@@ -3246,7 +3119,8 @@ def maybe_review_memories(agent, day, time_str, recent_episode=None, llm_budget_
         llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
         try:
             response = call_llm(prompt, task="memory_review", agent_id=agent["id"]).strip()
-        except Exception:
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            _LOG.warning("memory_review LLM call failed for agent %s: %s", agent.get("id"), exc)
             response = ""
         if response:
             summary = _compact_text(response, max_chars=90)
@@ -3409,9 +3283,9 @@ def _bootstrap_agent_external_rag(agent, news_cache=None, news_sources=None):
             )
             if inserted or status == "skipped_existing":
                 return inserted
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — third-party seed script may raise anything.
             # Fall back to in-module bootstrap to keep simulation resilient.
-            pass
+            _LOG.warning("rag_seed_script bootstrap failed for agent %s: %s", agent.get("id"), exc)
     if bootstrap_cfg.get("only_when_empty", True) and _agent_has_external_rag(agent):
         return []
 
@@ -5189,7 +5063,8 @@ def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", cons
 """
     try:
         response = call_llm(prompt, task="daily_diary", agent_id=agent["id"]).strip()
-    except Exception:
+    except (requests.RequestException, ValueError, RuntimeError) as exc:
+        _LOG.warning("daily_diary LLM call failed for agent %s: %s", agent.get("id"), exc)
         response = ""
     if not response or "## 今天主要发生的事情" not in response or "## 今天的感想" not in response or "## 明天的计划" not in response:
         return _fallback_daily_diary(
@@ -6619,7 +6494,8 @@ def _summarize_diary_import(raw_text, timestamp, file_path):
 """
     try:
         summary = call_llm(prompt, task="diary_import_summary", agent_id=None).strip()
-    except Exception:
+    except (requests.RequestException, ValueError, RuntimeError) as exc:
+        _LOG.warning("diary_import_summary LLM call failed: %s", exc)
         summary = ""
     summary = _sanitize_extra_text(summary, max_chars=1200)
     if summary:
@@ -6886,7 +6762,8 @@ def _final_metric_snapshot(state_csv_path):
         return {}
     try:
         df = pd.read_csv(state_csv_path)
-    except Exception:
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        _LOG.warning("Failed to read state CSV %s: %s", state_csv_path, exc)
         return {}
     required = {"agent_id", "step", "metric", "value"}
     if df.empty or not required.issubset(set(df.columns)):
@@ -6902,7 +6779,8 @@ def _mean_metric_snapshot(state_csv_path):
         return {}
     try:
         df = pd.read_csv(state_csv_path)
-    except Exception:
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        _LOG.warning("Failed to read state CSV %s: %s", state_csv_path, exc)
         return {}
     required = {"metric", "value"}
     if df.empty or not required.issubset(set(df.columns)):
