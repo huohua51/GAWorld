@@ -123,7 +123,8 @@ class DistributedRelayClient:
                 self.last_error = ""
                 return data
             self.last_error = f"invalid json payload from {url}"
-        except Exception as exc:
+        except (requests.RequestException, ValueError) as exc:
+            # ValueError covers JSONDecodeError raised by response.json().
             self.last_error = str(exc)
             if self.fail_fast:
                 raise

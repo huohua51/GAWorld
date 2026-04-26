@@ -22,15 +22,20 @@
 There is no build step beyond installing Python dependencies.
 
 ## Coding Style & Naming Conventions
-- Python-only repo; follow standard PEP 8 conventions.
+- Python ≥ 3.11; follow standard PEP 8 conventions.
 - Indentation: 4 spaces, no tabs.
 - Naming: `snake_case` for functions/vars, `UpperCamelCase` for classes, constants in `ALL_CAPS`.
-- No formatter or linter is configured; keep changes minimal and consistent with existing style.
+- Formatter / linter / type-checker are configured in `pyproject.toml`:
+  - `ruff check .` and `ruff format --check .` (rules pinned to `E`/`F`/`W`/`I`/`UP`/`B`/`C4`/`SIM`/`PIE`/`RUF`).
+  - `black .` (line length 110).
+  - `mypy gaworld` (strict typing on the new `gaworld/` tree, advisory elsewhere).
+- New cross-cutting code lives under `gaworld/` (see `CHANGELOG.md` for the migration map).
 
 ## Testing Guidelines
-- No automated test suite is present.
-- If adding tests, place them under a new `tests/` directory and use `test_*.py` naming.
-- Prefer lightweight, reproducible tests (mock LLM calls and avoid network dependencies).
+- Tests live under `tests/` and use `pytest` discovery (`test_*.py`).
+- Run locally: `pytest tests` (or `python -m unittest discover -s tests -p 'test_*.py'`).
+- New code MUST be covered by tests in the same PR; coverage is reported by `pytest-cov` in CI.
+- Prefer lightweight, reproducible tests: mock LLM calls (`call_llm`) and avoid real network IO.
 
 ## Commit & Pull Request Guidelines
 - Existing history uses short, lowercase summary messages (e.g., `updated`, `sync`, `requirement`). Keep commits concise and imperative.

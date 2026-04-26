@@ -1,5 +1,9 @@
-from collections import defaultdict
 import importlib
+from collections import defaultdict
+
+from gaworld.logging_setup import get_logger
+
+_LOG = get_logger("gaworld.hooks")
 
 
 class HookBus:
@@ -32,6 +36,14 @@ class HookBus:
             try:
                 fn(context)
             except Exception as exc:  # pragma: no cover - best effort extension safety
+                # User extensions can raise anything; treat the bus as a trust boundary.
+                _LOG.warning(
+                    "hook %s.%s in phase %s raised: %s",
+                    fn.__module__,
+                    fn.__name__,
+                    phase,
+                    exc,
+                )
                 errors.append(f"{fn.__module__}.{fn.__name__}: {exc}")
         if errors and self.strict:
             raise RuntimeError(
@@ -54,6 +66,8 @@ class HookBus:
         try:
             module = importlib.import_module(module_name)
             fn = getattr(module, fn_name, None)
-        except Exception:
+        except (ImportError, AttributeError, ValueError) as exc:
+            # ImportError: module not found / not on path; AttributeError: package without `module`.
+            _LOG.warning("Failed to load extension %s:%s — %s", module_name, fn_name, exc)
             return None
         return fn if callable(fn) else None

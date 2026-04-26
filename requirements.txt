@@ -1,5 +1,10 @@
-pandas
-requests
-numpy
-matplotlib
-networkx
+# Runtime dependencies for GAWorld.
+# Pinned with conservative lower bounds and SemVer-style upper bounds to
+# guarantee reproducible installs while still allowing patch updates.
+# Use `pip install -r requirements.txt` for a runtime install, and
+# `pip install -r requirements-dev.txt` for a development install.
+pandas>=2.0,<3.0
+numpy>=1.24,<3.0
+requests>=2.28,<3.0
+matplotlib>=3.6,<4.0
+networkx>=3.0,<4.0

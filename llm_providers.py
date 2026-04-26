@@ -1,7 +1,54 @@
+import json
 import os
+import time
+import uuid
+from typing import Any, Callable
+
 import requests
 
 from config import CONFIG
+from gaworld.logging_setup import get_logger
+
+_LOG = get_logger("gaworld.llm")
+
+
+# ---------------------------------------------------------------------
+# Retry helper
+# ---------------------------------------------------------------------
+_RETRYABLE_HTTP = {408, 425, 429, 500, 502, 503, 504}
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, requests.exceptions.HTTPError):
+        resp = getattr(exc, "response", None)
+        if resp is not None and resp.status_code in _RETRYABLE_HTTP:
+            return True
+        return False
+    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+
+def _retrying(call: Callable[[], Any], *, attempts: int = 3, backoff: float = 1.5,
+              provider: str = "", task: str = "") -> Any:
+    """Run ``call`` with bounded exponential backoff on transient errors."""
+    delay = 0.6
+    last_exc: BaseException | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 — provider may raise anything
+            last_exc = exc
+            if attempt >= attempts or not _is_retryable(exc):
+                raise
+            _LOG.warning(
+                "LLM call failed (attempt %d/%d, provider=%s, task=%s): %s — retrying in %.1fs",
+                attempt, attempts, provider, task, exc, delay,
+            )
+            time.sleep(delay)
+            delay *= backoff
+    # Unreachable, but keep mypy happy.
+    if last_exc is not None:  # pragma: no cover
+        raise last_exc
+    raise RuntimeError("retrying() failed without exception")
 
 
 class OllamaProvider:
@@ -18,31 +65,39 @@ class OllamaProvider:
             "prompt": prompt,
             "stream": True,
         }
-        try:
-            with requests.post(
-                self.url,
-                json=payload,
-                timeout=(10, self.timeout),
-                stream=True,
-            ) as r:
-                r.raise_for_status()
-                parts = []
-                for line in r.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    data = requests.models.complexjson.loads(line)
-                    chunk = data.get("response", "")
-                    if chunk:
-                        parts.append(chunk)
-                    if data.get("done"):
-                        break
-                return "".join(parts)
-        except requests.exceptions.ReadTimeout as exc:
-            raise requests.exceptions.ReadTimeout(
-                f"Ollama provider timed out while calling model '{self.model}'. "
-                f"Current timeout={self.timeout}s. "
-                f"If this model is slow locally, increase config.py -> llm.providers timeout."
-            ) from exc
+
+        def _do() -> str:
+            try:
+                with requests.post(
+                    self.url,
+                    json=payload,
+                    timeout=(10, self.timeout),
+                    stream=True,
+                ) as r:
+                    r.raise_for_status()
+                    parts: list[str] = []
+                    for line in r.iter_lines(decode_unicode=True):
+                        if not line:
+                            continue
+                        # Use stdlib json instead of requests' private complexjson alias.
+                        try:
+                            data = json.loads(line)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        chunk = data.get("response", "")
+                        if chunk:
+                            parts.append(chunk)
+                        if data.get("done"):
+                            break
+                    return "".join(parts)
+            except requests.exceptions.ReadTimeout as exc:
+                raise requests.exceptions.ReadTimeout(
+                    f"Ollama provider timed out while calling model '{self.model}'. "
+                    f"Current timeout={self.timeout}s. "
+                    f"If this model is slow locally, increase config.py -> llm.providers timeout."
+                ) from exc
+
+        return _retrying(_do, provider=f"ollama:{self.model}", task="")
 
 
 class OpenAIProvider:
@@ -80,17 +135,18 @@ class OpenAIProvider:
             payload["max_tokens"] = self.max_tokens
         if self.temperature is not None:
             payload["temperature"] = self.temperature
-        if self.stream:
-            payload["stream"] = True
+
+        def _do_streaming() -> str:
+            stream_payload = dict(payload, stream=True)
             with requests.post(
                 f"{self.base_url}/chat/completions",
                 headers=headers,
-                json=payload,
+                json=stream_payload,
                 timeout=(10, self.timeout),
                 stream=True,
             ) as r:
                 r.raise_for_status()
-                parts = []
+                parts: list[str] = []
                 for raw_line in r.iter_lines(decode_unicode=True):
                     if not raw_line:
                         continue
@@ -107,8 +163,8 @@ class OpenAIProvider:
                     if line == "[DONE]":
                         break
                     try:
-                        data = requests.models.complexjson.loads(line)
-                    except ValueError:
+                        data = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
                         # Some OpenAI-compatible backends emit non-JSON
                         # heartbeat payloads in `data:` frames.
                         continue
@@ -140,15 +196,20 @@ class OpenAIProvider:
                                     parts.append(text)
                 return "".join(parts)
 
-        r = requests.post(
-            f"{self.base_url}/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=self.timeout,
-        )
-        r.raise_for_status()
-        data = r.json()
-        return data["choices"][0]["message"]["content"]
+        def _do_blocking() -> str:
+            r = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data["choices"][0]["message"]["content"]
+
+        if self.stream:
+            return _retrying(_do_streaming, provider=f"openai:{self.model}", task="")
+        return _retrying(_do_blocking, provider=f"openai:{self.model}", task="")
 
 
 class AnthropicProvider:
@@ -213,6 +274,13 @@ class AnthropicProvider:
         if self.system:
             payload["system"] = self.system
 
+        return _retrying(
+            lambda: self._call_once(payload),
+            provider=f"anthropic:{self.model}",
+            task="",
+        )
+
+    def _call_once(self, payload):
         schemes = [self.authorization_scheme]
         for scheme in self.authorization_retry_schemes:
             if scheme not in schemes:
@@ -341,12 +409,40 @@ class LLMRouter:
         provider_name = self._select_provider(task=task, agent_id=agent_id)
         if provider_name not in self.providers:
             raise ValueError(f"Provider '{provider_name}' not found in config.")
-        return self.providers[provider_name].call(prompt)
+
+        call_id = uuid.uuid4().hex[:8]
+        prompt_chars = len(prompt or "")
+        started = time.perf_counter()
+        log = _LOG  # alias
+        try:
+            result = self.providers[provider_name].call(prompt)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            log.info(
+                "llm.call ok id=%s provider=%s task=%s agent=%s prompt_chars=%d completion_chars=%d latency_ms=%d",
+                call_id, provider_name, task or "", agent_id if agent_id is not None else "",
+                prompt_chars, len(result or ""), elapsed_ms,
+            )
+            return result
+        except Exception as exc:  # noqa: BLE001 — re-raise after logging
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            log.error(
+                "llm.call err id=%s provider=%s task=%s agent=%s prompt_chars=%d latency_ms=%d error=%s",
+                call_id, provider_name, task or "", agent_id if agent_id is not None else "",
+                prompt_chars, elapsed_ms, exc,
+            )
+            raise
 
 
 LLM_ROUTER = LLMRouter(CONFIG)
 
 
 def call_llm(prompt, task=None, agent_id=None):
-    """Public helper for model calls used across the simulator."""
+    """Public helper for model calls used across the simulator.
+
+    Each invocation:
+
+    * runs through retry / backoff for transient errors,
+    * is logged with provider, task, agent, prompt size, and latency,
+    * raises the original :class:`requests` exception on hard failure.
+    """
     return LLM_ROUTER.call(prompt, task=task, agent_id=agent_id)
