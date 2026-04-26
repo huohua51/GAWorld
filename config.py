@@ -156,6 +156,27 @@ CONFIG = {
             "max_messages": 20000,
         },
     },
+    # OpenClaw external agent integration.
+    # Allows users to connect their personal OpenClaw agents to the simulation.
+    "openclaw": {
+        "enabled": False,
+        # ID range for auto-assigned OpenClaw agents (avoid collision with native IDs).
+        "id_range_start": 1001,
+        # Auth tokens that OpenClaw bridges must present to register.
+        # Empty list = open (no auth required).  Set via POST /auth/token or here.
+        "auth_tokens": [],
+        # Whether the sim engine should push tick state to the relay server
+        # so that bridges can synchronise with the simulation clock.
+        "push_tick_to_relay": True,
+        # Default bridge settings (informational; the bridge reads its own CLI args).
+        "bridge_defaults": {
+            "poll_interval_seconds": 5.0,
+            "openclaw_gateway_url": "http://127.0.0.1:18789",
+            "openclaw_timeout": 30,
+            "max_inbound_per_cycle": 5,
+            "message_max_chars": 300,
+        },
+    },
     "environment_server": {
         "host": "0.0.0.0",
         "port": 8765,
