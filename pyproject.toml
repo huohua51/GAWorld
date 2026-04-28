@@ -153,6 +153,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# `--cov-fail-under` is set explicitly in CI so that local runs without
+# coverage installed don't fail. Local: `pytest`. CI: `pytest --cov=...
+# --cov-fail-under=80`.
 addopts = [
     "-ra",
     "--strict-markers",
@@ -172,6 +175,9 @@ omit = [
 ]
 
 [tool.coverage.report]
+# Mirror of CI hard floor; local runs that pass --cov-fail-under will
+# inherit this value when the flag is supplied without an argument.
+fail_under = 80
 show_missing = true
 skip_covered = true
 exclude_lines = [

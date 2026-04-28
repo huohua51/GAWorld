@@ -405,32 +405,81 @@ class LLMRouter:
             return agents[str(agent_id)]
         return self.routing.get("default") or next(iter(self.providers))
 
+    def _resolve_chain(self, task=None, agent_id=None):
+        """Return an ordered list of provider names to try for a single call.
+
+        Resolution order:
+
+        1. Primary provider chosen by :meth:`_select_provider`.
+        2. Optional ``llm.routing.fallback`` list (global) — these are
+           appended after the primary, deduplicated, and any unknown
+           name is silently skipped.
+
+        The returned list is never empty (the primary is always
+        included), so callers don't have to special-case fallback being
+        absent.
+        """
+        primary = self._select_provider(task=task, agent_id=agent_id)
+        chain: list[str] = [primary]
+        fallback = self.routing.get("fallback", [])
+        if isinstance(fallback, str):
+            fallback = [fallback]
+        if isinstance(fallback, (list, tuple)):
+            for name in fallback:
+                name = str(name).strip()
+                if not name or name == primary or name in chain:
+                    continue
+                if name in self.providers:
+                    chain.append(name)
+        return chain
+
     def call(self, prompt, task=None, agent_id=None):
-        provider_name = self._select_provider(task=task, agent_id=agent_id)
-        if provider_name not in self.providers:
-            raise ValueError(f"Provider '{provider_name}' not found in config.")
+        chain = self._resolve_chain(task=task, agent_id=agent_id)
+        if not chain or chain[0] not in self.providers:
+            raise ValueError(f"Provider '{chain[0] if chain else ''}' not found in config.")
 
         call_id = uuid.uuid4().hex[:8]
         prompt_chars = len(prompt or "")
-        started = time.perf_counter()
-        log = _LOG  # alias
-        try:
-            result = self.providers[provider_name].call(prompt)
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
-            log.info(
-                "llm.call ok id=%s provider=%s task=%s agent=%s prompt_chars=%d completion_chars=%d latency_ms=%d",
-                call_id, provider_name, task or "", agent_id if agent_id is not None else "",
-                prompt_chars, len(result or ""), elapsed_ms,
-            )
-            return result
-        except Exception as exc:  # noqa: BLE001 — re-raise after logging
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
-            log.error(
-                "llm.call err id=%s provider=%s task=%s agent=%s prompt_chars=%d latency_ms=%d error=%s",
-                call_id, provider_name, task or "", agent_id if agent_id is not None else "",
-                prompt_chars, elapsed_ms, exc,
-            )
-            raise
+        log = _LOG
+        last_exc: BaseException | None = None
+        for index, provider_name in enumerate(chain):
+            started = time.perf_counter()
+            try:
+                result = self.providers[provider_name].call(prompt)
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                log.info(
+                    "llm.call ok id=%s provider=%s fallback_index=%d task=%s agent=%s "
+                    "prompt_chars=%d completion_chars=%d latency_ms=%d",
+                    call_id, provider_name, index, task or "",
+                    agent_id if agent_id is not None else "",
+                    prompt_chars, len(result or ""), elapsed_ms,
+                )
+                return result
+            except Exception as exc:  # noqa: BLE001 — log, then continue or re-raise
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                log.warning(
+                    "llm.call err id=%s provider=%s fallback_index=%d task=%s agent=%s "
+                    "prompt_chars=%d latency_ms=%d error=%s",
+                    call_id, provider_name, index, task or "",
+                    agent_id if agent_id is not None else "",
+                    prompt_chars, elapsed_ms, exc,
+                )
+                last_exc = exc
+                # Only fall through to the next provider if there is one
+                # AND the failure looks transient (or auth/config).
+                # Auth errors on the primary may indicate misconfig;
+                # the fallback might still succeed if it has a different
+                # credential, so we attempt it.
+                if index + 1 >= len(chain):
+                    break
+                continue
+
+        log.error(
+            "llm.call failed across %d providers id=%s task=%s agent=%s",
+            len(chain), call_id, task or "", agent_id if agent_id is not None else "",
+        )
+        assert last_exc is not None
+        raise last_exc
 
 
 LLM_ROUTER = LLMRouter(CONFIG)

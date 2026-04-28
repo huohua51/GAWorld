@@ -18,6 +18,7 @@ from html import unescape
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
+from gaworld.core.runner import parallel_map, resolve_max_workers
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.sim")
@@ -5455,7 +5456,16 @@ def run_simulation():
                 agent["intentions"] = intentions
                 if STATEFUL:
                     save_agent_intentions(agent["id"], intentions)
-        for agent in agents:
+        # Daily routine generation is one LLM call per agent and the
+        # only cross-agent state it touches is `actions[agent_id]`,
+        # which is keyed by id (no aliasing across agents). It is the
+        # safest concurrency point in the main loop, so we route it
+        # through gaworld.core.runner.parallel_map. Default is serial:
+        # set CONFIG["concurrency"]["day_routine_workers"] > 1 to opt in.
+        # Per-agent IO (save_agent_actions, log writes) is left in the
+        # serial merge phase below to keep the SQLite + log file
+        # writers single-writer for now.
+        def _compute_daily_routine(agent):
             agent_id = agent["id"]
             daily_schedule = generate_daily_routine(
                 agent,
@@ -5463,12 +5473,26 @@ def run_simulation():
                 day=day,
                 day_context=day_context,
             )
-            daily_schedules[agent_id] = daily_schedule
-            # Ensure action space covers any new activities in today's routine.
             updated = False
+            new_actions = actions[agent_id]
             for _, activity in daily_schedule:
-                updated = ensure_action_space_for_activity(agent, actions[agent_id], activity) or updated
-            if updated and STATEFUL:
+                updated = ensure_action_space_for_activity(agent, new_actions, activity) or updated
+            return agent_id, daily_schedule, updated
+
+        _routine_workers = resolve_max_workers(
+            CONFIG, key="day_routine_workers", default=1
+        )
+        _routine_results = parallel_map(
+            _compute_daily_routine,
+            agents,
+            max_workers=_routine_workers,
+            label="day_routine",
+        )
+
+        # Serial merge phase: ordering matters for log files / save calls.
+        for agent_id, daily_schedule, action_space_updated in _routine_results:
+            daily_schedules[agent_id] = daily_schedule
+            if action_space_updated and STATEFUL:
                 save_agent_actions(agent_id, actions[agent_id])
             lines = [f"{t} {act}" for t, act in daily_schedule] if daily_schedule else ["(no schedule)"]
             routine_text = "\n".join(lines)

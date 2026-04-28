@@ -39,12 +39,15 @@ jobs:
         continue-on-error: true
         run: mypy gaworld
 
-      - name: Run tests
+      - name: Run tests with coverage threshold
+        # The fail-under floor protects gaworld/ specifically; the
+        # legacy modules will be migrated in subsequent stages.
         run: |
           pytest tests \
             --cov=gaworld \
             --cov-report=term-missing \
-            --cov-report=xml
+            --cov-report=xml \
+            --cov-fail-under=80
 
       - name: Upload coverage artifact
         if: always()

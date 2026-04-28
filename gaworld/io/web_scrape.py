@@ -27,6 +27,7 @@ from typing import Iterable
 
 import requests
 
+from gaworld.io.http_guard import GuardedSession, get_default_session
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.io.web_scrape")
@@ -191,19 +192,26 @@ def fetch_news_excerpt(
     url: str,
     timeout: int = 8,
     max_chars: int = 2000,
-    user_agent: str = "GAWorld/1.0",
+    user_agent: str | None = None,
     return_title: bool = False,
+    session: GuardedSession | None = None,
 ):
     """Fetch ``url`` and return the cleaned article body.
+
+    Goes through a process-wide :class:`GuardedSession` so requests
+    honour per-host rate limits, rotate User-Agent strings, and skip
+    URLs that recently returned 4xx/5xx. ``user_agent`` overrides the
+    rotator for one call when provided.
 
     Returns ``""`` (or ``("", "")`` when ``return_title=True``) on any
     transport / parsing error. Network errors are logged at ``WARNING``.
     """
     if not url:
         return ("", "") if return_title else ""
+    sess = session or get_default_session()
+    headers = {"User-Agent": user_agent} if user_agent else None
     try:
-        headers = {"User-Agent": user_agent}
-        resp = requests.get(url, headers=headers, timeout=timeout)
+        resp = sess.get(url, timeout=timeout, headers=headers)
         resp.raise_for_status()
         if not resp.encoding:
             resp.encoding = resp.apparent_encoding

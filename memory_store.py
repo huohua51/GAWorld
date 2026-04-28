@@ -390,6 +390,22 @@ def _vector_db_connect():
     if dir_path:
         os.makedirs(dir_path, exist_ok=True)
     _VECTOR_DB_CONN = sqlite3.connect(VECTOR_DB_PATH, timeout=30)
+    # Concurrency / durability tuning:
+    # - WAL allows readers to proceed during writes, eliminating most
+    #   "database is locked" errors when several agents flush at once.
+    # - synchronous=NORMAL is the recommended pairing with WAL for
+    #   workloads where the simulator can replay from logs after a
+    #   crash; full fsync on every commit is unnecessary.
+    # PRAGMAs are best-effort: if the disk doesn't support WAL (e.g.
+    # network mounts), we keep the default journaling mode rather than
+    # crash the simulator.
+    try:
+        _VECTOR_DB_CONN.execute("PRAGMA journal_mode=WAL")
+        _VECTOR_DB_CONN.execute("PRAGMA synchronous=NORMAL")
+        _VECTOR_DB_CONN.execute("PRAGMA temp_store=MEMORY")
+    except sqlite3.Error:
+        # Pragmas are advisory; carry on with defaults.
+        pass
     return _VECTOR_DB_CONN
 
 

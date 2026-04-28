@@ -35,6 +35,15 @@ class DistributedRelayBackend:
         self.next_message_id = 1
         self.messages = []
         self.directory = {}
+        # --- OpenClaw extension ---
+        # Profiles for externally-registered agents (keyed by cluster→agent_id).
+        self.agent_profiles = {}
+        # Simple token auth for OpenClaw bridges (cluster → set of valid tokens).
+        self.auth_tokens = {}
+        # Simulation tick state broadcast by the sim engine so bridges can sync.
+        self.tick_state = {"day": 0, "time": "00:00", "background": "", "updated_at": 0.0}
+        # Next auto-assigned ID for OpenClaw agents (1001+).
+        self._next_openclaw_id = 1001
         self._load()
 
     def _persist(self):
@@ -47,6 +56,10 @@ class DistributedRelayBackend:
             "next_message_id": int(self.next_message_id),
             "messages": self.messages,
             "directory": self.directory,
+            "agent_profiles": self.agent_profiles,
+            "auth_tokens": self.auth_tokens,
+            "tick_state": self.tick_state,
+            "_next_openclaw_id": self._next_openclaw_id,
             "max_messages": int(self.max_messages),
             "updated_at": time.time(),
         }
@@ -71,31 +84,87 @@ class DistributedRelayBackend:
         if self.messages:
             max_id = max(_to_int(msg.get("id"), 0) for msg in self.messages if isinstance(msg, dict))
             self.next_message_id = max(self.next_message_id, max_id + 1)
+        # Restore OpenClaw extension state.
+        raw_profiles = payload.get("agent_profiles", {})
+        self.agent_profiles = raw_profiles if isinstance(raw_profiles, dict) else {}
+        raw_tokens = payload.get("auth_tokens", {})
+        self.auth_tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
+        raw_tick = payload.get("tick_state")
+        if isinstance(raw_tick, dict):
+            self.tick_state = raw_tick
+        self._next_openclaw_id = max(1001, _to_int(payload.get("_next_openclaw_id", 1001), 1001))
 
-    def register_agents(self, cluster, node_id, agents):
+    # ------------------------------------------------------------------
+    # Auth helpers
+    # ------------------------------------------------------------------
+    def add_auth_token(self, cluster, token):
+        """Register a bearer token that OpenClaw bridges must present."""
+        cluster = str(cluster or "default")
+        with self.lock:
+            tokens = self.auth_tokens.setdefault(cluster, [])
+            if token and token not in tokens:
+                tokens.append(str(token))
+            self._persist()
+
+    def verify_token(self, cluster, token):
+        """Return True if *token* is valid for *cluster*, or if no tokens are configured."""
+        cluster = str(cluster or "default")
+        with self.lock:
+            tokens = self.auth_tokens.get(cluster, [])
+        if not tokens:
+            return True  # open cluster
+        return str(token) in tokens
+
+    # ------------------------------------------------------------------
+    # Registration (extended for OpenClaw agents)
+    # ------------------------------------------------------------------
+    def register_agents(self, cluster, node_id, agents, agent_type="native"):
         cluster = str(cluster or "default")
         node_id = str(node_id or "node")
+        agent_type = str(agent_type or "native")
         now = time.time()
         with self.lock:
             cluster_map = self.directory.setdefault(cluster, {})
+            profile_map = self.agent_profiles.setdefault(cluster, {})
             count = 0
+            assigned_ids = []
             for item in agents if isinstance(agents, list) else []:
                 if not isinstance(item, dict):
                     continue
                 aid = _to_int(item.get("id"), 0)
+                # OpenClaw agents may omit id — auto-assign from 1001+.
+                if aid <= 0 and agent_type == "openclaw":
+                    aid = self._next_openclaw_id
+                    self._next_openclaw_id += 1
                 if aid <= 0:
                     continue
                 cluster_map[str(aid)] = {
                     "agent_id": aid,
                     "name": _normalize_text(item.get("name", ""), max_chars=64),
                     "node_id": node_id,
+                    "agent_type": agent_type,
                     "updated_at": now,
                 }
+                # Store extended profile for OpenClaw agents.
+                if agent_type == "openclaw":
+                    profile_map[str(aid)] = {
+                        "agent_id": aid,
+                        "name": _normalize_text(item.get("name", ""), max_chars=64),
+                        "age": _normalize_text(item.get("age", ""), max_chars=8),
+                        "gender": _normalize_text(item.get("gender", ""), max_chars=8),
+                        "job": _normalize_text(item.get("job", ""), max_chars=64),
+                        "personality": _normalize_text(item.get("personality", ""), max_chars=200),
+                        "values": _normalize_text(item.get("values", ""), max_chars=200),
+                        "background_summary": _normalize_text(item.get("background_summary", ""), max_chars=400),
+                        "node_id": node_id,
+                        "updated_at": now,
+                    }
+                assigned_ids.append(aid)
                 count += 1
             self._persist()
             agents_list = list(cluster_map.values())
         agents_list.sort(key=lambda x: _to_int(x.get("agent_id"), 0))
-        return {"ok": True, "registered": count, "directory": agents_list}
+        return {"ok": True, "registered": count, "assigned_ids": assigned_ids, "directory": agents_list}
 
     def get_directory(self, cluster):
         cluster = str(cluster or "default")
@@ -173,6 +242,51 @@ class DistributedRelayBackend:
                     break
         return {"ok": True, "messages": selected, "next_since": next_since}
 
+    # ------------------------------------------------------------------
+    # Tick state (sim engine pushes; bridges pull)
+    # ------------------------------------------------------------------
+    def update_tick(self, day, time_str, background=""):
+        with self.lock:
+            self.tick_state = {
+                "day": _to_int(day, 0),
+                "time": _normalize_text(time_str, max_chars=16),
+                "background": _normalize_text(background, max_chars=600),
+                "updated_at": time.time(),
+            }
+            self._persist()
+        return {"ok": True, "tick": self.tick_state}
+
+    def get_tick(self):
+        with self.lock:
+            return {"ok": True, "tick": dict(self.tick_state)}
+
+    # ------------------------------------------------------------------
+    # Agent profiles (for cross-node identity resolution)
+    # ------------------------------------------------------------------
+    def get_agent_profile(self, cluster, agent_id):
+        cluster = str(cluster or "default")
+        aid = _to_int(agent_id, 0)
+        with self.lock:
+            profile_map = _safe_dict(self.agent_profiles.get(cluster))
+            profile = profile_map.get(str(aid))
+        if profile:
+            return {"ok": True, "profile": profile}
+        # Fallback: return directory entry for native agents.
+        with self.lock:
+            cluster_map = _safe_dict(self.directory.get(cluster))
+            entry = cluster_map.get(str(aid))
+        if entry:
+            return {"ok": True, "profile": entry}
+        return {"ok": False, "error": f"agent {aid} not found"}
+
+    def list_agent_profiles(self, cluster):
+        cluster = str(cluster or "default")
+        with self.lock:
+            profile_map = _safe_dict(self.agent_profiles.get(cluster))
+            profiles = list(profile_map.values())
+        profiles.sort(key=lambda x: _to_int(x.get("agent_id"), 0))
+        return {"ok": True, "profiles": profiles}
+
     def snapshot(self):
         with self.lock:
             cluster_count = len(self.directory)
@@ -214,6 +328,13 @@ class DistributedRelayRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _extract_token(self):
+        """Extract bearer token from Authorization header."""
+        auth = self.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip()
+        return auth.strip()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -228,17 +349,57 @@ class DistributedRelayRequestHandler(BaseHTTPRequestHandler):
             cluster = (query.get("cluster") or ["default"])[0]
             self._write_json(200, self.backend.get_directory(cluster))
             return
+        if path == "/tick":
+            self._write_json(200, self.backend.get_tick())
+            return
+        if path == "/agents/profiles":
+            cluster = (query.get("cluster") or ["default"])[0]
+            self._write_json(200, self.backend.list_agent_profiles(cluster))
+            return
+        if path.startswith("/agents/profile/"):
+            aid_str = path.rsplit("/", 1)[-1]
+            cluster = (query.get("cluster") or ["default"])[0]
+            self._write_json(200, self.backend.get_agent_profile(cluster, aid_str))
+            return
         self._write_json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
         if self.path == "/register":
             payload = self._read_json()
+            agent_type = str(payload.get("agent_type", "native"))
+            # Token auth required for OpenClaw registrations.
+            if agent_type == "openclaw":
+                cluster = str(payload.get("cluster", "default"))
+                token = payload.get("token") or self._extract_token()
+                if not self.backend.verify_token(cluster, token):
+                    self._write_json(403, {"ok": False, "error": "invalid token"})
+                    return
             data = self.backend.register_agents(
                 cluster=payload.get("cluster", "default"),
                 node_id=payload.get("node_id", "node"),
                 agents=payload.get("agents", []),
+                agent_type=agent_type,
             )
             self._write_json(200, data)
+            return
+        if self.path == "/tick":
+            payload = self._read_json()
+            data = self.backend.update_tick(
+                day=payload.get("day", 0),
+                time_str=payload.get("time", "00:00"),
+                background=payload.get("background", ""),
+            )
+            self._write_json(200, data)
+            return
+        if self.path == "/auth/token":
+            payload = self._read_json()
+            token = str(payload.get("token", "")).strip()
+            cluster = str(payload.get("cluster", "default"))
+            if not token:
+                self._write_json(400, {"ok": False, "error": "token required"})
+                return
+            self.backend.add_auth_token(cluster, token)
+            self._write_json(200, {"ok": True})
             return
         if self.path == "/message/send":
             payload = self._read_json()

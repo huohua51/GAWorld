@@ -73,8 +73,8 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [4,5,6,7,8,9,10],
-    "sim_days": 30,
+    "agent_ids": [4],
+    "sim_days": 1,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,
@@ -154,6 +154,27 @@ CONFIG = {
             "port": 8877,
             "state_path": "output/distributed/relay_state.json",
             "max_messages": 20000,
+        },
+    },
+    # OpenClaw external agent integration.
+    # Allows users to connect their personal OpenClaw agents to the simulation.
+    "openclaw": {
+        "enabled": False,
+        # ID range for auto-assigned OpenClaw agents (avoid collision with native IDs).
+        "id_range_start": 1001,
+        # Auth tokens that OpenClaw bridges must present to register.
+        # Empty list = open (no auth required).  Set via POST /auth/token or here.
+        "auth_tokens": [],
+        # Whether the sim engine should push tick state to the relay server
+        # so that bridges can synchronise with the simulation clock.
+        "push_tick_to_relay": True,
+        # Default bridge settings (informational; the bridge reads its own CLI args).
+        "bridge_defaults": {
+            "poll_interval_seconds": 5.0,
+            "openclaw_gateway_url": "http://127.0.0.1:18789",
+            "openclaw_timeout": 30,
+            "max_inbound_per_cycle": 5,
+            "message_max_chars": 300,
         },
     },
     "environment_server": {
@@ -379,6 +400,17 @@ CONFIG = {
             "healthcare": [12.0, 90.0],
             "misc": [4.0, 22.0],
         },
+    },
+    # ----------------------------------------------------------------
+    # Concurrency (S3): each *_workers knob caps the parallelism for
+    # one specific stage of the main loop. Default is 1 (serial) so
+    # the legacy behaviour is preserved bit-for-bit. When concurrency
+    # is enabled the global `random` state may be consumed in a
+    # non-deterministic order; reproducible experiments should keep
+    # workers at 1.
+    "concurrency": {
+        "enabled": False,
+        "day_routine_workers": 1,
     },
     # Optional extension hooks for custom functions.
     # Each item uses "module:function" import path.
