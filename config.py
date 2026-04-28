@@ -73,8 +73,8 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [4,5,6,7,8,9,10],
-    "sim_days": 30,
+    "agent_ids": [4],
+    "sim_days": 1,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,
@@ -400,6 +400,17 @@ CONFIG = {
             "healthcare": [12.0, 90.0],
             "misc": [4.0, 22.0],
         },
+    },
+    # ----------------------------------------------------------------
+    # Concurrency (S3): each *_workers knob caps the parallelism for
+    # one specific stage of the main loop. Default is 1 (serial) so
+    # the legacy behaviour is preserved bit-for-bit. When concurrency
+    # is enabled the global `random` state may be consumed in a
+    # non-deterministic order; reproducible experiments should keep
+    # workers at 1.
+    "concurrency": {
+        "enabled": False,
+        "day_routine_workers": 1,
     },
     # Optional extension hooks for custom functions.
     # Each item uses "module:function" import path.
