@@ -214,6 +214,8 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
   .panel, .masthead-copy { padding: 12px; }
   .memory-grid { grid-template-columns: 1fr; }
   .timeline { grid-template-columns: 1fr; }
+  .economy-grid { grid-template-columns: 1fr; }
+  .chart-container { max-width: 100%; }
 }
 
 .chart-container {
@@ -270,8 +272,3 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
 
 .econ-card .value.positive { color: var(--green); }
 .econ-card .value.negative { color: var(--red); }
-
-@media (max-width: 720px) {
-  .economy-grid { grid-template-columns: 1fr; }
-  .chart-container { max-width: 100%; }
-}
