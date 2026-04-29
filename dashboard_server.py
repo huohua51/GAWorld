@@ -1,3 +1,5 @@
+import csv
+import datetime
 import json
 import os
 import re
@@ -48,6 +50,16 @@ def _read_json_file(path, default=None):
     except (OSError, json.JSONDecodeError):
         return {} if default is None else default
     return payload
+
+
+def _read_csv_file(path, default=None):
+    if not os.path.exists(path):
+        return [] if default is None else default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+    except (OSError, csv.Error):
+        return [] if default is None else default
 
 
 def _atomic_write_json(path, payload):
@@ -325,6 +337,51 @@ def _economy_payload(agent_id):
     return {"agent_id": int(agent_id), "economy": data}
 
 
+def _performance_payload():
+    cfg = _effective_config()
+    agent_ids = cfg.get("agent_ids", [])
+    sim_days = cfg.get("sim_days", 0)
+
+    started_at = RUN_STATE.get("started_at")
+    duration_seconds = None
+    if started_at:
+        try:
+            start = datetime.datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+            duration_seconds = (datetime.datetime.now() - start).total_seconds()
+        except (ValueError, TypeError):
+            pass
+
+    log_path = RUN_STATE.get("log_path", RUN_LOG_PATH)
+    log_size_bytes = 0
+    log_line_count = 0
+    if os.path.exists(log_path):
+        log_size_bytes = os.path.getsize(log_path)
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                log_line_count = sum(1 for _ in f)
+        except OSError:
+            pass
+
+    day_count = 0
+    if os.path.exists(RUN_LOG_PATH):
+        try:
+            with open(RUN_LOG_PATH, "r", encoding="utf-8") as f:
+                content = f.read()
+            day_count = len(re.findall(r"Day \d+", content))
+        except OSError:
+            pass
+
+    return {
+        "agent_count": len(agent_ids),
+        "sim_days": sim_days,
+        "days_completed": day_count if day_count > 0 else None,
+        "duration_seconds": duration_seconds,
+        "log_size_bytes": log_size_bytes,
+        "log_line_count": log_line_count,
+        "started_at": started_at,
+    }
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     server_version = "GAWorldDashboard/0.1"
 
@@ -362,6 +419,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_memory_payload(agent_id))
         if path == "/api/run/status":
             return self._json_response(_run_status())
+        if path == "/api/run/performance":
+            return self._json_response(_performance_payload())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
         if path.startswith("/api/economy/") and len(path.split("/")) == 4:
