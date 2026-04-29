@@ -354,6 +354,51 @@ def _economy_history_payload(agent_id):
     return {"agent_id": int(agent_id), "history": rows}
 
 
+def _batch_memory_state_payload(agent_ids):
+    if not agent_ids:
+        return {"agents": []}
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    results = []
+    _, sections = _profile_sections()
+    name_map = {str(s["id"]): s["name"] for s in sections}
+    for agent_id in agent_ids:
+        path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}.json")
+        memory = _read_json_file(path, [])
+        agent_state = None
+        if isinstance(memory, list) and memory:
+            last = memory[-1]
+            agent_state = last.get("state") if isinstance(last, dict) else None
+        results.append({
+            "agent_id": int(agent_id),
+            "name": name_map.get(str(agent_id), str(agent_id)),
+            "state": agent_state if isinstance(agent_state, dict) else {},
+        })
+    return {"agents": results}
+
+
+def _state_history_latest_payload():
+    path = os.path.join(REPO_ROOT, "output", "state", "agent_state_history.csv")
+    rows = _read_csv_file(path)
+    if not rows:
+        return {"agents": {}}
+    latest = {}
+    for row in rows:
+        agent_id = row.get("agent_id")
+        metric = row.get("metric")
+        value = row.get("value")
+        if not agent_id or not metric or value is None:
+            continue
+        agent_key = str(agent_id)
+        if agent_key not in latest:
+            latest[agent_key] = {}
+        try:
+            current = float(value)
+        except (ValueError, TypeError):
+            continue
+        latest[agent_key][metric] = current
+    return {"agents": latest}
+
+
 def _performance_payload():
     cfg = _effective_config()
     agent_ids = cfg.get("agent_ids", [])
@@ -431,6 +476,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not profile:
                 return self._json_response({"error": "Profile not found"}, status=404)
             return self._json_response(profile)
+        if path == "/api/agents/memory/batch":
+            ids_str = query.get("ids", [""])[0]
+            agent_ids = [int(x.strip()) for x in ids_str.split(",") if x.strip()]
+            return self._json_response(_batch_memory_state_payload(agent_ids))
         if path.startswith("/api/agents/") and path.endswith("/memory"):
             agent_id = path.split("/")[3]
             return self._json_response(_memory_payload(agent_id))
@@ -440,6 +489,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_performance_payload())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
+        if path == "/api/state-history/latest":
+            return self._json_response(_state_history_latest_payload())
         if path.startswith("/api/economy/") and path.endswith("/history"):
             agent_id = path.split("/")[3]
             return self._json_response(_economy_history_payload(agent_id))
