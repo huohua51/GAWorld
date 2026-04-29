@@ -12,13 +12,56 @@ LAT_PER_KM = 1.0 / 111.0
 LNG_PER_KM = 1.0 / 96.0
 
 TRANSPORT_MODES = {
-    "walk": {"speed_kmh": 4.8, "fixed_min": 0},
-    "bike": {"speed_kmh": 13.0, "fixed_min": 1},
-    "e-bike": {"speed_kmh": 20.0, "fixed_min": 1},
-    "bus": {"speed_kmh": 18.0, "fixed_min": 6},
+    "walk":  {"speed_kmh": 4.8,  "fixed_min": 0},
+    "bike":  {"speed_kmh": 13.0, "fixed_min": 1},
+    "e-bike":{"speed_kmh": 20.0, "fixed_min": 1},
+    "bus":   {"speed_kmh": 18.0, "fixed_min": 6},
     "metro": {"speed_kmh": 32.0, "fixed_min": 7},
-    "car": {"speed_kmh": 27.0, "fixed_min": 4},
-    "taxi": {"speed_kmh": 30.0, "fixed_min": 3},
+    "car":   {"speed_kmh": 27.0, "fixed_min": 4},
+    "taxi":  {"speed_kmh": 30.0, "fixed_min": 3},
+}
+
+# --- Transport fare table (CNY, based on Hangzhou 2024-2025 typical fares) ---
+TRANSPORT_FARES = {
+    "walk":   {"base": 0.0,  "per_km": 0.0,  "free_km": 0},
+    "bike":   {"base": 0.0,  "per_km": 0.0,  "free_km": 0},       # shared bikes ~1.5/30min but simplified
+    "e-bike": {"base": 0.0,  "per_km": 0.1,  "free_km": 0},       # electricity cost
+    "bus":    {"base": 2.0,  "per_km": 0.0,  "free_km": 0},       # flat fare
+    "metro":  {"base": 2.0,  "per_km": 0.45, "free_km": 4},       # 2 CNY for first 4km, +1 per ~2.2km
+    "car":    {"base": 0.0,  "per_km": 0.6,  "free_km": 0,        # fuel + wear
+               "parking_per_hour": 6.0},
+    "taxi":   {"base": 13.0, "per_km": 2.5,  "free_km": 3},       # 13 CNY base (includes 3km)
+}
+
+# --- Rush hour periods (minutes from midnight) ---
+RUSH_HOUR_PERIODS = [
+    (7 * 60, 9 * 60),       # morning rush 07:00–09:00
+    (17 * 60, 19 * 60),     # evening rush 17:00–19:00
+]
+RUSH_HOUR_TIME_MULT = 1.45   # travel time multiplier during rush hour
+RUSH_HOUR_TAXI_SURCHARGE = 1.30  # taxi fare surcharge during rush hour
+
+# --- Area price level by category ---
+# Multiplier for local consumption costs (food, leisure, etc.)
+AREA_PRICE_LEVEL = {
+    "commerce":    1.35,   # CBD / commercial districts are pricier
+    "transit":     1.15,   # station areas have markup
+    "leisure":     1.20,   # tourist/leisure zones
+    "education":   0.85,   # campus areas are cheaper
+    "residential": 1.00,   # baseline
+    "medical":     1.00,
+    "government":  0.95,
+    "industry":    0.80,   # industrial areas are cheapest
+    "mixed":       1.00,
+}
+
+# --- Weather impact on transport mode preference ---
+WEATHER_MODE_ADJUSTMENTS = {
+    "rain":  {"walk": 0.3, "bike": 0.2, "e-bike": 0.4, "bus": 1.5, "metro": 1.4, "car": 1.2, "taxi": 1.8},
+    "snow":  {"walk": 0.2, "bike": 0.1, "e-bike": 0.2, "bus": 1.4, "metro": 1.5, "car": 1.0, "taxi": 2.0},
+    "hot":   {"walk": 0.5, "bike": 0.6, "e-bike": 0.8, "bus": 1.3, "metro": 1.3, "car": 1.2, "taxi": 1.3},
+    "cold":  {"walk": 0.5, "bike": 0.4, "e-bike": 0.6, "bus": 1.3, "metro": 1.3, "car": 1.1, "taxi": 1.4},
+    "clear": {"walk": 1.0, "bike": 1.0, "e-bike": 1.0, "bus": 1.0, "metro": 1.0, "car": 1.0, "taxi": 1.0},
 }
 
 CATEGORY_KEYWORDS = [
@@ -657,15 +700,34 @@ def shortest_path(city_map, origin, target):
     return [start["name"], goal["name"]]
 
 
-def choose_transport_mode(agent, city_map, origin, target, activity=None):
+def choose_transport_mode(agent, city_map, origin, target, activity=None,
+                          weather=None):
+    """Choose the best transport mode considering distance, profile, route,
+    and weather conditions.
+
+    Parameters
+    ----------
+    weather : str or None
+        Weather key (rain/snow/hot/cold/clear).  When set, the initial
+        rule-based mode choice is re-evaluated against weather-adjusted
+        preference weights — if a sheltered alternative (bus/metro/taxi)
+        scores significantly higher, the mode is upgraded.
+    """
     distance_km = distance_between(city_map, origin, target)
     origin_node = node_by_name(city_map, origin)
     target_node = node_by_name(city_map, target)
-    categories = {origin_node["category"] if origin_node else "", target_node["category"] if target_node else ""}
-    profile = " ".join([str(agent.get("job", "")), str(agent.get("daily_life", "")), str(agent.get("personality", ""))])
+    categories = {origin_node["category"] if origin_node else "",
+                  target_node["category"] if target_node else ""}
+    profile = " ".join([str(agent.get("job", "")),
+                        str(agent.get("daily_life", "")),
+                        str(agent.get("personality", ""))])
     route = shortest_path(city_map, origin, target)
-    metro_stop_set = {stop for line in city_map.get("metro_lines", []) for stop in line.get("stops", [])}
-    route_uses_metro = len(route) >= 2 and any(_slug(stop) in metro_stop_set for stop in route)
+    metro_stop_set = {stop for line in city_map.get("metro_lines", [])
+                      for stop in line.get("stops", [])}
+    route_uses_metro = (len(route) >= 2
+                        and any(_slug(stop) in metro_stop_set for stop in route))
+
+    # --- distance-based rule selection (baseline) ---
     if distance_km <= 0.35:
         mode = "walk"
     elif distance_km <= 1.2:
@@ -680,6 +742,35 @@ def choose_transport_mode(agent, city_map, origin, target, activity=None):
         mode = "metro" if route_uses_metro or "transit" in categories else "car"
     else:
         mode = "taxi" if any(k in str(target or "") for k in ["Airport", "Rail", "Station"]) else "metro"
+
+    # --- weather adjustment ---
+    # If bad weather significantly penalises the chosen open-air mode,
+    # upgrade to the best sheltered alternative that is feasible for the
+    # distance.
+    if weather and weather in WEATHER_MODE_ADJUSTMENTS:
+        adj = WEATHER_MODE_ADJUSTMENTS[weather]
+        mode_weight = adj.get(mode, 1.0)
+        if mode_weight < 0.6:
+            # Current mode is heavily penalised — find a better one.
+            # Build a small candidate set appropriate for the distance.
+            candidates = []
+            if distance_km <= 6.0:
+                candidates = ["bus", "metro", "taxi"]
+            elif distance_km <= 15.0:
+                candidates = ["metro", "car", "taxi"]
+            else:
+                candidates = ["metro", "taxi"]
+            # Pick the candidate with the highest weather-adjusted weight
+            # that is also reachable (metro needs stops on route).
+            best_mode, best_w = mode, mode_weight
+            for c in candidates:
+                if c == "metro" and not route_uses_metro:
+                    continue
+                cw = adj.get(c, 1.0)
+                if cw > best_w:
+                    best_mode, best_w = c, cw
+            mode = best_mode
+
     return mode, distance_km
 
 
@@ -689,14 +780,306 @@ def estimate_travel_minutes(mode, distance_km):
     return max(1, int(round(travel + float(spec["fixed_min"]))))
 
 
-def travel_plan(agent, city_map, origin, target, activity=None):
-    mode, distance_km = choose_transport_mode(agent, city_map, origin, target, activity=activity)
+def travel_plan(agent, city_map, origin, target, activity=None,
+                 time_str=None, weather=None):
+    """Build a complete travel plan with cost, time, and route.
+
+    Parameters
+    ----------
+    time_str : str or None
+        Current time as "HH:MM" — used for rush-hour detection.
+    weather : str or None
+        Current weather condition key (rain/snow/hot/cold/clear).
+    """
+    mode, distance_km = choose_transport_mode(
+        agent, city_map, origin, target, activity=activity, weather=weather)
     route = shortest_path(city_map, origin, target)
+    minutes = estimate_travel_minutes(mode, distance_km)
+    is_rush = is_rush_hour(time_str) if time_str else False
+    if is_rush:
+        minutes = max(1, int(round(minutes * RUSH_HOUR_TIME_MULT)))
+    cost = calc_transport_cost(mode, distance_km, rush_hour=is_rush)
     return {
         "origin": _slug(origin),
         "destination": _slug(target),
         "distance_km": round(distance_km, 3),
         "mode": mode,
-        "travel_minutes": estimate_travel_minutes(mode, distance_km),
+        "travel_minutes": minutes,
+        "travel_cost": round(cost, 2),
+        "rush_hour": is_rush,
         "route": route,
     }
+
+
+# ===================================================================
+# TRANSPORT COST CALCULATION
+# ===================================================================
+
+def calc_transport_cost(mode, distance_km, rush_hour=False, parking_hours=0.0):
+    """Calculate the fare for a single trip in CNY.
+
+    Parameters
+    ----------
+    mode : str
+        Transport mode key (walk, bike, bus, metro, car, taxi, etc.).
+    distance_km : float
+        Trip distance in kilometres.
+    rush_hour : bool
+        Whether the trip occurs during rush hour (taxi surcharge).
+    parking_hours : float
+        For car mode, how many hours of parking to include.
+
+    Returns
+    -------
+    float
+        Total fare in CNY.
+    """
+    fare_spec = TRANSPORT_FARES.get(mode, TRANSPORT_FARES.get("walk", {}))
+    base = float(fare_spec.get("base", 0.0))
+    per_km = float(fare_spec.get("per_km", 0.0))
+    free_km = float(fare_spec.get("free_km", 0.0))
+    chargeable_km = max(0.0, float(distance_km) - free_km)
+    cost = base + chargeable_km * per_km
+
+    # Taxi rush-hour surcharge
+    if mode == "taxi" and rush_hour:
+        cost *= RUSH_HOUR_TAXI_SURCHARGE
+
+    # Car parking cost
+    if mode == "car" and parking_hours > 0:
+        parking_rate = float(fare_spec.get("parking_per_hour", 6.0))
+        cost += parking_hours * parking_rate
+
+    return max(0.0, round(cost, 2))
+
+
+def is_rush_hour(time_str):
+    """Check if a HH:MM time string falls in a rush-hour period."""
+    if not time_str or not isinstance(time_str, str):
+        return False
+    parts = time_str.strip().split(":")
+    if len(parts) < 2:
+        return False
+    try:
+        minutes = int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, TypeError):
+        return False
+    for start, end in RUSH_HOUR_PERIODS:
+        if start <= minutes < end:
+            return True
+    return False
+
+
+# ===================================================================
+# SPATIAL QUERIES
+# ===================================================================
+
+def nearby_nodes(city_map, node_id, radius_km=2.0):
+    """Return all nodes within *radius_km* of *node_id*, sorted by distance.
+
+    Each result is a dict: {node, distance_km}.
+    """
+    nodes = city_map.get("nodes", {})
+    origin = nodes.get(_slug(node_id))
+    if not origin:
+        return []
+    results = []
+    for nid, node in nodes.items():
+        if nid == origin["id"]:
+            continue
+        dist = _euclidean_distance_km(origin, node)
+        if dist <= radius_km:
+            results.append({"node": nid, "distance_km": round(dist, 3)})
+    results.sort(key=lambda x: x["distance_km"])
+    return results
+
+
+def nodes_by_category(city_map, category):
+    """Return all node IDs matching a given category."""
+    nodes = city_map.get("nodes", {})
+    cat = category.lower().strip()
+    return [nid for nid, node in nodes.items() if node.get("category", "").lower() == cat]
+
+
+def nearest_by_category(city_map, node_id, category, top_k=3):
+    """Find the closest *top_k* nodes of a given category to *node_id*.
+
+    Returns list of (node_id, distance_km) tuples, sorted by distance.
+    """
+    nodes = city_map.get("nodes", {})
+    origin = nodes.get(_slug(node_id))
+    if not origin:
+        return []
+    cat = category.lower().strip()
+    candidates = []
+    for nid, node in nodes.items():
+        if nid == origin["id"]:
+            continue
+        if node.get("category", "").lower() != cat:
+            continue
+        dist = _euclidean_distance_km(origin, node)
+        candidates.append((nid, round(dist, 3)))
+    candidates.sort(key=lambda x: x[1])
+    return candidates[:top_k]
+
+
+def area_price_level(city_map, node_id):
+    """Return the consumption price-level multiplier for the area around *node_id*.
+
+    Commerce / transit zones are pricier; industrial / education zones cheaper.
+    """
+    nodes = city_map.get("nodes", {})
+    node = nodes.get(_slug(node_id))
+    if not node:
+        return 1.0
+    category = node.get("category", "mixed")
+    return AREA_PRICE_LEVEL.get(category, 1.0)
+
+
+def area_price_level_by_name(city_map, location_name):
+    """Convenience wrapper — look up price level by location name string."""
+    node = node_by_name(city_map, location_name)
+    if not node:
+        return 1.0
+    return AREA_PRICE_LEVEL.get(node.get("category", "mixed"), 1.0)
+
+
+# ===================================================================
+# ACTIVITY → CATEGORY MAPPING (for generic location resolution)
+# ===================================================================
+
+ACTIVITY_CATEGORY_MAP = {
+    # activity keywords → preferred location categories, ordered by priority
+    "工作":      ["commerce", "industry", "government"],
+    "上班":      ["commerce", "industry", "government"],
+    "加班":      ["commerce", "industry"],
+    "开会":      ["commerce", "government"],
+    "学习":      ["education"],
+    "上课":      ["education"],
+    "实验":      ["education", "industry"],
+    "看病":      ["medical"],
+    "医院":      ["medical"],
+    "诊所":      ["medical"],
+    "体检":      ["medical"],
+    "健身":      ["leisure"],
+    "锻炼":      ["leisure"],
+    "晨练":      ["leisure"],
+    "散步":      ["leisure", "residential"],
+    "运动":      ["leisure"],
+    "买菜":      ["commerce"],
+    "购物":      ["commerce"],
+    "逛街":      ["commerce"],
+    "市场":      ["commerce"],
+    "外卖":      ["commerce", "residential"],
+    "电影":      ["leisure", "commerce"],
+    "娱乐":      ["leisure", "commerce"],
+    "休闲":      ["leisure"],
+    "聚会":      ["leisure", "commerce"],
+    "旅行":      ["leisure", "transit"],
+    "通勤":      ["transit"],
+    "出行":      ["transit"],
+    "吃饭":      ["commerce", "residential"],
+    "午饭":      ["commerce", "residential"],
+    "晚饭":      ["commerce", "residential"],
+    "咖啡":      ["commerce", "leisure"],
+    "阅读":      ["education", "leisure"],
+    "图书馆":    ["education"],
+    "接送":      ["education", "residential"],
+}
+
+# Job keywords → workplace category preferences
+JOB_WORKPLACE_CATEGORIES = {
+    "学生":  ["education"],
+    "硕士":  ["education"],
+    "博士":  ["education"],
+    "教师":  ["education"],
+    "教授":  ["education"],
+    "医生":  ["medical"],
+    "护士":  ["medical"],
+    "医疗":  ["medical"],
+    "程序":  ["commerce", "industry"],
+    "研发":  ["industry", "commerce"],
+    "工程":  ["industry", "commerce"],
+    "算法":  ["commerce", "industry"],
+    "产品":  ["commerce"],
+    "设计":  ["commerce"],
+    "金融":  ["commerce"],
+    "银行":  ["commerce"],
+    "证券":  ["commerce"],
+    "财务":  ["commerce"],
+    "律师":  ["commerce", "government"],
+    "公务":  ["government"],
+    "警察":  ["government"],
+    "消防":  ["government"],
+    "物流":  ["industry"],
+    "仓储":  ["industry"],
+    "配送":  ["industry", "commerce"],
+    "快递":  ["industry", "commerce"],
+    "销售":  ["commerce"],
+    "客服":  ["commerce"],
+    "运营":  ["commerce"],
+    "行政":  ["commerce", "government"],
+    "退休":  ["residential", "leisure"],
+    "无业":  ["residential"],
+    "待业":  ["residential"],
+    "失业":  ["residential"],
+    "自由":  ["residential", "commerce"],
+}
+
+
+def activity_to_categories(activity_text):
+    """Map an activity description to a list of preferred location categories."""
+    text = str(activity_text or "")
+    categories = []
+    for keyword, cats in ACTIVITY_CATEGORY_MAP.items():
+        if keyword in text:
+            for c in cats:
+                if c not in categories:
+                    categories.append(c)
+    return categories if categories else ["mixed"]
+
+
+def job_to_workplace_categories(job_text):
+    """Map a job description to workplace category preferences."""
+    text = str(job_text or "")
+    categories = []
+    for keyword, cats in JOB_WORKPLACE_CATEGORIES.items():
+        if keyword in text:
+            for c in cats:
+                if c not in categories:
+                    categories.append(c)
+    return categories if categories else ["commerce"]
+
+
+def resolve_best_location(city_map, current_node_id, categories, top_k=5,
+                          max_radius_km=15.0, prefer_closer=True):
+    """Find the best location matching any of the given categories.
+
+    Searches outward from *current_node_id*, preferring closer nodes.
+    Returns a list of (node_id, distance_km) candidates.
+    """
+    nodes = city_map.get("nodes", {})
+    origin = nodes.get(_slug(current_node_id))
+    if not origin:
+        return []
+
+    candidates = []
+    cat_set = set(c.lower().strip() for c in categories)
+    for nid, node in nodes.items():
+        if nid == origin["id"]:
+            continue
+        if node.get("category", "").lower() not in cat_set:
+            continue
+        dist = _euclidean_distance_km(origin, node)
+        if dist <= max_radius_km:
+            candidates.append((nid, round(dist, 3)))
+
+    if prefer_closer:
+        candidates.sort(key=lambda x: x[1])
+    else:
+        # Weighted random: closer nodes have higher weight
+        import random as _rnd
+        _rnd.shuffle(candidates)
+        candidates.sort(key=lambda x: x[1] + _rnd.uniform(0, x[1] * 0.5))
+
+    return candidates[:top_k]

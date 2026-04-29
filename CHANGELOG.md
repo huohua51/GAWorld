@@ -4,7 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — 2026-04 — S1 + S2 refactor
+## [Unreleased] — 2026-04-29 — Economy module overhaul + Location system refactor
+
+### Added
+
+- **`economy_module.py` — realistic personal finance simulation** (major refactor)
+  - **Tax & social insurance**: China 7-bracket progressive income tax (3%–45%), monthly exemption 5,000 CNY with configurable special deductions. Social insurance: pension 8%, medical 2%, unemployment 0.5%, housing fund 8% (+ employer match), with base salary floor/cap.
+  - **Engel-coefficient spending**: income-indexed consumption curve (food 48% at low income → 15% at high income). Eight categories weighted by income elasticity (necessities 0.5–0.6, luxuries 1.2–1.5). Dynamic savings rate (5%–40%).
+  - **Multi-account system**: checking / savings / investment / housing fund. Three portfolio profiles (conservative/moderate/aggressive) based on risk preference. Monthly Gaussian investment returns (deposits ~2.5%, funds ~6%±8%, stocks ~8%±22%). Auto-save excess checking.
+  - **Macro-economic cycles**: four-phase cycle (expansion → peak → contraction → trough, 60–180 days each) with income/expense/layoff/raise multipliers. Industry-specific conditions. Daily inflation accumulation.
+  - **Shock events**: layoff (income cut 50–85%, recovery 30–90 days), raise/promotion, medical emergency (50–85% SI reimbursement), year-end bonus (13th-month salary).
+  - New output files: per-agent ledger CSVs, wealth snapshots, `macro_state.json`.
+  - 30 unit tests covering tax calculation, Engel allocation, investment returns, macro cycle transitions, shock events, and full lifecycle integration.
+
+- **`city_map_system.py` — realistic location & transport system** (major refactor)
+  - **Transport cost calculation**: per-mode fare structures (bus flat 2 CNY, metro distance-based, taxi base+per-km, car fuel+parking). Rush-hour detection (7:00–9:00, 17:00–19:00) with 1.45× time multiplier and 1.3× taxi surcharge.
+  - **Weather-aware mode selection**: weather adjustment weights penalise open-air modes (walk/bike/e-bike) in rain/snow/hot/cold, auto-upgrade to sheltered alternatives (bus/metro/taxi).
+  - **Category-based spatial queries**: `nearby_nodes()`, `nodes_by_category()`, `nearest_by_category()`, `resolve_best_location()` replace hardcoded location name lists. Works with any city map.
+  - **Activity & job category mapping**: `activity_to_categories()` and `job_to_workplace_categories()` map Chinese/English keywords to location categories (education, medical, commerce, leisure, transit, etc.).
+  - **Area price levels**: per-category price multipliers (commerce 1.35×, industry 0.80×, education 0.85×) for spending adjustment.
+  - 40 unit tests covering transport cost, rush hour, weather effects, spatial queries, category matching, and travel plan integration.
+
+- **`generative_city_sim.py` — location decision refactor**
+  - `_infer_workplace()` and `_infer_home()` now use category-based spatial matching instead of hardcoded location name lists.
+  - `resolve_location()` uses `activity_to_categories()` + `resolve_best_location()` for generic map-independent activity resolution.
+  - `move_agent()` passes `time_str` and `weather` to `travel_plan()`, returns `cost` and `rush_hour` in travel dict.
+  - **Commute memory**: agents track `frequent_places`, `preferred_modes`, and `commute_route` stats; habitual bonus feeds back into location decisions.
+  - `daily_travel_cost` accumulator resets at day start.
+
+- **`economy_module.py`** — transport expense now uses real fare from `travel_plan()` when available, falling back to budget-based estimate.
+
+- **`config.py`** — expanded `economy` section with `tax`, `social_insurance`, `spending`, `investment`, `macro`, and `shocks` sub-configurations.
+
+---
+
+## [Previous] — 2026-04 — S1 + S2 refactor
 
 ### Added
 

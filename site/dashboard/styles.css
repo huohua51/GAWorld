@@ -172,6 +172,13 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
 
 .profile-editor { min-height: 410px; }
 .compact-editor { min-height: 86px; margin-bottom: 8px; }
+.event-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.event-title-input { margin: 10px 0 8px; }
+.event-list { min-height: 190px; max-height: 300px; }
 
 .lower-grid {
   display: grid;

@@ -44,3 +44,24 @@ There is no build step beyond installing Python dependencies.
 ## Security & Configuration Tips
 - Do not hardcode API keys in `config.py`; use environment variables (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
 - Keep generated files out of commits (`output/` content should usually remain local).
+
+
+<claude-mem-context>
+# Memory Context
+
+# [GAWorld] recent context, 2026-04-29 7:05am GMT+2
+
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
+Format: ID TIME TYPE TITLE
+Fetch details: get_observations([IDs]) | Search: mem-search skill
+
+Stats: 4 obs (928t read) | 25,414t work | 96% savings
+
+### Apr 29, 2026
+18 6:44a 🔵 Avatar generation not functioning
+19 " 🔵 Avatar SVG files exist on disk but not rendering in UI
+20 " 🔵 HTTP server root mismatch prevents avatar loading
+21 6:45a 🔴 Generated missing avatar SVGs for all 51 agents
+
+Access 25k tokens of past work via get_observations([IDs]) or mem-search skill.
+</claude-mem-context>

@@ -2,6 +2,8 @@ const state = {
   config: null,
   agents: [],
   selectedAgentId: null,
+  lifeEventTemplates: [],
+  lifeEvents: [],
   trace: null,
   frameIndex: 0,
   pollTimer: null,
@@ -36,6 +38,18 @@ const els = {
   interviewQuestions: document.getElementById("interviewQuestions"),
   interviewBtn: document.getElementById("interviewBtn"),
   interviewOutput: document.getElementById("interviewOutput"),
+  lifeEventTemplateSelect: document.getElementById("lifeEventTemplateSelect"),
+  lifeEventAgentInput: document.getElementById("lifeEventAgentInput"),
+  lifeEventModeSelect: document.getElementById("lifeEventModeSelect"),
+  lifeEventDayInput: document.getElementById("lifeEventDayInput"),
+  lifeEventTimeInput: document.getElementById("lifeEventTimeInput"),
+  lifeEventSeverityInput: document.getElementById("lifeEventSeverityInput"),
+  lifeEventTitleInput: document.getElementById("lifeEventTitleInput"),
+  lifeEventDescriptionInput: document.getElementById("lifeEventDescriptionInput"),
+  useSelectedAgentBtn: document.getElementById("useSelectedAgentBtn"),
+  addLifeEventBtn: document.getElementById("addLifeEventBtn"),
+  reloadLifeEventsBtn: document.getElementById("reloadLifeEventsBtn"),
+  lifeEventListBox: document.getElementById("lifeEventListBox"),
   reloadMemoryBtn: document.getElementById("reloadMemoryBtn"),
   memoryBox: document.getElementById("memoryBox"),
   stateMemoryBox: document.getElementById("stateMemoryBox"),
@@ -145,6 +159,85 @@ async function loadAgents() {
     option.selected = agent.id === state.selectedAgentId;
     els.agentSelect.appendChild(option);
   });
+}
+
+function selectedLifeEventTemplate() {
+  const key = els.lifeEventTemplateSelect.value;
+  return state.lifeEventTemplates.find((item) => item.key === key) || {};
+}
+
+function fillLifeEventTemplates() {
+  els.lifeEventTemplateSelect.innerHTML = "";
+  state.lifeEventTemplates.forEach((template) => {
+    const option = document.createElement("option");
+    option.value = template.key;
+    option.textContent = template.title || template.key;
+    els.lifeEventTemplateSelect.appendChild(option);
+  });
+  applyLifeEventTemplate();
+}
+
+function applyLifeEventTemplate() {
+  const template = selectedLifeEventTemplate();
+  if (!template.key) return;
+  if (!els.lifeEventTitleInput.value.trim()) {
+    els.lifeEventTitleInput.value = template.title || "";
+  }
+  if (!els.lifeEventDescriptionInput.value.trim()) {
+    els.lifeEventDescriptionInput.value = template.description || "";
+  }
+  els.lifeEventSeverityInput.value = template.severity == null ? 0.7 : template.severity;
+}
+
+function renderLifeEvents() {
+  const events = state.lifeEvents || [];
+  if (!events.length) {
+    els.lifeEventListBox.textContent = "暂无人生事件。";
+    return;
+  }
+  els.lifeEventListBox.textContent = events.slice().reverse().map((event) => {
+    const target = (event.agent_ids || []).length ? `#${event.agent_ids.join(",#")}` : "所有 Agent";
+    const when = event.schedule_mode === "immediate"
+      ? "下一时间步"
+      : `Day ${event.day || "?"} ${event.time || "当前时间"}`;
+    const status = event.status === "consumed"
+      ? `已触发 Day ${event.triggered_day || "?"} ${event.triggered_time || ""}`.trim()
+      : "待触发";
+    return [
+      `[${status}] ${event.title || "人生事件"}`,
+      `目标：${target} · 触发：${when} · 强度：${Number(event.severity || 0).toFixed(2)}`,
+      event.description || "",
+    ].join("\n");
+  }).join("\n\n");
+}
+
+async function loadLifeEvents() {
+  const payload = await api("/api/life-events");
+  state.lifeEventTemplates = payload.templates || [];
+  state.lifeEvents = payload.events || [];
+  if (!els.lifeEventTemplateSelect.options.length) fillLifeEventTemplates();
+  renderLifeEvents();
+}
+
+function lifeEventPayloadFromForm() {
+  return {
+    template_key: els.lifeEventTemplateSelect.value,
+    agent_ids: els.lifeEventAgentInput.value.trim(),
+    schedule_mode: els.lifeEventModeSelect.value,
+    day: els.lifeEventDayInput.value.trim(),
+    time: els.lifeEventTimeInput.value.trim(),
+    severity: Number(els.lifeEventSeverityInput.value || 0.7),
+    title: els.lifeEventTitleInput.value.trim(),
+    description: els.lifeEventDescriptionInput.value.trim(),
+  };
+}
+
+async function addLifeEvent() {
+  const payload = lifeEventPayloadFromForm();
+  const result = await api("/api/life-events", { method: "POST", body: JSON.stringify(payload) });
+  state.lifeEvents = result.events || [];
+  renderLifeEvents();
+  message("人生事件已加入队列");
 }
 
 async function loadProfile() {
@@ -324,6 +417,16 @@ function bindEvents() {
   els.interviewBtn.addEventListener("click", () => interview().catch((error) => {
     els.interviewOutput.textContent = error.message;
   }));
+  els.lifeEventTemplateSelect.addEventListener("change", () => {
+    els.lifeEventTitleInput.value = "";
+    els.lifeEventDescriptionInput.value = "";
+    applyLifeEventTemplate();
+  });
+  els.useSelectedAgentBtn.addEventListener("click", () => {
+    if (state.selectedAgentId) els.lifeEventAgentInput.value = String(state.selectedAgentId);
+  });
+  els.addLifeEventBtn.addEventListener("click", () => addLifeEvent().catch((error) => message(error.message, "error")));
+  els.reloadLifeEventsBtn.addEventListener("click", () => loadLifeEvents().catch((error) => message(error.message, "error")));
   els.timelineSlider.addEventListener("input", () => {
     state.frameIndex = Number(els.timelineSlider.value || 0);
     renderTrace();
@@ -334,6 +437,7 @@ async function init() {
   bindEvents();
   await loadConfig();
   await loadAgents();
+  await loadLifeEvents();
   await loadProfile();
   await loadMemory();
   await refreshStatus();
@@ -341,6 +445,7 @@ async function init() {
   state.pollTimer = window.setInterval(() => {
     refreshStatus().catch(() => {});
     loadTrace(false).catch(() => {});
+    loadLifeEvents().catch(() => {});
   }, 2500);
 }
 
