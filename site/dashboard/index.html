@@ -116,10 +116,25 @@
               <h2>智能体状态</h2>
             </div>
             <button id="reloadRadarBtn" class="button small">刷新</button>
+            <button id="radarCompareBtn" class="button small">多智能体对比</button>
           </div>
           <div class="chart-container">
             <canvas id="radarChart" width="400" height="400" aria-label="智能体状态雷达图"></canvas>
             <p id="radarPlaceholder" class="placeholder-text">暂无状态数据。</p>
+          </div>
+          <div id="radarLegend" class="radar-legend" style="display:none"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Performance</p>
+              <h2>运行性能</h2>
+            </div>
+            <button id="reloadPerfBtn" class="button small">刷新</button>
+          </div>
+          <div id="performanceSummary" class="perf-grid">
+            <p class="placeholder-text">暂无性能数据。</p>
           </div>
         </section>
       </aside>
@@ -152,6 +167,11 @@
         </div>
         <div id="economySummary" class="economy-grid">
           <p class="placeholder-text">暂无经济数据。</p>
+        </div>
+        <div class="chart-container-wide">
+          <h3>经济趋势</h3>
+          <canvas id="economyChart" width="600" height="280"></canvas>
+          <p id="economyChartPlaceholder" class="placeholder-text">暂无经济趋势数据。</p>
         </div>
       </section>
 

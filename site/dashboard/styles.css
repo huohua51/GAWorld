@@ -272,3 +272,76 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
 
 .econ-card .value.positive { color: var(--green); }
 .econ-card .value.negative { color: var(--red); }
+
+.chart-container-wide {
+  position: relative;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.chart-container-wide canvas {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+}
+
+.radar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: center;
+}
+
+.radar-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.radar-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.perf-card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  text-align: center;
+  background: #fffef9;
+}
+
+.perf-card .perf-label {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.perf-card .perf-value {
+  display: block;
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--ink);
+  margin-top: 2px;
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+@media (max-width: 720px) {
+  .perf-grid { grid-template-columns: 1fr; }
+}
