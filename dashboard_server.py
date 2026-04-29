@@ -337,6 +337,23 @@ def _economy_payload(agent_id):
     return {"agent_id": int(agent_id), "economy": data}
 
 
+def _economy_history_payload(agent_id):
+    cfg = _effective_config()
+    output_dir = cfg.get("economy_output_dir", "output/economy")
+    path = os.path.join(REPO_ROOT, output_dir, "agents", f"agent_{agent_id}_ledger.csv")
+    rows = _read_csv_file(path)
+    if not rows:
+        return {"agent_id": int(agent_id), "history": []}
+    for row in rows:
+        for key in ("day", "income", "expense", "net", "balance"):
+            if key in row:
+                try:
+                    row[key] = float(row[key]) if "." in str(row[key]) else int(row[key])
+                except (ValueError, TypeError):
+                    row[key] = 0 if key == "day" else 0.0
+    return {"agent_id": int(agent_id), "history": rows}
+
+
 def _performance_payload():
     cfg = _effective_config()
     agent_ids = cfg.get("agent_ids", [])
@@ -423,6 +440,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_performance_payload())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
+        if path.startswith("/api/economy/") and path.endswith("/history"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_economy_history_payload(agent_id))
         if path.startswith("/api/economy/") and len(path.split("/")) == 4:
             agent_id = path.split("/")[3]
             return self._json_response(_economy_payload(agent_id))
