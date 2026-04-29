@@ -316,6 +316,15 @@ def _latest_trace_meta():
     }
 
 
+def _economy_payload(agent_id):
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_economy.json")
+    data = _read_json_file(path, {})
+    if not data:
+        return {"agent_id": int(agent_id), "error": "Economy data not found"}
+    return {"agent_id": int(agent_id), "economy": data}
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     server_version = "GAWorldDashboard/0.1"
 
@@ -355,6 +364,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_run_status())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
+        if path.startswith("/api/economy/") and len(path.split("/")) == 4:
+            agent_id = path.split("/")[3]
+            return self._json_response(_economy_payload(agent_id))
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
