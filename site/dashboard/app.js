@@ -355,12 +355,16 @@ function bindEvents() {
   els.reloadTraceBtn.addEventListener("click", () => loadTrace(true));
   els.reloadStatusBtn.addEventListener("click", () => refreshStatus().catch((error) => message(error.message, "error")));
   els.agentSelect.addEventListener("change", async () => {
-    state.selectedAgentId = Number(els.agentSelect.value);
-    await loadProfile();
-    await loadMemory();
-    await loadEconomy();
-    await loadStateRadar();
-    renderTrace();
+    try {
+      state.selectedAgentId = Number(els.agentSelect.value);
+      await loadProfile();
+      await loadMemory();
+      await loadEconomy();
+      await loadStateRadar();
+      renderTrace();
+    } catch (error) {
+      message(error.message, "error");
+    }
   });
   els.saveProfileBtn.addEventListener("click", () => saveProfile().catch((error) => message(error.message, "error")));
   els.refreshAgentBtn.addEventListener("click", () => loadProfile().catch((error) => message(error.message, "error")));
