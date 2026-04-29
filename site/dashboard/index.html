@@ -108,6 +108,20 @@
           </div>
           <pre id="interviewOutput" class="codebox">采访结果会显示在这里。</pre>
         </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Agent State</p>
+              <h2>智能体状态</h2>
+            </div>
+            <button id="reloadRadarBtn" class="button small">刷新</button>
+          </div>
+          <div class="chart-container">
+            <canvas id="radarChart" width="400" height="400" aria-label="agent state radar chart"></canvas>
+            <p id="radarPlaceholder" class="placeholder-text">暂无状态数据。</p>
+          </div>
+        </section>
       </aside>
     </section>
 
@@ -131,6 +145,19 @@
       <section class="panel">
         <div class="section-head">
           <div>
+            <p class="kicker">Economy</p>
+            <h2>经济状况</h2>
+          </div>
+          <button id="reloadEconBtn" class="button small">刷新</button>
+        </div>
+        <div id="economySummary" class="economy-grid">
+          <p class="placeholder-text">暂无经济数据。</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
             <p class="kicker">Run Log</p>
             <h2>运行输出</h2>
           </div>
@@ -140,6 +167,8 @@
       </section>
     </section>
   </main>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="/site/dashboard/charts.js"></script>
   <script src="/site/dashboard/app.js"></script>
 </body>
 </html>
