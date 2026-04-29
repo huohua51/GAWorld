@@ -43,6 +43,11 @@ const els = {
   agentLogBox: document.getElementById("agentLogBox"),
   reloadStatusBtn: document.getElementById("reloadStatusBtn"),
   runLogBox: document.getElementById("runLogBox"),
+  radarChart: document.getElementById("radarChart"),
+  radarPlaceholder: document.getElementById("radarPlaceholder"),
+  economySummary: document.getElementById("economySummary"),
+  reloadRadarBtn: document.getElementById("reloadRadarBtn"),
+  reloadEconBtn: document.getElementById("reloadEconBtn"),
 };
 
 const ctx = els.mapCanvas.getContext("2d");
@@ -174,6 +179,43 @@ async function loadMemory() {
   }, null, 2);
   els.episodesBox.textContent = payload.episodes_tail || "暂无 episode。";
   els.agentLogBox.textContent = payload.log_tail || "暂无 agent 日志。";
+}
+
+async function loadEconomy() {
+  if (!state.selectedAgentId) return;
+  try {
+    const payload = await api(`/api/economy/${state.selectedAgentId}`);
+    const econ = payload.economy;
+    if (!econ || econ.error) {
+      els.economySummary.innerHTML = '<p class="placeholder-text">暂无经济数据。</p>';
+      return;
+    }
+    const balance = Number(econ.balance) || 0;
+    const income = Number(econ.daily_income) || 0;
+    const expense = Number(econ.daily_expense) || 0;
+    els.economySummary.innerHTML = `
+      <div class="econ-card"><div class="label">余额</div><div class="value ${balance >= 0 ? "positive" : "negative"}">${balance.toFixed(0)}</div></div>
+      <div class="econ-card"><div class="label">今日收入</div><div class="value positive">+${income.toFixed(0)}</div></div>
+      <div class="econ-card"><div class="label">今日支出</div><div class="value negative">-${expense.toFixed(0)}</div></div>
+    `;
+  } catch (error) {
+    els.economySummary.innerHTML = `<p class="placeholder-text">经济数据读取失败: ${error.message}</p>`;
+  }
+}
+
+async function loadStateRadar() {
+  if (!state.selectedAgentId) return;
+  try {
+    const payload = await api(`/api/agents/${state.selectedAgentId}/memory`);
+    const agentState = payload.memory && Array.isArray(payload.memory)
+      ? payload.memory[payload.memory.length - 1]
+      : null;
+    const radarState = (agentState && agentState.state) || {};
+    updateRadarChart(radarState);
+  } catch (error) {
+    els.radarPlaceholder.textContent = "状态数据读取失败";
+    els.radarPlaceholder.style.display = "block";
+  }
 }
 
 async function runSimulation(reset = false) {
@@ -316,11 +358,15 @@ function bindEvents() {
     state.selectedAgentId = Number(els.agentSelect.value);
     await loadProfile();
     await loadMemory();
+    await loadEconomy();
+    await loadStateRadar();
     renderTrace();
   });
   els.saveProfileBtn.addEventListener("click", () => saveProfile().catch((error) => message(error.message, "error")));
   els.refreshAgentBtn.addEventListener("click", () => loadProfile().catch((error) => message(error.message, "error")));
   els.reloadMemoryBtn.addEventListener("click", () => loadMemory().catch((error) => message(error.message, "error")));
+  els.reloadRadarBtn.addEventListener("click", () => loadStateRadar().catch((error) => message(error.message, "error")));
+  els.reloadEconBtn.addEventListener("click", () => loadEconomy().catch((error) => message(error.message, "error")));
   els.interviewBtn.addEventListener("click", () => interview().catch((error) => {
     els.interviewOutput.textContent = error.message;
   }));
@@ -334,8 +380,11 @@ async function init() {
   bindEvents();
   await loadConfig();
   await loadAgents();
+  initRadarChart("radarChart");
   await loadProfile();
   await loadMemory();
+  await loadEconomy();
+  await loadStateRadar();
   await refreshStatus();
   await loadTrace(false);
   state.pollTimer = window.setInterval(() => {
