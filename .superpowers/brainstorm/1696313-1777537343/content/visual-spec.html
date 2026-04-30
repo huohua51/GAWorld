@@ -1,0 +1,52 @@
+<h2>杂志风监控面板 — 视觉规范</h2>
+<p class="subtitle">海军蓝 · 纸白 · Georgia 衬线 · 三栏布局</p>
+
+<div class="section">
+  <h3>🎨 完整色板</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div>
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">主色</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr><td style="padding:4px 0;">--bg</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#f4f1ea;border:1px solid #c8c2b6;vertical-align:middle;margin-right:8px;"></span>#f4f1ea</td><td style="color:#8a7e6e;">页面背景</td></tr>
+        <tr><td style="padding:4px 0;">--surface</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#fdfaf5;border:1px solid #c8c2b6;vertical-align:middle;margin-right:8px;"></span>#fdfaf5</td><td style="color:#8a7e6e;">卡片/面板</td></tr>
+        <tr><td style="padding:4px 0;">--surface-2</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#f7f3ec;border:1px solid #c8c2b6;vertical-align:middle;margin-right:8px;"></span>#f7f3ec</td><td style="color:#8a7e6e;">次级表面</td></tr>
+        <tr><td style="padding:4px 0;">--border</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#d4cdc0;vertical-align:middle;margin-right:8px;"></span>#d4cdc0</td><td style="color:#8a7e6e;">边框线</td></tr>
+      </table>
+    </div>
+    <div>
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">强调色</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr><td style="padding:4px 0;">--navy</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#1f3a4b;vertical-align:middle;margin-right:8px;"></span>#1f3a4b</td><td style="color:#8a7e6e;">主色调</td></tr>
+        <tr><td style="padding:4px 0;">--teal</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#2b5e6b;vertical-align:middle;margin-right:8px;"></span>#2b5e6b</td><td style="color:#8a7e6e;">副色</td></tr>
+        <tr><td style="padding:4px 0;">--gold</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#c8a96e;vertical-align:middle;margin-right:8px;"></span>#c8a96e</td><td style="color:#8a7e6e;">点缀色</td></tr>
+        <tr><td style="padding:4px 0;">--red</td><td><span style="display:inline-block;width:20px;height:20px;border-radius:3px;background:#c65d3a;vertical-align:middle;margin-right:8px;"></span>#c65d3a</td><td style="color:#8a7e6e;">危险/警示</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>🔤 字体层级</h3>
+  <table style="width:100%;font-size:13px;border-collapse:collapse;">
+    <tr style="border-bottom:1px solid #d4cdc0;"><th style="text-align:left;padding:6px 0;color:#8a7e6e;">用途</th><th style="text-align:left;padding:6px 0;color:#8a7e6e;">字体</th><th style="text-align:left;padding:6px 0;color:#8a7e6e;">大小</th><th style="text-align:left;padding:6px 0;color:#8a7e6e;">粗细</th></tr>
+    <tr><td style="padding:4px 0;">H1 页面标题</td><td>Georgia, serif</td><td>36px</td><td>700</td></tr>
+    <tr><td style="padding:4px 0;">H2 面板标题</td><td>Georgia, serif</td><td>20px</td><td>700</td></tr>
+    <tr><td style="padding:4px 0;">Kicker (绿色标签)</td><td>系统 sans</td><td>11px</td><td>800</td></tr>
+    <tr><td style="padding:4px 0;">正文/数据</td><td>系统 sans</td><td>13px</td><td>400</td></tr>
+    <tr><td style="padding:4px 0;">数据值 (数字)</td><td>SF Mono / monospace</td><td>18-22px</td><td>900</td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <h3>📐 布局结构</h3>
+  <p>三栏保持：左侧 agent 列表 (210px) | 中间地图 | 右侧面板 (400px)</p>
+  <p>关键变化：</p>
+  <ul style="color:#3a3230;line-height:1.8;">
+    <li>白底 + 阴影面板，取代之前深色背景</li>
+    <li>面板圆角 8px，背景 #fdfaf5，边框 #d4cdc0</li>
+    <li>间距略微加大，呼吸感更强</li>
+    <li>header 用海军蓝底色，白色文字，更突出</li>
+  </ul>
+</div>
+
+<p class="subtitle">这个视觉框架看着 OK 吗？OK 的话我继续出组件级规范。</p>

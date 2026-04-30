@@ -55,6 +55,7 @@ const els = {
   economyChartPlaceholder: document.getElementById("economyChartPlaceholder"),
   reloadPerfBtn: document.getElementById("reloadPerfBtn"),
   performanceSummary: document.getElementById("performanceSummary"),
+  agentList: document.getElementById("agentList"),
 };
 
 const ctx = els.mapCanvas.getContext("2d");
@@ -156,6 +157,50 @@ async function loadAgents() {
     option.textContent = `${String(agent.id).padStart(2, "0")} · ${agent.name}${agent.configured ? " · active" : ""}`;
     option.selected = agent.id === state.selectedAgentId;
     els.agentSelect.appendChild(option);
+  });
+  renderAgentList();
+}
+
+async function selectAgent(agentId) {
+  state.selectedAgentId = agentId;
+  els.agentSelect.value = String(agentId);
+  renderAgentList();
+  try {
+    await loadProfile();
+    await loadMemory();
+    await loadEconomy();
+    await loadEconomyHistory();
+    await loadStateRadar();
+    renderTrace();
+  } catch (error) {
+    message(error.message, "error");
+  }
+}
+
+function renderAgentList() {
+  els.agentList.innerHTML = "";
+  state.agents.forEach((agent) => {
+    const item = document.createElement("div");
+    item.className = `agent-list-item${agent.id === state.selectedAgentId ? " selected" : ""}`;
+    if (agent.configured) {
+      const dot = document.createElement("span");
+      dot.className = "active-dot";
+      item.appendChild(dot);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.style.cssText = "width:7px;flex-shrink:0";
+      item.appendChild(spacer);
+    }
+    const idSpan = document.createElement("span");
+    idSpan.className = "agent-id";
+    idSpan.textContent = String(agent.id).padStart(2, "0");
+    item.appendChild(idSpan);
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "agent-name";
+    nameSpan.textContent = agent.name;
+    item.appendChild(nameSpan);
+    item.addEventListener("click", () => selectAgent(agent.id));
+    els.agentList.appendChild(item);
   });
 }
 
@@ -399,19 +444,7 @@ function bindEvents() {
   els.stopBtn.addEventListener("click", () => stopSimulation().catch((error) => message(error.message, "error")));
   els.reloadTraceBtn.addEventListener("click", () => loadTrace(true));
   els.reloadStatusBtn.addEventListener("click", () => refreshStatus().catch((error) => message(error.message, "error")));
-  els.agentSelect.addEventListener("change", async () => {
-    try {
-      state.selectedAgentId = Number(els.agentSelect.value);
-      await loadProfile();
-      await loadMemory();
-      await loadEconomy();
-      await loadEconomyHistory();
-      await loadStateRadar();
-      renderTrace();
-    } catch (error) {
-      message(error.message, "error");
-    }
-  });
+  els.agentSelect.addEventListener("change", () => selectAgent(Number(els.agentSelect.value)));
   els.saveProfileBtn.addEventListener("click", () => saveProfile().catch((error) => message(error.message, "error")));
   els.refreshAgentBtn.addEventListener("click", () => loadProfile().catch((error) => message(error.message, "error")));
   els.reloadMemoryBtn.addEventListener("click", () => loadMemory().catch((error) => message(error.message, "error")));
