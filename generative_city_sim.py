@@ -1394,6 +1394,42 @@ DAILY_PLAN_MIN_GAP_MINUTES = max(1, int(DAILY_PLAN_FLEX_CONFIG.get("min_gap_minu
 DAILY_PLAN_ALLOW_INSERTIONS = bool(DAILY_PLAN_FLEX_CONFIG.get("allow_insertions", True))
 EXTERNAL_RAG_CONFIG = CONFIG.get("external_rag", {})
 EXTERNAL_RAG_TOP_K = max(1, int(EXTERNAL_RAG_CONFIG.get("top_k", 2)))
+
+# ── Skill System ─────────────────────────────────
+
+SKILL_CATALOG = [
+    {"key": "woodworking", "name": "木工", "category": "crafting"},
+    {"key": "cooking", "name": "烹饪", "category": "crafting"},
+    {"key": "handicraft", "name": "手工", "category": "crafting"},
+    {"key": "tailoring", "name": "缝纫", "category": "crafting"},
+    {"key": "transportation", "name": "运输", "category": "service"},
+    {"key": "cleaning", "name": "清洁", "category": "service"},
+    {"key": "security", "name": "安保", "category": "service"},
+    {"key": "teaching", "name": "教学", "category": "social"},
+    {"key": "entertainment", "name": "娱乐", "category": "social"},
+    {"key": "negotiation", "name": "谈判", "category": "social"},
+    {"key": "gathering", "name": "采集", "category": "knowledge"},
+    {"key": "exploration", "name": "勘探", "category": "knowledge"},
+    {"key": "medicine", "name": "医疗", "category": "knowledge"},
+]
+
+
+def assign_initial_skills(agent_id):
+    from memory_store import save_agent_skills
+    n_skills = random.randint(2, 3)
+    chosen = random.sample(SKILL_CATALOG, min(n_skills, len(SKILL_CATALOG)))
+    skills = []
+    for s in chosen:
+        skills.append({
+            "key": s["key"],
+            "name": s["name"],
+            "category": s["category"],
+            "level": 1,
+            "xp": 0,
+            "xp_next": 100,
+        })
+    save_agent_skills(agent_id, skills)
+    return skills
 CALENDAR_CONFIG = CONFIG.get("calendar", {})
 SIM_START_DATE = _parse_sim_start_date(CALENDAR_CONFIG.get("start_date", "today"))
 SIM_START_WEEKDAY_INDEX = _weekday_to_index(CALENDAR_CONFIG.get("start_weekday", "monday"))
@@ -5228,6 +5264,9 @@ def run_simulation():
                 state.setdefault("time_pressure", 0.25)
                 agent.setdefault("last_activity", "")
                 agent.setdefault("last_action", "")
+    for agent in agents:
+        if not STATEFUL:
+            assign_initial_skills(agent["id"])
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
     distributed_client = DistributedRelayClient(DISTRIBUTED_CONFIG)

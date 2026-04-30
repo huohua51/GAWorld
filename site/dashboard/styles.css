@@ -528,6 +528,78 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
 .econ-card .value.positive { color: var(--green); }
 .econ-card .value.negative { color: var(--red); }
 
+/* ── Skills ───────────────────────────────────── */
+
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.skill-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--surface-2);
+}
+
+.skill-card .skill-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.skill-card .skill-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.skill-card .level-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.skill-card .level-badge.lv2,
+.skill-card .level-badge.lv3 {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+.skill-card .level-badge.lv4,
+.skill-card .level-badge.lv5 {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.skill-card .skill-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+
+.skill-card .skill-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--teal);
+  transition: width 0.3s var(--ease);
+}
+
+.skill-card .skill-xp {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 700;
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
 /* ── Radar Legend ─────────────────────────────── */
 
 .radar-legend {
@@ -610,6 +682,7 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   .timeline { grid-template-columns: 1fr; }
   .economy-grid { grid-template-columns: 1fr; }
   .perf-grid { grid-template-columns: 1fr; }
+  .skill-grid { grid-template-columns: 1fr; }
   .chart-container { max-width: 100%; }
 }
 

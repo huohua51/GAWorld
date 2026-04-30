@@ -225,6 +225,15 @@ def _memory_payload(agent_id):
     }
 
 
+def _skills_payload(agent_id):
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_skills.json")
+    skills = _read_json_file(path, [])
+    if isinstance(skills, list):
+        return {"agent_id": int(agent_id), "skills": skills}
+    return {"agent_id": int(agent_id), "skills": []}
+
+
 def _run_status():
     proc = RUN_STATE.get("process")
     running = bool(proc and proc.poll() is None)
@@ -483,6 +492,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/agents/") and path.endswith("/memory"):
             agent_id = path.split("/")[3]
             return self._json_response(_memory_payload(agent_id))
+        if path.startswith("/api/agents/") and path.endswith("/skills"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_skills_payload(agent_id))
         if path == "/api/run/status":
             return self._json_response(_run_status())
         if path == "/api/run/performance":

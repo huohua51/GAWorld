@@ -56,6 +56,8 @@ const els = {
   reloadPerfBtn: document.getElementById("reloadPerfBtn"),
   performanceSummary: document.getElementById("performanceSummary"),
   agentList: document.getElementById("agentList"),
+  skillsContainer: document.getElementById("skillsContainer"),
+  skillsPlaceholder: document.getElementById("skillsPlaceholder"),
 };
 
 const ctx = els.mapCanvas.getContext("2d");
@@ -168,6 +170,7 @@ async function selectAgent(agentId) {
   try {
     await loadProfile();
     await loadMemory();
+    await loadSkills();
     await loadEconomy();
     await loadEconomyHistory();
     await loadStateRadar();
@@ -231,6 +234,58 @@ async function loadMemory() {
   }, null, 2);
   els.episodesBox.textContent = payload.episodes_tail || "暂无 episode。";
   els.agentLogBox.textContent = payload.log_tail || "暂无 agent 日志。";
+}
+
+async function loadSkills() {
+  if (!state.selectedAgentId) return;
+  els.skillsContainer.innerHTML = '<p class="placeholder-text">读取技能中...</p>';
+  try {
+    const payload = await api(`/api/agents/${state.selectedAgentId}/skills`);
+    const skills = payload.skills || [];
+    if (!skills.length) {
+      els.skillsContainer.innerHTML = '<p class="placeholder-text">该智能体暂无技能</p>';
+      return;
+    }
+    els.skillsContainer.innerHTML = "";
+    skills.forEach((skill) => {
+      const card = document.createElement("div");
+      card.className = "skill-card";
+
+      const header = document.createElement("div");
+      header.className = "skill-header";
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "skill-name";
+      nameEl.textContent = skill.name;
+
+      const levelEl = document.createElement("span");
+      levelEl.className = `level-badge lv${Math.min(skill.level, 5)}`;
+      levelEl.textContent = `Lv.${skill.level}`;
+
+      header.appendChild(nameEl);
+      header.appendChild(levelEl);
+
+      const bar = document.createElement("div");
+      bar.className = "skill-bar";
+
+      const fill = document.createElement("div");
+      fill.className = "skill-bar-fill";
+      const pct = skill.xp_next > 0 ? Math.min((skill.xp / skill.xp_next) * 100, 100) : 0;
+      fill.style.width = `${pct}%`;
+      bar.appendChild(fill);
+
+      const xpEl = document.createElement("div");
+      xpEl.className = "skill-xp";
+      xpEl.textContent = `${skill.xp}/${skill.xp_next}`;
+
+      card.appendChild(header);
+      card.appendChild(bar);
+      card.appendChild(xpEl);
+      els.skillsContainer.appendChild(card);
+    });
+  } catch (error) {
+    els.skillsContainer.innerHTML = `<p class="placeholder-text">技能数据读取失败: ${error.message}</p>`;
+  }
 }
 
 async function loadEconomy() {
@@ -474,6 +529,7 @@ async function init() {
   initEconomyChart("economyChart");
   await loadProfile();
   await loadMemory();
+  await loadSkills();
   await loadEconomy();
   await loadEconomyHistory();
   await loadStateRadar();
