@@ -5,6 +5,7 @@ const state = {
   trace: null,
   frameIndex: 0,
   pollTimer: null,
+  compareMode: false,
 };
 
 const els = {
@@ -48,6 +49,12 @@ const els = {
   economySummary: document.getElementById("economySummary"),
   reloadRadarBtn: document.getElementById("reloadRadarBtn"),
   reloadEconBtn: document.getElementById("reloadEconBtn"),
+  radarCompareBtn: document.getElementById("radarCompareBtn"),
+  radarLegend: document.getElementById("radarLegend"),
+  economyChart: document.getElementById("economyChart"),
+  economyChartPlaceholder: document.getElementById("economyChartPlaceholder"),
+  reloadPerfBtn: document.getElementById("reloadPerfBtn"),
+  performanceSummary: document.getElementById("performanceSummary"),
 };
 
 const ctx = els.mapCanvas.getContext("2d");
@@ -203,15 +210,53 @@ async function loadEconomy() {
   }
 }
 
-async function loadStateRadar() {
+async function loadEconomyHistory() {
   if (!state.selectedAgentId) return;
   try {
-    const payload = await api(`/api/agents/${state.selectedAgentId}/memory`);
-    const agentState = payload.memory && Array.isArray(payload.memory)
-      ? payload.memory[payload.memory.length - 1]
-      : null;
-    const radarState = (agentState && agentState.state) || {};
-    updateRadarChart(radarState);
+    const payload = await api(`/api/economy/${state.selectedAgentId}/history`);
+    updateEconomyChart(payload.history || []);
+  } catch (error) {
+    document.getElementById("economyChartPlaceholder").textContent = "经济趋势读取失败";
+    document.getElementById("economyChartPlaceholder").style.display = "block";
+  }
+}
+
+async function loadPerformance() {
+  try {
+    const perf = await api("/api/run/performance");
+    const cards = [];
+    cards.push(`<div class="perf-card"><span class="perf-label">智能体数量</span><span class="perf-value">${perf.agent_count ?? "-"}</span></div>`);
+    cards.push(`<div class="perf-card"><span class="perf-label">设定天数</span><span class="perf-value">${perf.sim_days ?? "-"}</span></div>`);
+    cards.push(`<div class="perf-card"><span class="perf-label">已完成天数</span><span class="perf-value">${perf.days_completed ?? "-"}</span></div>`);
+    if (perf.duration_seconds != null) {
+      const mins = Math.floor(perf.duration_seconds / 60);
+      const secs = Math.floor(perf.duration_seconds % 60);
+      cards.push(`<div class="perf-card"><span class="perf-label">运行时长</span><span class="perf-value">${mins}m ${secs}s</span></div>`);
+    }
+    cards.push(`<div class="perf-card"><span class="perf-label">日志行数</span><span class="perf-value">${perf.log_line_count ?? "-"}</span></div>`);
+    cards.push(`<div class="perf-card"><span class="perf-label">日志大小</span><span class="perf-value">${perf.log_size_bytes ? (perf.log_size_bytes / 1024).toFixed(0) + "KB" : "-"}</span></div>`);
+    els.performanceSummary.innerHTML = cards.join("");
+  } catch (error) {
+    els.performanceSummary.innerHTML = `<p class="placeholder-text">性能数据读取失败: ${error.message}</p>`;
+  }
+}
+
+async function loadStateRadar() {
+  if (!state.selectedAgentId) return;
+  window.__selectedAgentId__ = state.selectedAgentId;
+  try {
+    if (state.compareMode) {
+      const agentIds = state.agents.map((a) => a.id).join(",");
+      const payload = await api(`/api/agents/memory/batch?ids=${agentIds}`);
+      updateRadarChart(null, payload.agents || []);
+    } else {
+      const payload = await api(`/api/agents/${state.selectedAgentId}/memory`);
+      const agentState = payload.memory && Array.isArray(payload.memory)
+        ? payload.memory[payload.memory.length - 1]
+        : null;
+      const radarState = (agentState && agentState.state) || {};
+      updateRadarChart(radarState);
+    }
   } catch (error) {
     els.radarPlaceholder.textContent = "状态数据读取失败";
     els.radarPlaceholder.style.display = "block";
@@ -360,6 +405,7 @@ function bindEvents() {
       await loadProfile();
       await loadMemory();
       await loadEconomy();
+      await loadEconomyHistory();
       await loadStateRadar();
       renderTrace();
     } catch (error) {
@@ -371,6 +417,13 @@ function bindEvents() {
   els.reloadMemoryBtn.addEventListener("click", () => loadMemory().catch((error) => message(error.message, "error")));
   els.reloadRadarBtn.addEventListener("click", () => loadStateRadar().catch((error) => message(error.message, "error")));
   els.reloadEconBtn.addEventListener("click", () => loadEconomy().catch((error) => message(error.message, "error")));
+  els.radarCompareBtn.addEventListener("click", () => {
+    state.compareMode = !state.compareMode;
+    els.radarCompareBtn.textContent = state.compareMode ? "退出对比" : "多智能体对比";
+    els.radarCompareBtn.className = `button small${state.compareMode ? " primary" : ""}`;
+    loadStateRadar().catch((error) => message(error.message, "error"));
+  });
+  els.reloadPerfBtn.addEventListener("click", () => loadPerformance().catch((error) => message(error.message, "error")));
   els.interviewBtn.addEventListener("click", () => interview().catch((error) => {
     els.interviewOutput.textContent = error.message;
   }));
@@ -385,15 +438,19 @@ async function init() {
   await loadConfig();
   await loadAgents();
   initRadarChart("radarChart");
+  initEconomyChart("economyChart");
   await loadProfile();
   await loadMemory();
   await loadEconomy();
+  await loadEconomyHistory();
   await loadStateRadar();
+  await loadPerformance();
   await refreshStatus();
   await loadTrace(false);
   state.pollTimer = window.setInterval(() => {
     refreshStatus().catch(() => {});
     loadTrace(false).catch(() => {});
+    loadPerformance().catch(() => {});
   }, 2500);
 }
 
