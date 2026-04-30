@@ -12,6 +12,12 @@
   --red: #c65d3a;
   --green: #4a7c5e;
   --code-bg: #1a1f1c;
+  --code-text: #c5ddd4;
+  --map-bg: #e8e4db;
+  --text-on-dark: #fdfaf5;
+  --navy-hover: #2a4d62;
+  --red-hover: #d46a48;
+  --gold-rgb: 200, 169, 110;
   --shadow: 0 4px 20px rgba(47, 40, 36, 0.08);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -74,7 +80,7 @@ button, input, select, textarea { font: inherit; }
   font-size: 36px;
   font-weight: 700;
   line-height: 1.05;
-  color: #fdfaf5;
+  color: var(--text-on-dark);
 }
 
 .masthead-copy p {
@@ -110,7 +116,15 @@ h3 { font-size: 13px; font-weight: 700; color: var(--text-muted); }
   box-shadow: var(--shadow);
 }
 
-label { display: grid; gap: 5px; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 
 input, select, textarea {
   width: 100%;
@@ -173,28 +187,33 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   border-color: var(--border-light);
 }
 
+.button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(31, 58, 75, 0.15);
+}
+
 .button.primary {
   background: var(--navy);
-  color: #fdfaf5;
+  color: var(--text-on-dark);
   border-color: var(--navy);
   font-weight: 800;
 }
 
 .button.primary:hover {
-  background: #2a4d62;
-  border-color: #2a4d62;
+  background: var(--navy-hover);
+  border-color: var(--navy-hover);
 }
 
 .button.danger {
   background: var(--red);
-  color: #fdfaf5;
+  color: var(--text-on-dark);
   border-color: var(--red);
   font-weight: 800;
 }
 
 .button.danger:hover {
-  background: #d46a48;
-  border-color: #d46a48;
+  background: var(--red-hover);
+  border-color: var(--red-hover);
 }
 
 .button.small { min-height: 32px; padding: 0 10px; font-size: 12px; }
@@ -313,15 +332,21 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   border-color: var(--border);
 }
 
+.agent-list-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(31, 58, 75, 0.15);
+}
+
 .agent-list-item.selected {
   background: rgba(31, 58, 75, 0.06);
-  border-color: var(--navy);
+  border-color: transparent;
+  border-left-color: var(--navy);
   font-weight: 700;
 }
 
 .agent-list-item .agent-id {
   color: var(--text-muted);
-  font-family: "SF Mono", "SF Pro Display", "Cascadia Code", Consolas, monospace;
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
   font-size: 11px;
   min-width: 22px;
 }
@@ -352,7 +377,7 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   aspect-ratio: 16 / 10;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #e8e4db;
+  background: var(--map-bg);
 }
 
 .timeline {
@@ -423,7 +448,7 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--code-bg);
-  color: #c5ddd4;
+  color: var(--code-text);
   font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
@@ -557,7 +582,7 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
 
 .perf-card .perf-value {
   display: block;
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 900;
   color: var(--text);
   margin-top: 2px;
