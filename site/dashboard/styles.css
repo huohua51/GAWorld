@@ -426,8 +426,18 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
 
 .lower-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 14px;
+  margin-top: 14px;
+}
+
+.lower-center {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.log-section {
   margin-top: 14px;
 }
 
@@ -455,7 +465,7 @@ textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   white-space: pre-wrap;
 }
 
-.run-log { min-height: 480px; }
+.run-log { min-height: 260px; }
 
 /* ── Charts ───────────────────────────────────── */
 
