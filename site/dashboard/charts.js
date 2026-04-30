@@ -20,19 +20,19 @@ const RADAR_LABELS = {
 };
 
 const RADAR_COLORS = {
-  border: "rgba(19, 121, 91, 0.85)",
-  background: "rgba(19, 121, 91, 0.15)",
-  point: "rgba(19, 121, 91, 1)",
+  border: "rgba(31, 58, 75, 0.8)",
+  background: "rgba(31, 58, 75, 0.08)",
+  point: "rgba(31, 58, 75, 1)",
 };
 
 const MULTI_AGENT_COLORS = [
-  { border: "rgba(19, 121, 91, 0.85)", background: "rgba(19, 121, 91, 0.15)", point: "rgba(19, 121, 91, 1)" },
-  { border: "rgba(183, 62, 62, 0.85)", background: "rgba(183, 62, 62, 0.15)", point: "rgba(183, 62, 62, 1)" },
-  { border: "rgba(56, 88, 102, 0.85)", background: "rgba(56, 88, 102, 0.15)", point: "rgba(56, 88, 102, 1)" },
-  { border: "rgba(214, 168, 30, 0.85)", background: "rgba(214, 168, 30, 0.15)", point: "rgba(214, 168, 30, 1)" },
-  { border: "rgba(110, 95, 151, 0.85)", background: "rgba(110, 95, 151, 0.15)", point: "rgba(110, 95, 151, 1)" },
-  { border: "rgba(31, 138, 155, 0.85)", background: "rgba(31, 138, 155, 0.15)", point: "rgba(31, 138, 155, 1)" },
-  { border: "rgba(138, 91, 48, 0.85)", background: "rgba(138, 91, 48, 0.15)", point: "rgba(138, 91, 48, 1)" },
+  { border: "rgba(31, 58, 75, 0.8)", background: "rgba(31, 58, 75, 0.08)", point: "rgba(31, 58, 75, 1)" },
+  { border: "rgba(198, 93, 58, 0.8)", background: "rgba(198, 93, 58, 0.08)", point: "rgba(198, 93, 58, 1)" },
+  { border: "rgba(43, 94, 107, 0.8)", background: "rgba(43, 94, 107, 0.08)", point: "rgba(43, 94, 107, 1)" },
+  { border: "rgba(200, 169, 110, 0.8)", background: "rgba(200, 169, 110, 0.08)", point: "rgba(200, 169, 110, 1)" },
+  { border: "rgba(109, 125, 86, 0.8)", background: "rgba(109, 125, 86, 0.08)", point: "rgba(109, 125, 86, 1)" },
+  { border: "rgba(146, 116, 138, 0.8)", background: "rgba(146, 116, 138, 0.08)", point: "rgba(146, 116, 138, 1)" },
+  { border: "rgba(100, 115, 125, 0.8)", background: "rgba(100, 115, 125, 0.08)", point: "rgba(100, 115, 125, 1)" },
 ];
 
 function initRadarChart(canvasId) {
@@ -54,10 +54,10 @@ function initRadarChart(canvasId) {
         r: {
           beginAtZero: true,
           max: 1.0,
-          ticks: { stepSize: 0.2, font: { size: 10 }, backdropColor: "transparent" },
-          grid: { color: "rgba(203, 215, 205, 0.6)" },
-          angleLines: { color: "rgba(203, 215, 205, 0.6)" },
-          pointLabels: { font: { size: 12, weight: "bold" }, color: "#17211d" },
+          ticks: { stepSize: 0.2, font: { size: 10 }, backdropColor: "transparent", color: "#8a7e6e" },
+          grid: { color: "rgba(212, 205, 192, 0.6)" },
+          angleLines: { color: "rgba(212, 205, 192, 0.6)" },
+          pointLabels: { font: { size: 12, weight: "bold" }, color: "#2e2826" },
         },
       },
     },
@@ -95,7 +95,7 @@ function updateRadarChart(state, overlayAgents) {
       borderColor: RADAR_COLORS.border,
       backgroundColor: RADAR_COLORS.background,
       pointBackgroundColor: RADAR_COLORS.point,
-      pointBorderColor: "#fffef9",
+      pointBorderColor: "#fdfaf5",
       pointRadius: 4,
       borderWidth: 2,
     }];
@@ -118,7 +118,7 @@ function updateRadarChart(state, overlayAgents) {
       borderColor: colors.border,
       backgroundColor: colors.background,
       pointBackgroundColor: colors.point,
-      pointBorderColor: "#fffef9",
+      pointBorderColor: "#fdfaf5",
       pointRadius: 4,
       borderWidth: 2,
     };
@@ -149,9 +149,9 @@ function updateRadarLegend(overlayAgents) {
 /* ── Economy: balance / income / expense trend ──────────────────── */
 
 const ECONOMY_COLORS = {
-  balance: { border: "rgba(19, 121, 91, 0.9)", background: "rgba(19, 121, 91, 0.1)" },
-  income: { border: "rgba(56, 88, 102, 0.9)", background: "rgba(56, 88, 102, 0.1)" },
-  expense: { border: "rgba(183, 62, 62, 0.9)", background: "rgba(183, 62, 62, 0.1)" },
+  balance: { border: "rgba(74, 124, 94, 0.9)", background: "rgba(74, 124, 94, 0.06)" },
+  income: { border: "rgba(200, 169, 110, 0.9)", background: "rgba(200, 169, 110, 0.06)" },
+  expense: { border: "rgba(198, 93, 58, 0.9)", background: "rgba(198, 93, 58, 0.06)" },
 };
 
 function initEconomyChart(canvasId) {
@@ -176,19 +176,19 @@ function initEconomyChart(canvasId) {
       responsive: true,
       maintainAspectRatio: true,
       plugins: {
-        legend: { position: "bottom", labels: { boxWidth: 12, padding: 12, font: { size: 11 } } },
+        legend: { position: "bottom", labels: { boxWidth: 12, padding: 12, font: { size: 11 }, color: "#2e2826" } },
         tooltip: { mode: "index", intersect: false },
       },
       scales: {
         x: {
-          title: { display: true, text: "Day", font: { size: 11 } },
-          ticks: { font: { size: 10 } },
-          grid: { color: "rgba(203, 215, 205, 0.4)" },
+          title: { display: true, text: "Day", font: { size: 11 }, color: "#2e2826" },
+          ticks: { font: { size: 10 }, color: "#8a7e6e" },
+          grid: { color: "rgba(212, 205, 192, 0.5)" },
         },
         y: {
           beginAtZero: true,
-          ticks: { font: { size: 10 } },
-          grid: { color: "rgba(203, 215, 205, 0.4)" },
+          ticks: { font: { size: 10 }, color: "#8a7e6e" },
+          grid: { color: "rgba(212, 205, 192, 0.5)" },
         },
       },
       interaction: { mode: "index", intersect: false },
