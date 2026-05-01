@@ -6301,10 +6301,16 @@ def run_simulation():
                 for metric in state_history[agent["id"]]:
                     state_history[agent["id"]][metric].append(agent["state"][metric])
 
-                routine_line = ""
+                # --- activity header (fold RoutineChange into one line) ---
                 if changed:
                     reason_text = change_reason or "临时改变"
+                    _activity_header = f"{scheduled_activity} → {effective_activity} ({reason_text})"
                     routine_line = f"RoutineChange: {scheduled_activity} -> {effective_activity} ({reason_text})\n"
+                else:
+                    _activity_header = scheduled_activity
+                    routine_line = ""
+
+                # --- optional lines (only rendered when non-empty) ---
                 recall_line = ""
                 unique_recollections = []
                 for item in step_recollections:
@@ -6315,45 +6321,55 @@ def run_simulation():
                     recall_line = f"Recall: {' | '.join(unique_recollections)}\n"
                 transient_thought_line = ""
                 if transient_thought:
-                    transient_thought_line = f"TransientThought: {format_transient_thought(transient_thought)}\n"
-                memory_review_line = f"MemoryReview: {memory_review}\n" if memory_review else ""
+                    transient_thought_line = f"Thought: {format_transient_thought(transient_thought)}\n"
+                memory_review_line = f"Review: {memory_review}\n" if memory_review else ""
                 decision_line = ""
                 if action_meta.get("decision_driver"):
                     decision_line = (
-                        f"DecisionDriver: {action_meta.get('decision_driver')} "
-                        f"(commitment={action_meta.get('commitment_level', '')})\n"
+                        f"Driver: {action_meta.get('decision_driver')} "
+                        f"(commit={action_meta.get('commitment_level', '')})\n"
                     )
                 needs_line = ""
                 if HUMAN_REALISM_ENABLED:
                     needs_line = (
                         "Needs: "
-                        f"energy={agent['state'].get('energy', 0.75):.2f} "
-                        f"hunger={agent['state'].get('hunger', 0.25):.2f} "
-                        f"social_need={agent['state'].get('social_need', 0.40):.2f} "
-                        f"fatigue_debt={agent['state'].get('fatigue_debt', 0.20):.2f} "
-                        f"self_control={agent['state'].get('self_control', 0.60):.2f} "
-                        f"time_pressure={agent['state'].get('time_pressure', 0.25):.2f}\n"
+                        f"nrg={agent['state'].get('energy', 0.75):.2f} "
+                        f"hun={agent['state'].get('hunger', 0.25):.2f} "
+                        f"soc={agent['state'].get('social_need', 0.40):.2f} "
+                        f"fat={agent['state'].get('fatigue_debt', 0.20):.2f} "
+                        f"ctrl={agent['state'].get('self_control', 0.60):.2f} "
+                        f"tprs={agent['state'].get('time_pressure', 0.25):.2f}\n"
                     )
 
-                log = f"""
-[{agent['name']} @ {time_str}]
-Scheduled: {scheduled_activity}
-Activity: {effective_activity}
-{routine_line}Location: {location}
-ResolvedLocation: {resolved_location}
-TargetLocation: {movement['target_location']}
-TravelMode: {travel.get('mode', 'N/A')}
-TravelDistanceKm: {travel.get('distance_km', 0.0):.2f}
-TravelMinutes: {travel.get('minutes', 0)}
-TravelStatus: {travel.get('status', 'stationary')}
-Environment: {step_env_context}
-Perception: {perc}
-Plan: {plan_text}
-{transient_thought_line}{recall_line}Action: {act}
-{decision_line}{needs_line}Outcome: {outcome}
-Reflection: {refl_text}
-{memory_review_line}
-"""
+                # --- compact location + travel (collapsed to 1 line) ---
+                _travel_status = travel.get("status", "stationary")
+                if _travel_status != "stationary":
+                    _loc_line = (
+                        f"Loc: {location} → {resolved_location}"
+                        f"  [{travel.get('mode', '?')} "
+                        f"{travel.get('distance_km', 0.0):.1f}km "
+                        f"{travel.get('minutes', 0)}min]\n"
+                    )
+                else:
+                    _loc_line = f"Loc: {resolved_location}\n"
+
+                # --- env context (omitted when empty) ---
+                _env_line = f"Env: {step_env_context}\n" if step_env_context else ""
+
+                log = (
+                    f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
+                    f"{_loc_line}"
+                    f"{_env_line}"
+                    f"Perc: {perc}\n"
+                    f"Plan: {plan_text}\n"
+                    f"{transient_thought_line}"
+                    f"{recall_line}"
+                    f"Act: {act}  |  Out: {outcome}\n"
+                    f"{decision_line}"
+                    f"{needs_line}"
+                    f"Refl: {refl_text}\n"
+                    f"{memory_review_line}"
+                )
                 print(log)
                 daily_logs[agent["id"]] += log
                 append_agent_log(agent, log)
