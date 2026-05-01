@@ -44,6 +44,11 @@ from distributed_comm import (
     extract_sender_agent_ids,
     format_inbox_context,
 )
+from dynamic_behavior import (
+    dynamic_transient_thought,
+    evaluate_step_dynamics,
+    insert_activity_into_schedule as dynamic_insert_activity,
+)
 from extensibility import HookBus
 from environment import EnvironmentSystem, RemoteEnvironmentClient
 from llm_providers import call_llm
@@ -5871,16 +5876,33 @@ def run_simulation():
                         step_ctx["intervention_feed"] = intervention_feed
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
-                transient_thought = maybe_generate_transient_thought(
-                    agent,
-                    time_str,
-                    scheduled_activity,
-                    perc,
-                    env_events=agent_env_events,
-                    policy_desc=policy_desc,
-                    social_context=social_context,
-                    inbox_messages=inbox_messages,
-                )
+                # --- Dynamic behaviour system (replaces old transient thought) ---
+                _use_dynamic = CONFIG.get("dynamic_behavior", {}).get("enabled", True)
+                if _use_dynamic:
+                    transient_thought = dynamic_transient_thought(
+                        agent,
+                        time_str,
+                        scheduled_activity,
+                        perception_text=perc,
+                        env_events=agent_env_events,
+                        policy_desc=policy_desc,
+                        social_context=social_context,
+                        inbox_messages=inbox_messages,
+                        all_agents=agents,
+                        agents_by_id=agents_by_id,
+                        config=CONFIG,
+                    )
+                else:
+                    transient_thought = maybe_generate_transient_thought(
+                        agent,
+                        time_str,
+                        scheduled_activity,
+                        perc,
+                        env_events=agent_env_events,
+                        policy_desc=policy_desc,
+                        social_context=social_context,
+                        inbox_messages=inbox_messages,
+                    )
                 step_recollections = []
                 plan_commitment = _activity_commitment_level(scheduled_activity)
                 plan_prefetch_refs = _build_decision_reference_bundle(
@@ -5929,6 +5951,37 @@ def run_simulation():
                     transient_thought=transient_thought,
                     social_context=social_context,
                 )
+                # --- Dynamic behaviour system: apply if LLM didn't change ---
+                _dyn_result = transient_thought.get("dynamic_result") if isinstance(transient_thought, dict) else None
+                if _dyn_result and not changed and _dyn_result.get("changed"):
+                    activity = _dyn_result["activity"]
+                    change_reason = _dyn_result.get("reason", "动态行为系统触发")
+                    changed = True
+                # Apply mood delta from dynamic system
+                if _dyn_result and _dyn_result.get("mood_delta"):
+                    _mood_d = float(_dyn_result["mood_delta"])
+                    state = agent.get("state", {})
+                    state["emotion"] = max(0.0, min(1.0, float(state.get("emotion", 0.5)) + _mood_d))
+                # Apply schedule insertion from dynamic system
+                if _dyn_result and _dyn_result.get("schedule_insert") and changed:
+                    _si = _dyn_result["schedule_insert"]
+                    _sched_tuples = [(s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else s
+                                     for s in schedule_map.get(agent_id, [])]
+                    _new_sched = dynamic_insert_activity(
+                        _sched_tuples,
+                        _si["insert_time"],
+                        _si["activity"],
+                        duration_minutes=_si.get("duration_minutes", 30),
+                        resumable=True,
+                        original_activity=_si.get("original_activity", scheduled_activity),
+                    )
+                    # Convert back to schedule format used by the simulator
+                    schedule_map[agent_id] = [{"time": t, "activity": a} for t, a in _new_sched]
+                # Log social encounters from dynamic system
+                if _dyn_result and _dyn_result.get("social_encounters"):
+                    for _enc in _dyn_result["social_encounters"]:
+                        _LOG.debug("agent_%s social_encounter: %s", agent_id, _enc.get("activity", ""))
+
                 activity = step_ctx.get("activity", activity)
                 if activity != scheduled_activity and not changed:
                     changed = True

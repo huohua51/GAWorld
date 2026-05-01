@@ -353,6 +353,12 @@ CONFIG = {
             },
         },
     },
+    # Dynamic behaviour system — makes agent daily schedules feel human
+    # by injecting spontaneous urges, social encounters, need-based
+    # interrupts, and environment-triggered activity changes.
+    "dynamic_behavior": {
+        "enabled": True,
+    },
     # Economy module – realistic personal finance with tax, social insurance,
     # Engel-coefficient spending, investment, and macro-economic cycles.
     "economy": {

@@ -55,6 +55,7 @@ Across days, the simulator accumulates:
 - PolicySim-inspired recommendation / exposure intervention metrics
 - Realistic personal economy simulation (tax, social insurance, investment, macro cycles)
 - Realistic location system with category-based spatial matching, transport cost calculation, rush-hour and weather effects, and commute memory
+- Dynamic behavior system: mood-driven spontaneous urges, social encounter chains, need-based interrupts, environment event cascades, and commitment-aware schedule interruption
 - City map generation and route playback
 - Visualization trace export
 - Agent interview CLI
@@ -70,6 +71,7 @@ Across days, the simulator accumulates:
 - `intervention_policy.py`: lightweight recommendation, exposure control, stance, and risk metrics
 - `human_realism.py`: realism helpers, intentions, habits, memory consolidation
 - `economy_module.py`: realistic personal finance layer (tax, social insurance, Engel spending, investment, macro cycles)
+- `dynamic_behavior.py`: dynamic behavior system (spontaneous urges, social chains, need interrupts, environment responses, schedule insertion)
 - `memory_store.py`: memory persistence and vector DB helpers
 - `city_map_system.py`: graph, routes, travel, and tile map generation
 - `simulation_visualizer.py`: trace writer for playback
@@ -239,6 +241,7 @@ Important fields:
 - `memory_dir`, `log_dir`, `vector_db_path`: persistence locations
 - `visualization.output_dir`: trace output folder
 - `economy`: personal finance settings (tax brackets, social insurance rates, Engel curve, investment, macro cycle, shocks)
+- `dynamic_behavior`: dynamic behavior system settings (enabled flag)
 - `intervention`: lightweight recommendation / exposure control and evaluation settings
 - `policy_events`: scheduled policy shocks
 - `distributed`: multi-machine communication settings
@@ -340,6 +343,52 @@ into location decisions — agents develop habitual patterns and prefer familiar
 Different area categories carry price-level multipliers (commerce 1.35×, industry
 0.80×, education 0.85×, etc.) that influence spending behavior when agents are in
 those areas.
+
+### Dynamic Behavior System
+
+`dynamic_behavior.py` makes agent daily routines feel more human by injecting
+context-aware schedule changes. The system is opt-in via `CONFIG["dynamic_behavior"]["enabled"]`
+and runs once per agent per time-step, before the LLM-based activity adjustment.
+
+**Commitment-Aware Interruption**
+
+Every activity carries a commitment level (0.95 for exams and surgery, 0.70 for work, 0.15 for
+browsing the phone). Interrupt candidates must overcome this commitment barrier plus a
+personality-dependent threshold (self-control, risk preference) to change the scheduled activity.
+Even net-positive interrupts pass through a stochastic acceptance gate.
+
+**Mood-Driven Spontaneous Urges**
+
+The agent's emotional state is classified into one of six mood categories (happy, stressed, tired,
+bored, anxious, lonely). Each mood maps to a pool of context-appropriate urges — a stressed agent
+might want to take a walk alone, while a bored agent might pick up their phone. Time-of-day
+filters prevent unrealistic urges (no shopping at midnight), and personality scaling adjusts
+probabilities (extroverts get more social urges).
+
+**Social Encounter Chains**
+
+When agents share the same location, encounter probability is computed from relationship closeness
+and social need. Close friends may invite each other for meals (time-aware: lunch vs dinner),
+acquaintances exchange brief greetings, and strangers may exhibit behaviour contagion — joining a
+queue or watching a street event.
+
+**Environment Event Cascades**
+
+Weather, traffic, commercial, news, and emergency events are classified and converted into
+interrupt candidates with personality-differentiated priority. Primary events can trigger cascade
+chains: rain leads to taxi queues and slippery roads, traffic congestion leads to potential
+lateness and mood drops. Cascade events fire probabilistically and accumulate mood effects.
+
+**Need-Based Interrupts**
+
+Physiological needs (hunger, fatigue) and task pressure generate interrupt candidates. Hunger
+interrupts receive a bonus near meal times. Low energy triggers rest urges. High time pressure
+pushes agents to handle urgent tasks.
+
+**Schedule Insertion**
+
+When an interrupt wins, the system can insert the new activity into the schedule with resumable
+support — the original activity resumes after the interruption if there's room in the schedule.
 
 ### LLM Backends
 

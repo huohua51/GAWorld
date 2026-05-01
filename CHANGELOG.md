@@ -4,9 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — 2026-04-29 — Economy module overhaul + Location system refactor
+## [Unreleased] — 2026-05-01 — Economy + Location + Dynamic Behavior
 
 ### Added
+
+- **`dynamic_behavior.py` — dynamic behavior system** (new module, ~550 lines)
+  - **InterruptEngine**: priority queue of potential schedule interruptions. Each candidate is scored against the current activity's commitment level (0.95 for exams/surgery down to 0.05 for personal time). Personality-dependent threshold with stochastic acceptance gate.
+  - **SpontaneityEngine**: mood-classified urge pools (happy/stressed/tired/bored/anxious/lonely), each with 4 context-aware activities. Time-of-day filtering (no shopping at 23:00), personality scaling (extroverts more social urges, introverts more solitary), duration estimation by activity type.
+  - **Need-based interrupts**: hunger (with meal-time bonus), fatigue/energy recovery, time-pressure urgency. Ported and improved from the old `maybe_generate_transient_thought` inline logic.
+  - **Inbox/social-message triggers**: detects unread messages and social pings via keyword matching, produces interrupt candidates weighted by social need.
+  - **SocialChainResolver**: co-location detection (same node, excluding in-transit agents), relationship-closeness-based encounter probability, three interaction types — invitation (close friends, meal-time aware), brief chat (acquaintances), behaviour contagion (strangers doing interesting things).
+  - **EnvironmentResponsePipeline**: event classification (weather/traffic/commercial/news/emergency → sub-types), personality-differentiated response modifiers (cautious +30% weather sensitivity, curious +40% commercial interest), severity-scaled priority.
+  - **Event cascade chains**: knock-on effects (rain → taxi queues + slippery roads, storm → transit delays + delivery delays, congestion → possible lateness + mood drop, fire → road closures + building evacuation). Probability-gated secondary interrupts.
+  - **Schedule insertion**: insert new activities into `(time, activity)` tuple schedules with resumable support — interrupted activities resume after the insertion's duration if there's room.
+  - **`evaluate_step_dynamics()`**: single entry point running all six sub-engines per agent per time-step. Returns final activity, change reason, interrupt details, social encounters, cumulative mood delta, schedule insertion info, candidate count, and cascade events.
+  - **`dynamic_transient_thought()`**: bridge function matching the old `maybe_generate_transient_thought` return format while using the new engines internally.
+  - 55 unit tests covering commitment levels, interrupt evaluation, spontaneous urges, need-based interrupts, inbox triggers, co-location detection, social encounters, environment responses, cascades, schedule insertion, full pipeline, and bridge API.
+
+- **`generative_city_sim.py`** — dynamic behavior integration
+  - Main simulation loop now calls `dynamic_transient_thought()` (when `CONFIG["dynamic_behavior"]["enabled"]` is true) instead of the old `maybe_generate_transient_thought()`, with fallback to the legacy path.
+  - If the dynamic system decides on an activity change but the LLM-based `maybe_adjust_activity()` doesn't, the dynamic system's decision is used as a fallback.
+  - Mood deltas from the dynamic system are applied to agent state after each step.
+  - Schedule insertions from the dynamic system are applied with resumable support.
+  - Social encounters are logged at DEBUG level.
+
+- **`config.py`** — new `dynamic_behavior` section with `enabled` flag.
 
 - **`economy_module.py` — realistic personal finance simulation** (major refactor)
   - **Tax & social insurance**: China 7-bracket progressive income tax (3%–45%), monthly exemption 5,000 CNY with configurable special deductions. Social insurance: pension 8%, medical 2%, unemployment 0.5%, housing fund 8% (+ employer match), with base salary floor/cap.
