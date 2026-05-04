@@ -1,9 +1,17 @@
 {
   "llm": {
     "routing": {
-      "default": "minimax",
+      "default": "ollama_qwen",
       "tasks": {
-        "schedule": "minimax"
+        "schedule": "ollama_qwen"
+      }
+    },
+    "providers": {
+      "ollama_qwen": {
+        "type": "ollama",
+        "url": "http://localhost:11434/api/generate",
+        "model": "qwen3:4b-instruct-2507-q4_K_M",
+        "timeout": 600
       }
     }
   },
