@@ -19,9 +19,74 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
-from gaworld.logging_setup import get_logger
+from gaworld.logging_setup import get_logger, LOG_MODE
 
 _LOG = get_logger("gaworld.sim")
+
+# ---------------------------------------------------------------------------
+# Log-mode helpers
+# ---------------------------------------------------------------------------
+_LOG_SIMPLE: bool = LOG_MODE == "simple"
+
+
+def _clean_env_context(env_text: str, max_chars: int = 80) -> str:
+    """Strip static background and intervention text; return dynamic events only.
+
+    The env context string is structured as:
+      背景：<static>  当前环境事件：<dynamic>  平台干预推荐：<intervention>
+
+    In simple mode we only want the dynamic part, and skip it entirely when
+    it only contains the boilerplate "今日外部环境总体平稳" phrase.
+    """
+    if not env_text:
+        return ""
+    # Drop platform intervention section (verbose, repeated, often truncated).
+    for marker in ("平台干预推荐：", "\n平台干预推荐"):
+        idx = env_text.find(marker)
+        if idx != -1:
+            env_text = env_text[:idx]
+    env_text = env_text.strip()
+    # Keep only the part after "当前环境事件：".
+    dyn_marker = "当前环境事件："
+    idx = env_text.find(dyn_marker)
+    if idx != -1:
+        env_text = env_text[idx + len(dyn_marker):].strip()
+    # Skip uninformative boilerplate.
+    if not env_text or "今日外部环境总体平稳" in env_text:
+        return ""
+    if len(env_text) > max_chars:
+        env_text = env_text[:max_chars].rstrip() + "…"
+    return env_text
+
+
+def _clean_reflection(text: str, max_chars: int = 160) -> str:
+    """Return a clean Chinese reflection, stripping LLM reasoning leakage.
+
+    Some LLM backends prepend English chain-of-thought ("The user says: …")
+    before the actual Chinese answer.  When detected, we try to extract only
+    the structured Chinese key-value pairs (感受/教训/后续倾向).
+    """
+    if not text:
+        return text
+    # Measure English-character ratio.
+    ascii_alpha = sum(1 for c in text if c.isascii() and c.isalpha())
+    if ascii_alpha / max(len(text), 1) < 0.10:
+        # Looks clean — just truncate.
+        return text[:max_chars] + ("…" if len(text) > max_chars else "")
+    # Extract structured Chinese parts, skipping polluted 结果 field.
+    parts: list[str] = []
+    for key in ("感受", "教训", "后续倾向"):
+        m = re.search(rf"{key}[：:]\s*([^；\n]+)", text)
+        if not m:
+            continue
+        val = m.group(1).strip()
+        val_ascii = sum(1 for c in val if c.isascii() and c.isalpha())
+        if val_ascii / max(len(val), 1) < 0.30:
+            parts.append(f"{key}：{val}")
+    if parts:
+        return "；".join(parts)
+    # Fallback: truncate original.
+    return text[:max_chars] + ("…" if len(text) > max_chars else "")
 
 from city_map_system import (
     all_locations as city_all_locations,
@@ -30,11 +95,24 @@ from city_map_system import (
     load_city_map_text as load_structured_city_map_text,
     node_by_name as city_node_by_name,
     travel_plan as build_travel_plan,
+    nearest_by_category,
+    nodes_by_category,
+    resolve_best_location,
+    activity_to_categories,
+    job_to_workplace_categories,
+    area_price_level,
+    calc_transport_cost,
+    is_rush_hour,
 )
 from distributed_comm import (
     DistributedRelayClient,
     extract_sender_agent_ids,
     format_inbox_context,
+)
+from dynamic_behavior import (
+    dynamic_transient_thought,
+    evaluate_step_dynamics,
+    insert_activity_into_schedule as dynamic_insert_activity,
 )
 from extensibility import HookBus
 from environment import EnvironmentSystem, RemoteEnvironmentClient
@@ -1817,54 +1895,67 @@ def _pick_first_available(candidates, location_set):
             return c
     return None
 
-def _infer_workplace(agent, location_set):
-    profile_blob = " ".join([
-        agent.get("job", ""),
-        agent.get("personality", ""),
-        agent.get("daily_life", ""),
-        agent.get("values", "")
-    ])
+def _infer_workplace(agent, city_map, home_node=None):
+    """Infer the agent's workplace using category-based spatial matching.
+
+    Uses the agent's job profile to determine workplace categories, then
+    finds the nearest matching node from the city map.  Falls back to the
+    legacy hardcoded lookup when the map-based search yields nothing.
+    """
+    location_set = set(_all_locations(city_map))
+    job_str = agent.get("job", "")
+    categories = job_to_workplace_categories(job_str)
+
+    # Also check profile blob for Chinese keywords → categories
+    profile_blob = " ".join([job_str, agent.get("personality", ""),
+                             agent.get("daily_life", ""), agent.get("values", "")])
     if any(k in profile_blob for k in ["学生", "硕士", "博士", "学校", "上课", "老师", "教师", "教育"]):
-        return _pick_first_available(
-            ["Riverside Middle School", "Riverside Primary School", "Little River Daycare"],
-            location_set
-        )
+        categories = list(dict.fromkeys(["education"] + categories))
     if any(k in profile_blob for k in ["医院", "医生", "护士", "医疗", "诊所"]):
-        return _pick_first_available(
-            ["Riverside Community Hospital", "Northside Family Clinic"],
-            location_set
-        )
-    if any(k in profile_blob for k in ["研发", "工程", "技术", "程序", "互联网", "算法", "产品", "数据"]):
-        return _pick_first_available(
-            ["Hangzhou Tech Labs", "RnD Center", "Admin Office"],
-            location_set
-        )
-    if any(k in profile_blob for k in ["银行", "金融", "证券", "财务"]):
-        return _pick_first_available(
-            ["Riverside Bank Branch"],
-            location_set
-        )
-    if any(k in profile_blob for k in ["物流", "仓储", "配送", "快递"]):
-        return _pick_first_available(
-            ["Riverside Logistics", "Warehouse A", "Warehouse B"],
-            location_set
-        )
-    if any(k in profile_blob for k in ["设计", "工作室"]):
-        return _pick_first_available(
-            ["Willow Design Studio"],
-            location_set
-        )
+        categories = list(dict.fromkeys(["medical"] + categories))
     if any(k in profile_blob for k in ["警察", "公安", "消防"]):
-        return _pick_first_available(
-            ["Riverside Police Station", "Riverside Fire Station"],
-            location_set
-        )
+        categories = list(dict.fromkeys(["government"] + categories))
+
+    if not categories:
+        categories = ["commerce", "industry"]
+
+    # Search from home or a central location
+    origin = home_node or "Central Block"
+    candidates = resolve_best_location(city_map, origin, categories, top_k=3,
+                                       max_radius_km=20.0)
+    if candidates:
+        # Pick the closest one that is in the location set
+        for node_id, _dist in candidates:
+            if node_id in location_set:
+                return node_id
+        # If slug mismatch, still return the first candidate
+        return candidates[0][0]
+
+    # Fallback: legacy hardcoded names
     return _pick_first_available(
         ["C-01 (Village Center)", "Riverside Night Market", "Market St"],
         location_set
     )
 
-def _infer_home(agent, location_set):
+def _infer_home(agent, city_map):
+    """Infer the agent's home using category-based spatial matching.
+
+    Picks a residential node, preferring those near the city centre.
+    Falls back to legacy hardcoded names then random selection.
+    """
+    location_set = set(_all_locations(city_map))
+    residential = resolve_best_location(city_map, "Central Block",
+                                        ["residential"], top_k=10,
+                                        max_radius_km=30.0)
+    if residential:
+        # Introduce mild randomness so not all agents live in the same block
+        pool = residential[:min(5, len(residential))]
+        node_id, _ = random.choice(pool)
+        if node_id in location_set:
+            return node_id
+        return residential[0][0]
+
+    # Fallback
     candidates = ["Central Block", "North Block", "South Block"]
     home = _pick_first_available(candidates, location_set)
     if home:
@@ -1872,9 +1963,8 @@ def _infer_home(agent, location_set):
     return random.choice(list(location_set)) if location_set else "Home"
 
 def assign_agent_locations(agent, city_map):
-    location_set = set(_all_locations(city_map))
-    home = _infer_home(agent, location_set)
-    workplace = _infer_workplace(agent, location_set) or home
+    home = _infer_home(agent, city_map)
+    workplace = _infer_workplace(agent, city_map, home_node=home) or home
     return {
         "home": home,
         "workplace": workplace,
@@ -1885,8 +1975,54 @@ def assign_agent_locations(agent, city_map):
         "travel_minutes": 0,
         "travel_progress": 1.0,
         "travel_route": [home],
+        "travel_cost": 0.0,
+        "rush_hour": False,
         "arrival_time": "",
+        # Commute memory: tracks frequent places and preferred transport modes
+        "frequent_places": {},      # {location_id: visit_count}
+        "preferred_modes": {},      # {mode: use_count}
+        "commute_route": {          # primary commute (home <-> work)
+            "mode": "",
+            "distance_km": 0.0,
+            "avg_minutes": 0,
+            "trip_count": 0,
+        },
+        "daily_travel_cost": 0.0,   # accumulated cost for the current day
     }
+
+
+def _update_commute_memory(agent, destination, mode, travel_cost):
+    """Update the agent's commute memory after a completed trip."""
+    locs = agent.get("locations", {})
+
+    # Update frequent places
+    freq = locs.setdefault("frequent_places", {})
+    freq[destination] = freq.get(destination, 0) + 1
+
+    # Update preferred modes
+    modes = locs.setdefault("preferred_modes", {})
+    if mode:
+        modes[mode] = modes.get(mode, 0) + 1
+
+    # Update daily travel cost
+    locs["daily_travel_cost"] = locs.get("daily_travel_cost", 0.0) + travel_cost
+
+    # Update commute route stats if this is a home<->work trip
+    home = locs.get("home", "")
+    work = locs.get("workplace", "")
+    current = locs.get("current", "")
+    is_commute = ((current == home and destination == work) or
+                  (current == work and destination == home))
+    if is_commute and mode:
+        cr = locs.setdefault("commute_route", {})
+        prev_count = cr.get("trip_count", 0)
+        prev_avg = cr.get("avg_minutes", 0)
+        new_mins = locs.get("travel_minutes", 0)
+        cr["mode"] = mode
+        cr["distance_km"] = locs.get("travel_distance_km", 0.0)
+        cr["avg_minutes"] = round(
+            (prev_avg * prev_count + new_mins) / (prev_count + 1), 1)
+        cr["trip_count"] = prev_count + 1
 
 def init_agent_locations(agent, city_map):
     cached_locations = load_agent_locations(agent["id"]) if STATEFUL else {}
@@ -1918,14 +2054,16 @@ def persist_agent_locations_if_changed(agent):
     return True
 
 def resolve_location(agent, activity, time_str, city_map):
+    """Resolve where an agent should go for a given activity.
+
+    Uses category-based spatial matching from city_map_system instead of
+    hardcoded location names, combined with time-of-day bias and agent
+    profile to produce a weighted choice.
+    """
     location_set = set(_all_locations(city_map))
     home = agent["locations"].get("home", "Home")
     work = agent["locations"].get("workplace", home)
     current = agent["locations"].get("current", home)
-
-    def pick_any(candidates):
-        choice = _pick_first_available(candidates, location_set)
-        return choice or home
 
     def _time_to_minutes(t):
         if not re.match(r"^\d{2}:\d{2}$", str(t)):
@@ -1935,10 +2073,8 @@ def resolve_location(agent, activity, time_str, city_map):
 
     def _profile_flags(a):
         profile_blob = " ".join([
-            a.get("job", ""),
-            a.get("personality", ""),
-            a.get("daily_life", ""),
-            a.get("values", ""),
+            a.get("job", ""), a.get("personality", ""),
+            a.get("daily_life", ""), a.get("values", ""),
             a.get("work_style", ""),
         ])
         is_student = any(k in profile_blob for k in ["学生", "硕士", "博士", "课题组", "上课", "学习"])
@@ -1948,9 +2084,18 @@ def resolve_location(agent, activity, time_str, city_map):
         return is_student, is_retired, late_schedule, overtime
 
     def _public_pool():
-        keywords = ["Park", "Cinema", "Market", "Library", "Community", "Center", "Riverwalk",
-                    "Grove", "Playground", "Fitness", "Picnic", "Pocket", "Night Market"]
-        pool = [loc for loc in location_set if any(k in loc for k in keywords)]
+        """Build a pool of public / leisure places using category matching."""
+        cats = ["leisure", "commerce"]
+        candidates = resolve_best_location(city_map, current, cats,
+                                           top_k=12, max_radius_km=15.0)
+        pool = [nid for nid, _d in candidates if nid in location_set]
+        if not pool:
+            # Fallback: keyword scan (legacy)
+            keywords = ["Park", "Cinema", "Market", "Library", "Community",
+                        "Center", "Riverwalk", "Grove", "Playground",
+                        "Fitness", "Picnic", "Pocket", "Night Market"]
+            pool = [loc for loc in location_set
+                    if any(k in loc for k in keywords)]
         if not pool:
             pool = [loc for loc in location_set if loc not in {home, work}]
         return pool
@@ -2007,23 +2152,33 @@ def resolve_location(agent, activity, time_str, city_map):
             return
         weights[loc] = weights.get(loc, 0) + w
 
+    # ----- Commute shortcut -----
     if any(k in activity for k in ["通勤"]):
-        return pick_any(["Riverside Bus Station", "Riverside Ave", "Bridge Rd", "Market St"])
+        transit_nodes = resolve_best_location(city_map, current, ["transit"],
+                                              top_k=3, max_radius_km=10.0)
+        for nid, _d in transit_nodes:
+            if nid in location_set:
+                return nid
+        return _pick_first_available(
+            ["Riverside Bus Station", "Market St"], location_set) or home
 
+    # ----- Category-based activity matching -----
+    activity_categories = activity_to_categories(activity)
     activity_candidates = []
+
     if any(k in activity for k in ["工作", "上班", "加班"]):
         activity_candidates.append(work)
-    if any(k in activity for k in ["学习", "上课", "实验"]):
-        activity_candidates += ["Riverside Middle School", "Riverside Primary School", "Hangzhou Tech Labs"]
-    if any(k in activity for k in ["看病", "医院", "诊所"]):
-        activity_candidates += ["Riverside Community Hospital", "Northside Family Clinic", "Willow Pharmacy"]
-    if any(k in activity for k in ["晨练", "散步", "运动", "健身", "锻炼"]):
-        activity_candidates += ["Riverside Park", "Willow Grove Park", "Fitness Area", "Playground"]
-    if any(k in activity for k in ["买菜", "购物", "市场"]):
-        activity_candidates += ["Market St", "Riverside Supermart", "Riverside Night Market", "Corner Mart"]
-    if any(k in activity for k in ["电影", "娱乐", "休闲"]):
-        activity_candidates += ["Riverside Cinema", "Riverside Park"]
 
+    # Use category-based resolution for activity-derived categories
+    if activity_categories:
+        cat_results = resolve_best_location(city_map, current,
+                                            activity_categories,
+                                            top_k=5, max_radius_km=15.0)
+        for nid, _d in cat_results:
+            if nid in location_set and nid not in activity_candidates:
+                activity_candidates.append(nid)
+
+    # ----- Build weighted choice -----
     weights = {}
     bias = _time_bias()
     _add_weight(weights, home, bias["home"])
@@ -2038,15 +2193,28 @@ def resolve_location(agent, activity, time_str, city_map):
     for loc in activity_candidates:
         _add_weight(weights, loc, 1.2)
 
+    # Meal-time bonus for commerce/food locations
     if any(k in activity for k in ["午饭", "晚饭", "吃饭"]):
-        if time_str <= "10:30":
+        if time_str and time_str <= "10:30":
             _add_weight(weights, home, 0.6)
-        _add_weight(weights, "Market St", 0.8)
-        _add_weight(weights, "Riverside Night Market", 0.8)
-        _add_weight(weights, "Riverside Supermart", 0.6)
+        food_places = resolve_best_location(city_map, current,
+                                            ["commerce"], top_k=3,
+                                            max_radius_km=5.0)
+        for nid, _d in food_places:
+            _add_weight(weights, nid, 0.8)
 
+    # Home-centric activities
     if any(k in activity for k in ["吃早饭", "睡前", "午休", "休息", "个人时间"]):
         _add_weight(weights, home, 0.8)
+
+    # Habitual bonus: boost locations the agent visits frequently
+    freq_places = agent.get("locations", {}).get("frequent_places", {})
+    if freq_places:
+        max_visits = max(freq_places.values()) or 1
+        for loc, count in freq_places.items():
+            if loc in weights:
+                habit_bonus = 0.15 * (count / max_visits)
+                _add_weight(weights, loc, habit_bonus)
 
     choice = _weighted_pick(weights)
     return choice or home
@@ -2085,18 +2253,25 @@ def _update_transit_progress(agent, current_minutes):
     start_minutes = _time_str_to_minutes(locations.get("depart_time", ""))
     if start_minutes is None:
         start_minutes = current_minutes
-    if arrival_minutes is None:
+
+    def _complete_transit():
         locations["in_transit"] = False
-        locations["current"] = locations.get("destination", locations.get("current", ""))
+        dest = locations.get("destination", locations.get("current", ""))
+        locations["current"] = dest
         locations["travel_progress"] = 1.0
+        _update_commute_memory(
+            agent, dest,
+            locations.get("transport_mode", ""),
+            float(locations.get("travel_cost", 0.0) or 0.0))
+
+    if arrival_minutes is None:
+        _complete_transit()
         return True
     elapsed = current_minutes - start_minutes
     if elapsed < 0:
         elapsed += 24 * 60
     if current_minutes == arrival_minutes or elapsed >= travel_minutes:
-        locations["in_transit"] = False
-        locations["current"] = locations.get("destination", locations.get("current", ""))
-        locations["travel_progress"] = 1.0
+        _complete_transit()
         return True
     locations["travel_progress"] = max(0.0, min(0.99, elapsed / float(travel_minutes)))
     return False
@@ -2150,14 +2325,21 @@ def move_agent(agent, desired_location, activity, time_str, step_minutes, city_m
             "just_arrived": False,
         }
 
-    travel = build_travel_plan(agent, city_map, origin, target, activity=activity)
+    # Pass time_str for rush-hour detection; weather from environment if available
+    _weather = agent.get("_env_weather", None)
+    travel = build_travel_plan(agent, city_map, origin, target, activity=activity,
+                               time_str=time_str, weather=_weather)
     travel_minutes = max(1, int(travel.get("travel_minutes", 1) or 1))
     arrival_minutes = (current_minutes + travel_minutes) % (24 * 60)
     arrival_time = _minutes_to_time_str(arrival_minutes)
+    travel_cost = float(travel.get("travel_cost", 0.0) or 0.0)
+    is_rush = travel.get("rush_hour", False)
     locations["destination"] = target
     locations["transport_mode"] = travel.get("mode", "")
     locations["travel_minutes"] = travel_minutes
     locations["travel_distance_km"] = float(travel.get("distance_km", 0.0) or 0.0)
+    locations["travel_cost"] = travel_cost
+    locations["rush_hour"] = is_rush
     locations["travel_route"] = travel.get("route", [origin, target])
     locations["depart_time"] = time_str
     locations["arrival_time"] = arrival_time
@@ -2166,6 +2348,7 @@ def move_agent(agent, desired_location, activity, time_str, step_minutes, city_m
         locations["current"] = target
         locations["in_transit"] = False
         locations["travel_progress"] = 1.0
+        _update_commute_memory(agent, target, travel.get("mode", ""), travel_cost)
         return {
             "display_location": target,
             "resolved_location": target,
@@ -2176,6 +2359,8 @@ def move_agent(agent, desired_location, activity, time_str, step_minutes, city_m
                 "minutes": travel_minutes,
                 "progress": 1.0,
                 "route": travel.get("route", [origin, target]),
+                "cost": travel_cost,
+                "rush_hour": is_rush,
                 "status": "arrived",
             },
             "just_arrived": True,
@@ -2193,6 +2378,8 @@ def move_agent(agent, desired_location, activity, time_str, step_minutes, city_m
             "minutes": travel_minutes,
             "progress": float(locations["travel_progress"]),
             "route": travel.get("route", [origin, target]),
+            "cost": travel_cost,
+            "rush_hour": is_rush,
             "status": "departed",
         },
         "just_arrived": False,
@@ -5537,6 +5724,9 @@ def run_simulation():
         for agent in agents:
             daily_logs[agent["id"]] += day_header
             append_agent_log(agent, day_header)
+            # Reset daily travel cost counter
+            if "locations" in agent:
+                agent["locations"]["daily_travel_cost"] = 0.0
         hook_bus.emit(
             "on_day_start",
             day=day,
@@ -5751,16 +5941,33 @@ def run_simulation():
                         step_ctx["intervention_feed"] = intervention_feed
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
-                transient_thought = maybe_generate_transient_thought(
-                    agent,
-                    time_str,
-                    scheduled_activity,
-                    perc,
-                    env_events=agent_env_events,
-                    policy_desc=policy_desc,
-                    social_context=social_context,
-                    inbox_messages=inbox_messages,
-                )
+                # --- Dynamic behaviour system (replaces old transient thought) ---
+                _use_dynamic = CONFIG.get("dynamic_behavior", {}).get("enabled", True)
+                if _use_dynamic:
+                    transient_thought = dynamic_transient_thought(
+                        agent,
+                        time_str,
+                        scheduled_activity,
+                        perception_text=perc,
+                        env_events=agent_env_events,
+                        policy_desc=policy_desc,
+                        social_context=social_context,
+                        inbox_messages=inbox_messages,
+                        all_agents=agents,
+                        agents_by_id=agents_by_id,
+                        config=CONFIG,
+                    )
+                else:
+                    transient_thought = maybe_generate_transient_thought(
+                        agent,
+                        time_str,
+                        scheduled_activity,
+                        perc,
+                        env_events=agent_env_events,
+                        policy_desc=policy_desc,
+                        social_context=social_context,
+                        inbox_messages=inbox_messages,
+                    )
                 step_recollections = []
                 plan_commitment = _activity_commitment_level(scheduled_activity)
                 plan_prefetch_refs = _build_decision_reference_bundle(
@@ -5809,6 +6016,37 @@ def run_simulation():
                     transient_thought=transient_thought,
                     social_context=social_context,
                 )
+                # --- Dynamic behaviour system: apply if LLM didn't change ---
+                _dyn_result = transient_thought.get("dynamic_result") if isinstance(transient_thought, dict) else None
+                if _dyn_result and not changed and _dyn_result.get("changed"):
+                    activity = _dyn_result["activity"]
+                    change_reason = _dyn_result.get("reason", "动态行为系统触发")
+                    changed = True
+                # Apply mood delta from dynamic system
+                if _dyn_result and _dyn_result.get("mood_delta"):
+                    _mood_d = float(_dyn_result["mood_delta"])
+                    state = agent.get("state", {})
+                    state["emotion"] = max(0.0, min(1.0, float(state.get("emotion", 0.5)) + _mood_d))
+                # Apply schedule insertion from dynamic system
+                if _dyn_result and _dyn_result.get("schedule_insert") and changed:
+                    _si = _dyn_result["schedule_insert"]
+                    _sched_tuples = [(s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else s
+                                     for s in schedule_map.get(agent_id, [])]
+                    _new_sched = dynamic_insert_activity(
+                        _sched_tuples,
+                        _si["insert_time"],
+                        _si["activity"],
+                        duration_minutes=_si.get("duration_minutes", 30),
+                        resumable=True,
+                        original_activity=_si.get("original_activity", scheduled_activity),
+                    )
+                    # Convert back to schedule format used by the simulator
+                    schedule_map[agent_id] = [{"time": t, "activity": a} for t, a in _new_sched]
+                # Log social encounters from dynamic system
+                if _dyn_result and _dyn_result.get("social_encounters"):
+                    for _enc in _dyn_result["social_encounters"]:
+                        _LOG.debug("agent_%s social_encounter: %s", agent_id, _enc.get("activity", ""))
+
                 activity = step_ctx.get("activity", activity)
                 if activity != scheduled_activity and not changed:
                     changed = True
@@ -6128,10 +6366,16 @@ def run_simulation():
                 for metric in state_history[agent["id"]]:
                     state_history[agent["id"]][metric].append(agent["state"][metric])
 
-                routine_line = ""
+                # --- activity header (fold RoutineChange into one line) ---
                 if changed:
                     reason_text = change_reason or "临时改变"
+                    _activity_header = f"{scheduled_activity} → {effective_activity} ({reason_text})"
                     routine_line = f"RoutineChange: {scheduled_activity} -> {effective_activity} ({reason_text})\n"
+                else:
+                    _activity_header = scheduled_activity
+                    routine_line = ""
+
+                # --- optional lines (only rendered when non-empty) ---
                 recall_line = ""
                 unique_recollections = []
                 for item in step_recollections:
@@ -6142,45 +6386,72 @@ def run_simulation():
                     recall_line = f"Recall: {' | '.join(unique_recollections)}\n"
                 transient_thought_line = ""
                 if transient_thought:
-                    transient_thought_line = f"TransientThought: {format_transient_thought(transient_thought)}\n"
-                memory_review_line = f"MemoryReview: {memory_review}\n" if memory_review else ""
+                    transient_thought_line = f"Thought: {format_transient_thought(transient_thought)}\n"
+                memory_review_line = f"Review: {memory_review}\n" if memory_review else ""
                 decision_line = ""
                 if action_meta.get("decision_driver"):
                     decision_line = (
-                        f"DecisionDriver: {action_meta.get('decision_driver')} "
-                        f"(commitment={action_meta.get('commitment_level', '')})\n"
+                        f"Driver: {action_meta.get('decision_driver')} "
+                        f"(commit={action_meta.get('commitment_level', '')})\n"
                     )
                 needs_line = ""
                 if HUMAN_REALISM_ENABLED:
                     needs_line = (
                         "Needs: "
-                        f"energy={agent['state'].get('energy', 0.75):.2f} "
-                        f"hunger={agent['state'].get('hunger', 0.25):.2f} "
-                        f"social_need={agent['state'].get('social_need', 0.40):.2f} "
-                        f"fatigue_debt={agent['state'].get('fatigue_debt', 0.20):.2f} "
-                        f"self_control={agent['state'].get('self_control', 0.60):.2f} "
-                        f"time_pressure={agent['state'].get('time_pressure', 0.25):.2f}\n"
+                        f"nrg={agent['state'].get('energy', 0.75):.2f} "
+                        f"hun={agent['state'].get('hunger', 0.25):.2f} "
+                        f"soc={agent['state'].get('social_need', 0.40):.2f} "
+                        f"fat={agent['state'].get('fatigue_debt', 0.20):.2f} "
+                        f"ctrl={agent['state'].get('self_control', 0.60):.2f} "
+                        f"tprs={agent['state'].get('time_pressure', 0.25):.2f}\n"
                     )
 
-                log = f"""
-[{agent['name']} @ {time_str}]
-Scheduled: {scheduled_activity}
-Activity: {effective_activity}
-{routine_line}Location: {location}
-ResolvedLocation: {resolved_location}
-TargetLocation: {movement['target_location']}
-TravelMode: {travel.get('mode', 'N/A')}
-TravelDistanceKm: {travel.get('distance_km', 0.0):.2f}
-TravelMinutes: {travel.get('minutes', 0)}
-TravelStatus: {travel.get('status', 'stationary')}
-Environment: {step_env_context}
-Perception: {perc}
-Plan: {plan_text}
-{transient_thought_line}{recall_line}Action: {act}
-{decision_line}{needs_line}Outcome: {outcome}
-Reflection: {refl_text}
-{memory_review_line}
-"""
+                # --- compact location + travel (collapsed to 1 line) ---
+                _travel_status = travel.get("status", "stationary")
+                if _travel_status != "stationary":
+                    _travel_info = (
+                        f"  [{travel.get('mode', '?')} "
+                        f"{travel.get('distance_km', 0.0):.1f}km "
+                        f"{travel.get('minutes', 0)}min]"
+                    )
+                    _loc_line = f"Loc: {location} → {resolved_location}{_travel_info}\n"
+                else:
+                    _travel_info = ""
+                    _loc_line = f"Loc: {resolved_location}\n"
+
+                # --- env context (omitted when empty) ---
+                _env_line = f"Env: {step_env_context}\n" if step_env_context else ""
+
+                # -------------------------------------------------------
+                # Simple mode: one clean block per tick, Chinese-only,
+                # stripping LLM reasoning leakage and repeated boilerplate.
+                # Verbose mode: full details for debugging.
+                # -------------------------------------------------------
+                if _LOG_SIMPLE:
+                    _env_simple = _clean_env_context(step_env_context)
+                    _refl_simple = _clean_reflection(refl_text)
+                    log = (
+                        f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
+                        f"Loc: {resolved_location}{_travel_info}\n"
+                        + (f"Env: {_env_simple}\n" if _env_simple else "")
+                        + f"Act: {act}\n"
+                        f"Refl: {_refl_simple}\n"
+                    )
+                else:
+                    log = (
+                        f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
+                        f"{_loc_line}"
+                        f"{_env_line}"
+                        f"Perc: {perc}\n"
+                        f"Plan: {plan_text}\n"
+                        f"{transient_thought_line}"
+                        f"{recall_line}"
+                        f"Act: {act}  |  Out: {outcome}\n"
+                        f"{decision_line}"
+                        f"{needs_line}"
+                        f"Refl: {refl_text}\n"
+                        f"{memory_review_line}"
+                    )
                 print(log)
                 daily_logs[agent["id"]] += log
                 append_agent_log(agent, log)
@@ -6241,8 +6512,8 @@ Reflection: {refl_text}
                     schedule_map=schedule_map,
                     actions=actions,
                     daily_logs=daily_logs,
-                    env_events=env_events,
-                    env_context=env_context,
+                    env_events=agent_env_events,
+                    env_context=step_env_context,
                     policy=policy,
                     step=step_ctx,
                     extension_state=extension_state,
@@ -6254,7 +6525,9 @@ Reflection: {refl_text}
                     time_str=time_str,
                     day_context=day_context,
                     env_context=env_context,
-                    env_events=env_events,
+                    env_events=list(env_events or []) + [
+                        _life_event_as_env_event(event) for event in due_life_events
+                    ],
                     agent_steps=frame_steps,
                     policy=policy or {},
                 )

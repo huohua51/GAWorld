@@ -447,7 +447,7 @@ class LLMRouter:
             try:
                 result = self.providers[provider_name].call(prompt)
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                log.info(
+                log.debug(
                     "llm.call ok id=%s provider=%s fallback_index=%d task=%s agent=%s "
                     "prompt_chars=%d completion_chars=%d latency_ms=%d",
                     call_id, provider_name, index, task or "",

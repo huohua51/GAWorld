@@ -9,6 +9,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from config import CONFIG
+from life_events import add_life_event, list_life_event_templates, list_life_events
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.dashboard")
@@ -316,6 +317,28 @@ def _latest_trace_meta():
     }
 
 
+def _current_trace_frame():
+    latest = _latest_trace_meta().get("latest", {})
+    if isinstance(latest, dict) and isinstance(latest.get("frame"), dict):
+        return latest["frame"]
+    return {}
+
+
+def _life_events_payload():
+    return {
+        "templates": list_life_event_templates(),
+        "events": list_life_events(CONFIG, include_consumed=True),
+    }
+
+
+def _add_life_event(payload):
+    event = add_life_event(payload, CONFIG, current_frame=_current_trace_frame())
+    return {
+        "event": event,
+        "events": list_life_events(CONFIG, include_consumed=True),
+    }
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     server_version = "GAWorldDashboard/0.1"
 
@@ -355,6 +378,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_run_status())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
+        if path == "/api/life-events":
+            return self._json_response(_life_events_payload())
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
@@ -370,6 +395,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_stop_simulation())
         if path == "/api/interview":
             return self._json_response(_interview_agent(payload))
+        if path == "/api/life-events":
+            return self._json_response(_add_life_event(payload))
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def do_GET(self):

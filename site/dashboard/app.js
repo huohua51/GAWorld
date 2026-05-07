@@ -2,9 +2,12 @@ const state = {
   config: null,
   agents: [],
   selectedAgentId: null,
+  lifeEventTemplates: [],
+  lifeEvents: [],
   trace: null,
   frameIndex: 0,
   pollTimer: null,
+  avatarCache: new Map(),
 };
 
 const els = {
@@ -28,6 +31,7 @@ const els = {
   timelineSlider: document.getElementById("timelineSlider"),
   timelineLabel: document.getElementById("timelineLabel"),
   latestFrameBox: document.getElementById("latestFrameBox"),
+  selectedAgentAvatar: document.getElementById("selectedAgentAvatar"),
   agentSelect: document.getElementById("agentSelect"),
   profileEditor: document.getElementById("profileEditor"),
   saveProfileBtn: document.getElementById("saveProfileBtn"),
@@ -36,6 +40,18 @@ const els = {
   interviewQuestions: document.getElementById("interviewQuestions"),
   interviewBtn: document.getElementById("interviewBtn"),
   interviewOutput: document.getElementById("interviewOutput"),
+  lifeEventTemplateSelect: document.getElementById("lifeEventTemplateSelect"),
+  lifeEventAgentInput: document.getElementById("lifeEventAgentInput"),
+  lifeEventModeSelect: document.getElementById("lifeEventModeSelect"),
+  lifeEventDayInput: document.getElementById("lifeEventDayInput"),
+  lifeEventTimeInput: document.getElementById("lifeEventTimeInput"),
+  lifeEventSeverityInput: document.getElementById("lifeEventSeverityInput"),
+  lifeEventTitleInput: document.getElementById("lifeEventTitleInput"),
+  lifeEventDescriptionInput: document.getElementById("lifeEventDescriptionInput"),
+  useSelectedAgentBtn: document.getElementById("useSelectedAgentBtn"),
+  addLifeEventBtn: document.getElementById("addLifeEventBtn"),
+  reloadLifeEventsBtn: document.getElementById("reloadLifeEventsBtn"),
+  lifeEventListBox: document.getElementById("lifeEventListBox"),
   reloadMemoryBtn: document.getElementById("reloadMemoryBtn"),
   memoryBox: document.getElementById("memoryBox"),
   stateMemoryBox: document.getElementById("stateMemoryBox"),
@@ -64,6 +80,62 @@ const tileColors = {
   "d": "#cfc9a6",
 };
 const agentColors = ["#13795b", "#b73e3e", "#385866", "#d6a81e", "#6e5f97", "#1f8a9b", "#8a5b30"];
+
+function traceAgentMap() {
+  const agents = (state.trace && Array.isArray(state.trace.agents)) ? state.trace.agents : [];
+  return new Map(agents.map((agent) => [Number(agent.id), agent]));
+}
+
+function resolveAssetPath(assetPath) {
+  const text = String(assetPath || "").trim();
+  if (!text) return "";
+  if (/^(https?:)?\/\//.test(text) || text.startsWith("data:")) return text;
+  try {
+    return new URL(text, window.location.href).href;
+  } catch (_error) {
+    return text;
+  }
+}
+
+function getAgentAvatarPath(agentId) {
+  const meta = traceAgentMap().get(Number(agentId));
+  const fallbackPath = `/output/visualization/avatars/agent_${Number(agentId || 0)}.svg`;
+  return resolveAssetPath((meta && meta.avatar_path) || fallbackPath);
+}
+
+function loadAvatar(path) {
+  const resolved = resolveAssetPath(path);
+  if (!resolved) return null;
+  if (state.avatarCache.has(resolved)) {
+    const cached = state.avatarCache.get(resolved);
+    return cached.loaded ? cached.img : null;
+  }
+  const img = new Image();
+  img.decoding = "async";
+  state.avatarCache.set(resolved, { img, loaded: false });
+  img.onload = () => {
+    const item = state.avatarCache.get(resolved);
+    if (item) item.loaded = true;
+    renderTrace();
+  };
+  img.onerror = () => {
+    state.avatarCache.delete(resolved);
+  };
+  img.src = resolved;
+  return null;
+}
+
+function renderSelectedAgentAvatar() {
+  if (!state.selectedAgentId) {
+    els.selectedAgentAvatar.removeAttribute("src");
+    els.selectedAgentAvatar.alt = "";
+    return;
+  }
+  const selected = state.agents.find((agent) => Number(agent.id) === Number(state.selectedAgentId));
+  const avatarPath = getAgentAvatarPath(state.selectedAgentId);
+  els.selectedAgentAvatar.src = avatarPath;
+  els.selectedAgentAvatar.alt = `${selected ? selected.name : `Agent ${state.selectedAgentId}`} avatar`;
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -145,6 +217,86 @@ async function loadAgents() {
     option.selected = agent.id === state.selectedAgentId;
     els.agentSelect.appendChild(option);
   });
+  renderSelectedAgentAvatar();
+}
+
+function selectedLifeEventTemplate() {
+  const key = els.lifeEventTemplateSelect.value;
+  return state.lifeEventTemplates.find((item) => item.key === key) || {};
+}
+
+function fillLifeEventTemplates() {
+  els.lifeEventTemplateSelect.innerHTML = "";
+  state.lifeEventTemplates.forEach((template) => {
+    const option = document.createElement("option");
+    option.value = template.key;
+    option.textContent = template.title || template.key;
+    els.lifeEventTemplateSelect.appendChild(option);
+  });
+  applyLifeEventTemplate();
+}
+
+function applyLifeEventTemplate() {
+  const template = selectedLifeEventTemplate();
+  if (!template.key) return;
+  if (!els.lifeEventTitleInput.value.trim()) {
+    els.lifeEventTitleInput.value = template.title || "";
+  }
+  if (!els.lifeEventDescriptionInput.value.trim()) {
+    els.lifeEventDescriptionInput.value = template.description || "";
+  }
+  els.lifeEventSeverityInput.value = template.severity == null ? 0.7 : template.severity;
+}
+
+function renderLifeEvents() {
+  const events = state.lifeEvents || [];
+  if (!events.length) {
+    els.lifeEventListBox.textContent = "暂无人生事件。";
+    return;
+  }
+  els.lifeEventListBox.textContent = events.slice().reverse().map((event) => {
+    const target = (event.agent_ids || []).length ? `#${event.agent_ids.join(",#")}` : "所有 Agent";
+    const when = event.schedule_mode === "immediate"
+      ? "下一时间步"
+      : `Day ${event.day || "?"} ${event.time || "当前时间"}`;
+    const status = event.status === "consumed"
+      ? `已触发 Day ${event.triggered_day || "?"} ${event.triggered_time || ""}`.trim()
+      : "待触发";
+    return [
+      `[${status}] ${event.title || "人生事件"}`,
+      `目标：${target} · 触发：${when} · 强度：${Number(event.severity || 0).toFixed(2)}`,
+      event.description || "",
+    ].join("\n");
+  }).join("\n\n");
+}
+
+async function loadLifeEvents() {
+  const payload = await api("/api/life-events");
+  state.lifeEventTemplates = payload.templates || [];
+  state.lifeEvents = payload.events || [];
+  if (!els.lifeEventTemplateSelect.options.length) fillLifeEventTemplates();
+  renderLifeEvents();
+}
+
+function lifeEventPayloadFromForm() {
+  return {
+    template_key: els.lifeEventTemplateSelect.value,
+    agent_ids: els.lifeEventAgentInput.value.trim(),
+    schedule_mode: els.lifeEventModeSelect.value,
+    day: els.lifeEventDayInput.value.trim(),
+    time: els.lifeEventTimeInput.value.trim(),
+    severity: Number(els.lifeEventSeverityInput.value || 0.7),
+    title: els.lifeEventTitleInput.value.trim(),
+    description: els.lifeEventDescriptionInput.value.trim(),
+  };
+}
+
+async function addLifeEvent() {
+  const payload = lifeEventPayloadFromForm();
+  const result = await api("/api/life-events", { method: "POST", body: JSON.stringify(payload) });
+  state.lifeEvents = result.events || [];
+  renderLifeEvents();
+  message("人生事件已加入队列");
 }
 
 async function loadProfile() {
@@ -224,6 +376,7 @@ function renderTrace() {
     drawEmptyMap();
     return;
   }
+  renderSelectedAgentAvatar();
   els.frameTitle.textContent = `Day ${frame.day} · ${frame.time}`;
   els.traceStatus.textContent = `${frames.length} 帧 · ${state.trace.meta && state.trace.meta.finished ? "已完成" : "写入中"}`;
   els.timelineSlider.max = String(Math.max(0, frames.length - 1));
@@ -279,12 +432,24 @@ function drawMap(frame) {
     const x = offsetX + node.tile_x * scale + scale / 2;
     const y = offsetY + node.tile_y * scale + scale / 2;
     const color = agentColors[Math.abs(Number(agent.agent_id || 0)) % agentColors.length];
-    ctx.fillStyle = color;
+    const radius = agent.agent_id === state.selectedAgentId ? 11 : 8;
+    const avatarImage = loadAvatar(getAgentAvatarPath(agent.agent_id));
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(x, y, agent.agent_id === state.selectedAgentId ? 11 : 8, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    if (avatarImage) {
+      ctx.drawImage(avatarImage, x - radius, y - radius, radius * 2, radius * 2);
+    } else {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    ctx.restore();
     ctx.strokeStyle = "#fffef9";
     ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = "#17211d";
     ctx.font = "12px Aptos";
@@ -314,6 +479,7 @@ function bindEvents() {
   els.reloadStatusBtn.addEventListener("click", () => refreshStatus().catch((error) => message(error.message, "error")));
   els.agentSelect.addEventListener("change", async () => {
     state.selectedAgentId = Number(els.agentSelect.value);
+    renderSelectedAgentAvatar();
     await loadProfile();
     await loadMemory();
     renderTrace();
@@ -324,6 +490,16 @@ function bindEvents() {
   els.interviewBtn.addEventListener("click", () => interview().catch((error) => {
     els.interviewOutput.textContent = error.message;
   }));
+  els.lifeEventTemplateSelect.addEventListener("change", () => {
+    els.lifeEventTitleInput.value = "";
+    els.lifeEventDescriptionInput.value = "";
+    applyLifeEventTemplate();
+  });
+  els.useSelectedAgentBtn.addEventListener("click", () => {
+    if (state.selectedAgentId) els.lifeEventAgentInput.value = String(state.selectedAgentId);
+  });
+  els.addLifeEventBtn.addEventListener("click", () => addLifeEvent().catch((error) => message(error.message, "error")));
+  els.reloadLifeEventsBtn.addEventListener("click", () => loadLifeEvents().catch((error) => message(error.message, "error")));
   els.timelineSlider.addEventListener("input", () => {
     state.frameIndex = Number(els.timelineSlider.value || 0);
     renderTrace();
@@ -334,6 +510,7 @@ async function init() {
   bindEvents();
   await loadConfig();
   await loadAgents();
+  await loadLifeEvents();
   await loadProfile();
   await loadMemory();
   await refreshStatus();
@@ -341,6 +518,7 @@ async function init() {
   state.pollTimer = window.setInterval(() => {
     refreshStatus().catch(() => {});
     loadTrace(false).catch(() => {});
+    loadLifeEvents().catch(() => {});
   }, 2500);
 }
 

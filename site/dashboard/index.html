@@ -81,9 +81,14 @@
       <aside class="right-stack">
         <section class="panel">
           <div class="section-head">
-            <div>
-              <p class="kicker">Agent Profile</p>
-              <h2>人物设定</h2>
+            <div class="agent-head">
+              <div class="dashboard-avatar-wrap">
+                <img id="selectedAgentAvatar" class="dashboard-avatar" alt="" />
+              </div>
+              <div>
+                <p class="kicker">Agent Profile</p>
+                <h2>人物设定</h2>
+              </div>
             </div>
             <select id="agentSelect"></select>
           </div>
@@ -107,6 +112,52 @@
             <button id="interviewBtn" class="button primary">开始采访</button>
           </div>
           <pre id="interviewOutput" class="codebox">采访结果会显示在这里。</pre>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Life Event</p>
+              <h2>人生事件</h2>
+            </div>
+            <button id="reloadLifeEventsBtn" class="button small">刷新</button>
+          </div>
+          <div class="event-grid">
+            <label>
+              <span>事件模板</span>
+              <select id="lifeEventTemplateSelect"></select>
+            </label>
+            <label>
+              <span>目标 Agent</span>
+              <input id="lifeEventAgentInput" placeholder="留空=所有，或 4,5" />
+            </label>
+            <label>
+              <span>触发方式</span>
+              <select id="lifeEventModeSelect">
+                <option value="immediate">下一时间步</option>
+                <option value="scheduled">指定 Day/Time</option>
+              </select>
+            </label>
+            <label>
+              <span>Day</span>
+              <input id="lifeEventDayInput" type="number" min="1" placeholder="当前 Day" />
+            </label>
+            <label>
+              <span>Time</span>
+              <input id="lifeEventTimeInput" placeholder="HH:MM" />
+            </label>
+            <label>
+              <span>强度</span>
+              <input id="lifeEventSeverityInput" type="number" min="0" max="1" step="0.05" value="0.7" />
+            </label>
+          </div>
+          <input id="lifeEventTitleInput" class="event-title-input" placeholder="事件标题（可覆盖模板）" />
+          <textarea id="lifeEventDescriptionInput" class="compact-editor" placeholder="事件描述（可覆盖模板）"></textarea>
+          <div class="button-row end">
+            <button id="useSelectedAgentBtn" class="button">使用当前人物</button>
+            <button id="addLifeEventBtn" class="button primary">添加事件</button>
+          </div>
+          <pre id="lifeEventListBox" class="codebox event-list">暂无人生事件。</pre>
         </section>
       </aside>
     </section>

@@ -149,6 +149,22 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
 }
 .right-stack { display: grid; gap: 14px; }
 .section-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 12px; }
+.agent-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dashboard-avatar-wrap {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #fffef9;
+  flex: 0 0 auto;
+}
+.dashboard-avatar {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
 
 #mapCanvas {
   display: block;
@@ -172,6 +188,13 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
 
 .profile-editor { min-height: 410px; }
 .compact-editor { min-height: 86px; margin-bottom: 8px; }
+.event-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.event-title-input { margin: 10px 0 8px; }
+.event-list { min-height: 190px; max-height: 300px; }
 
 .lower-grid {
   display: grid;
