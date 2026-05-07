@@ -19,9 +19,74 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
-from gaworld.logging_setup import get_logger
+from gaworld.logging_setup import get_logger, LOG_MODE
 
 _LOG = get_logger("gaworld.sim")
+
+# ---------------------------------------------------------------------------
+# Log-mode helpers
+# ---------------------------------------------------------------------------
+_LOG_SIMPLE: bool = LOG_MODE == "simple"
+
+
+def _clean_env_context(env_text: str, max_chars: int = 80) -> str:
+    """Strip static background and intervention text; return dynamic events only.
+
+    The env context string is structured as:
+      背景：<static>  当前环境事件：<dynamic>  平台干预推荐：<intervention>
+
+    In simple mode we only want the dynamic part, and skip it entirely when
+    it only contains the boilerplate "今日外部环境总体平稳" phrase.
+    """
+    if not env_text:
+        return ""
+    # Drop platform intervention section (verbose, repeated, often truncated).
+    for marker in ("平台干预推荐：", "\n平台干预推荐"):
+        idx = env_text.find(marker)
+        if idx != -1:
+            env_text = env_text[:idx]
+    env_text = env_text.strip()
+    # Keep only the part after "当前环境事件：".
+    dyn_marker = "当前环境事件："
+    idx = env_text.find(dyn_marker)
+    if idx != -1:
+        env_text = env_text[idx + len(dyn_marker):].strip()
+    # Skip uninformative boilerplate.
+    if not env_text or "今日外部环境总体平稳" in env_text:
+        return ""
+    if len(env_text) > max_chars:
+        env_text = env_text[:max_chars].rstrip() + "…"
+    return env_text
+
+
+def _clean_reflection(text: str, max_chars: int = 160) -> str:
+    """Return a clean Chinese reflection, stripping LLM reasoning leakage.
+
+    Some LLM backends prepend English chain-of-thought ("The user says: …")
+    before the actual Chinese answer.  When detected, we try to extract only
+    the structured Chinese key-value pairs (感受/教训/后续倾向).
+    """
+    if not text:
+        return text
+    # Measure English-character ratio.
+    ascii_alpha = sum(1 for c in text if c.isascii() and c.isalpha())
+    if ascii_alpha / max(len(text), 1) < 0.10:
+        # Looks clean — just truncate.
+        return text[:max_chars] + ("…" if len(text) > max_chars else "")
+    # Extract structured Chinese parts, skipping polluted 结果 field.
+    parts: list[str] = []
+    for key in ("感受", "教训", "后续倾向"):
+        m = re.search(rf"{key}[：:]\s*([^；\n]+)", text)
+        if not m:
+            continue
+        val = m.group(1).strip()
+        val_ascii = sum(1 for c in val if c.isascii() and c.isalpha())
+        if val_ascii / max(len(val), 1) < 0.30:
+            parts.append(f"{key}：{val}")
+    if parts:
+        return "；".join(parts)
+    # Fallback: truncate original.
+    return text[:max_chars] + ("…" if len(text) > max_chars else "")
 
 from city_map_system import (
     all_locations as city_all_locations,
@@ -6344,32 +6409,49 @@ def run_simulation():
                 # --- compact location + travel (collapsed to 1 line) ---
                 _travel_status = travel.get("status", "stationary")
                 if _travel_status != "stationary":
-                    _loc_line = (
-                        f"Loc: {location} → {resolved_location}"
+                    _travel_info = (
                         f"  [{travel.get('mode', '?')} "
                         f"{travel.get('distance_km', 0.0):.1f}km "
-                        f"{travel.get('minutes', 0)}min]\n"
+                        f"{travel.get('minutes', 0)}min]"
                     )
+                    _loc_line = f"Loc: {location} → {resolved_location}{_travel_info}\n"
                 else:
+                    _travel_info = ""
                     _loc_line = f"Loc: {resolved_location}\n"
 
                 # --- env context (omitted when empty) ---
                 _env_line = f"Env: {step_env_context}\n" if step_env_context else ""
 
-                log = (
-                    f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
-                    f"{_loc_line}"
-                    f"{_env_line}"
-                    f"Perc: {perc}\n"
-                    f"Plan: {plan_text}\n"
-                    f"{transient_thought_line}"
-                    f"{recall_line}"
-                    f"Act: {act}  |  Out: {outcome}\n"
-                    f"{decision_line}"
-                    f"{needs_line}"
-                    f"Refl: {refl_text}\n"
-                    f"{memory_review_line}"
-                )
+                # -------------------------------------------------------
+                # Simple mode: one clean block per tick, Chinese-only,
+                # stripping LLM reasoning leakage and repeated boilerplate.
+                # Verbose mode: full details for debugging.
+                # -------------------------------------------------------
+                if _LOG_SIMPLE:
+                    _env_simple = _clean_env_context(step_env_context)
+                    _refl_simple = _clean_reflection(refl_text)
+                    log = (
+                        f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
+                        f"Loc: {resolved_location}{_travel_info}\n"
+                        + (f"Env: {_env_simple}\n" if _env_simple else "")
+                        + f"Act: {act}\n"
+                        f"Refl: {_refl_simple}\n"
+                    )
+                else:
+                    log = (
+                        f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
+                        f"{_loc_line}"
+                        f"{_env_line}"
+                        f"Perc: {perc}\n"
+                        f"Plan: {plan_text}\n"
+                        f"{transient_thought_line}"
+                        f"{recall_line}"
+                        f"Act: {act}  |  Out: {outcome}\n"
+                        f"{decision_line}"
+                        f"{needs_line}"
+                        f"Refl: {refl_text}\n"
+                        f"{memory_review_line}"
+                    )
                 print(log)
                 daily_logs[agent["id"]] += log
                 append_agent_log(agent, log)

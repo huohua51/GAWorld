@@ -49,19 +49,26 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-04-29 7:05am GMT+2
+# [GAWorld] recent context, 2026-05-07 8:01pm GMT+2
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 4 obs (928t read) | 25,414t work | 96% savings
+Stats: 11 obs (1,864t read) | 260,746t work | 99% savings
 
 ### Apr 29, 2026
 18 6:44a 🔵 Avatar generation not functioning
 19 " 🔵 Avatar SVG files exist on disk but not rendering in UI
 20 " 🔵 HTTP server root mismatch prevents avatar loading
 21 6:45a 🔴 Generated missing avatar SVGs for all 51 agents
+28 7:05a 🔴 人生事件在网页面板中未显示
+29 " 🔴 为网页面板添加人生事件 API 端点
+31 " 🔴 人生事件 UI 面板完整实现
+32 " 🔴 人生事件面板交互逻辑与自动刷新完整落地
+34 7:06a 🔵 人生事件在模拟引擎中的完整数据流确认
+35 " 🟣 新增 tests/test_life_events.py 单元测试
+36 " 🔵 人生事件面板验证上线
 
-Access 25k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 261k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

@@ -246,6 +246,35 @@ Important fields:
 - `policy_events`: scheduled policy shocks
 - `distributed`: multi-machine communication settings
 
+### Log Output Mode
+
+Terminal output verbosity is controlled by the `GAWORLD_LOG_MODE` environment variable:
+
+| Mode | How to set | Behaviour |
+|------|-----------|-----------|
+| `simple` | default | ~4 lines per tick (header, location, action, reflection); LLM call details hidden; repeated WARNINGs (e.g. env-server unreachable) deduplicated to once per 60 s |
+| `verbose` | `GAWORLD_LOG_MODE=verbose` | Full fields — perception, plan, memory recall, needs state, etc. Useful for debugging |
+
+```bash
+# Default simple mode
+python generative_city_sim.py
+
+# Switch to verbose mode
+GAWORLD_LOG_MODE=verbose python generative_city_sim.py
+```
+
+Example simple-mode output:
+
+```
+── [王思远 @ 10:41] 上午工作 ──
+Loc: 货运站
+Act: 推进最重要的一项任务
+Refl: 感受：情绪有一点波动；教训：下次要更早判断状态和代价；后续倾向：接下来会更偏向省力或稳妥的做法
+```
+
+All output is also written to `output/logs/run.log` in full structured format regardless of `LOG_MODE`.
+Set `GAWORLD_LOG_LEVEL=DEBUG` to include per-call LLM latency and token counts.
+
 ### PolicySim-Style Intervention Evaluation
 
 `CONFIG["intervention"]` enables a deterministic, no-network intervention layer inspired by

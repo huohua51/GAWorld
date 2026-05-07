@@ -242,6 +242,35 @@ dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 - `policy_events`：政策事件
 - `distributed`：多机通信配置
 
+### 日志模式
+
+运行时终端输出由环境变量 `GAWORLD_LOG_MODE` 控制，支持两个级别：
+
+| 模式 | 设置方式 | 说明 |
+|------|----------|------|
+| `simple` | 默认 | 每个 tick 只输出标题、地点、动作、反思，约 4 行；LLM 调用详情不打印；重复 WARNING（如环境服务连接失败）60 秒内只显示一次 |
+| `verbose` | `GAWORLD_LOG_MODE=verbose` | 输出完整字段（感知、计划、记忆召回、需求状态等），适合调试 |
+
+```bash
+# 默认 simple 模式
+python generative_city_sim.py
+
+# 切换为 verbose 模式
+GAWORLD_LOG_MODE=verbose python generative_city_sim.py
+```
+
+simple 模式示例输出：
+
+```
+── [王思远 @ 10:41] 上午工作 ──
+Loc: 货运站
+Act: 推进最重要的一项任务
+Refl: 感受：情绪有一点波动；教训：下次要更早判断状态和代价；后续倾向：接下来会更偏向省力或稳妥的做法
+```
+
+终端日志同时写入 `output/logs/run.log`（完整结构化格式，不受 `LOG_MODE` 影响）。
+日志级别可通过 `GAWORLD_LOG_LEVEL`（默认 `INFO`）单独调整，如设为 `DEBUG` 可查看每次 LLM 调用详情。
+
 ### PolicySim 风格干预评估
 
 `CONFIG["intervention"]` 默认开启一个确定性、无网络依赖的干预层。每个智能体 step 会从关系动态、

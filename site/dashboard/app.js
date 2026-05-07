@@ -7,6 +7,7 @@ const state = {
   trace: null,
   frameIndex: 0,
   pollTimer: null,
+  avatarCache: new Map(),
 };
 
 const els = {
@@ -30,6 +31,7 @@ const els = {
   timelineSlider: document.getElementById("timelineSlider"),
   timelineLabel: document.getElementById("timelineLabel"),
   latestFrameBox: document.getElementById("latestFrameBox"),
+  selectedAgentAvatar: document.getElementById("selectedAgentAvatar"),
   agentSelect: document.getElementById("agentSelect"),
   profileEditor: document.getElementById("profileEditor"),
   saveProfileBtn: document.getElementById("saveProfileBtn"),
@@ -78,6 +80,62 @@ const tileColors = {
   "d": "#cfc9a6",
 };
 const agentColors = ["#13795b", "#b73e3e", "#385866", "#d6a81e", "#6e5f97", "#1f8a9b", "#8a5b30"];
+
+function traceAgentMap() {
+  const agents = (state.trace && Array.isArray(state.trace.agents)) ? state.trace.agents : [];
+  return new Map(agents.map((agent) => [Number(agent.id), agent]));
+}
+
+function resolveAssetPath(assetPath) {
+  const text = String(assetPath || "").trim();
+  if (!text) return "";
+  if (/^(https?:)?\/\//.test(text) || text.startsWith("data:")) return text;
+  try {
+    return new URL(text, window.location.href).href;
+  } catch (_error) {
+    return text;
+  }
+}
+
+function getAgentAvatarPath(agentId) {
+  const meta = traceAgentMap().get(Number(agentId));
+  const fallbackPath = `/output/visualization/avatars/agent_${Number(agentId || 0)}.svg`;
+  return resolveAssetPath((meta && meta.avatar_path) || fallbackPath);
+}
+
+function loadAvatar(path) {
+  const resolved = resolveAssetPath(path);
+  if (!resolved) return null;
+  if (state.avatarCache.has(resolved)) {
+    const cached = state.avatarCache.get(resolved);
+    return cached.loaded ? cached.img : null;
+  }
+  const img = new Image();
+  img.decoding = "async";
+  state.avatarCache.set(resolved, { img, loaded: false });
+  img.onload = () => {
+    const item = state.avatarCache.get(resolved);
+    if (item) item.loaded = true;
+    renderTrace();
+  };
+  img.onerror = () => {
+    state.avatarCache.delete(resolved);
+  };
+  img.src = resolved;
+  return null;
+}
+
+function renderSelectedAgentAvatar() {
+  if (!state.selectedAgentId) {
+    els.selectedAgentAvatar.removeAttribute("src");
+    els.selectedAgentAvatar.alt = "";
+    return;
+  }
+  const selected = state.agents.find((agent) => Number(agent.id) === Number(state.selectedAgentId));
+  const avatarPath = getAgentAvatarPath(state.selectedAgentId);
+  els.selectedAgentAvatar.src = avatarPath;
+  els.selectedAgentAvatar.alt = `${selected ? selected.name : `Agent ${state.selectedAgentId}`} avatar`;
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -159,6 +217,7 @@ async function loadAgents() {
     option.selected = agent.id === state.selectedAgentId;
     els.agentSelect.appendChild(option);
   });
+  renderSelectedAgentAvatar();
 }
 
 function selectedLifeEventTemplate() {
@@ -317,6 +376,7 @@ function renderTrace() {
     drawEmptyMap();
     return;
   }
+  renderSelectedAgentAvatar();
   els.frameTitle.textContent = `Day ${frame.day} · ${frame.time}`;
   els.traceStatus.textContent = `${frames.length} 帧 · ${state.trace.meta && state.trace.meta.finished ? "已完成" : "写入中"}`;
   els.timelineSlider.max = String(Math.max(0, frames.length - 1));
@@ -372,12 +432,24 @@ function drawMap(frame) {
     const x = offsetX + node.tile_x * scale + scale / 2;
     const y = offsetY + node.tile_y * scale + scale / 2;
     const color = agentColors[Math.abs(Number(agent.agent_id || 0)) % agentColors.length];
-    ctx.fillStyle = color;
+    const radius = agent.agent_id === state.selectedAgentId ? 11 : 8;
+    const avatarImage = loadAvatar(getAgentAvatarPath(agent.agent_id));
+    ctx.save();
     ctx.beginPath();
-    ctx.arc(x, y, agent.agent_id === state.selectedAgentId ? 11 : 8, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    if (avatarImage) {
+      ctx.drawImage(avatarImage, x - radius, y - radius, radius * 2, radius * 2);
+    } else {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    ctx.restore();
     ctx.strokeStyle = "#fffef9";
     ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = "#17211d";
     ctx.font = "12px Aptos";
@@ -407,6 +479,7 @@ function bindEvents() {
   els.reloadStatusBtn.addEventListener("click", () => refreshStatus().catch((error) => message(error.message, "error")));
   els.agentSelect.addEventListener("change", async () => {
     state.selectedAgentId = Number(els.agentSelect.value);
+    renderSelectedAgentAvatar();
     await loadProfile();
     await loadMemory();
     renderTrace();

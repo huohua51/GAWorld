@@ -149,6 +149,22 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
 }
 .right-stack { display: grid; gap: 14px; }
 .section-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 12px; }
+.agent-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dashboard-avatar-wrap {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #fffef9;
+  flex: 0 0 auto;
+}
+.dashboard-avatar {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
 
 #mapCanvas {
   display: block;
