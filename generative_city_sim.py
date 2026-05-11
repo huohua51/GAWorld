@@ -1401,7 +1401,7 @@ SECONDS_PER_DAY = CONFIG["seconds_per_day"]
 CSV_PATH = CONFIG["csv_path"]
 MD_PATH = CONFIG["md_path"]
 STATEFUL = CONFIG["stateful"]
-MAP_PATH = CONFIG.get("map_path", "citymap.md")
+MAP_PATH = CONFIG.get("map_path", "data/citymap.md")
 PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
 BACKGROUND = CONFIG.get("background", "")
 MEMORY_MODEL_VERSION = int(CONFIG.get("memory_model_version", 1))
@@ -1453,10 +1453,10 @@ SPONTANEITY_RANDOM_ACTION_CHANCE = float(SPONTANEITY_CONFIG.get("random_action_c
 SPONTANEITY_MAX_OVERRIDE_BONUS = float(SPONTANEITY_CONFIG.get("max_override_bonus", 0.35))
 NEWS_CONFIG = CONFIG.get("news", {})
 NEWS_ENABLED = bool(NEWS_CONFIG.get("enabled", False))
-NEWS_SOURCES_PATH = NEWS_CONFIG.get("sources_path", "news_source.md")
+NEWS_SOURCES_PATH = NEWS_CONFIG.get("sources_path", "data/news_source.md")
 NEWS_DAILY_CHANCE = float(NEWS_CONFIG.get("daily_chance", 0.5))
 NEWS_MAX_READS_PER_DAY = int(NEWS_CONFIG.get("max_reads_per_day", 1))
-NEWS_CACHE_PATH = NEWS_CONFIG.get("cache_path", "news_cache.json")
+NEWS_CACHE_PATH = NEWS_CONFIG.get("cache_path", "data/news_cache.json")
 NEWS_USE_CACHE_FIRST = bool(NEWS_CONFIG.get("use_cache_first", True))
 INFO_SEEK_CONFIG = NEWS_CONFIG.get("info_seek", NEWS_CONFIG.get("curiosity_search", {}))
 INFO_SEEK_ENABLED = bool(INFO_SEEK_CONFIG.get("enabled", True))
@@ -7499,7 +7499,7 @@ def _cli_serve_viz(host="127.0.0.1", port=8000):
 
 
 def _cli_serve_distributed(host=None, port=None, state_path=None, max_messages=None):
-    from distributed_comm_server import run_server
+    from gaworld.apps.distributed_comm_server import run_server
 
     distributed_cfg = CONFIG.get("distributed", {})
     server_cfg = distributed_cfg.get("server", {}) if isinstance(distributed_cfg.get("server"), dict) else {}
@@ -7568,7 +7568,7 @@ def _main():
         return
 
     if args.command == "dashboard":
-        from dashboard_server import run_server
+        from gaworld.apps.dashboard_server import run_server
 
         run_server(host=args.host, port=args.port)
         return

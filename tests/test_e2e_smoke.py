@@ -63,20 +63,10 @@ class TestRunSimulationSmoke(unittest.TestCase):
         self.original_cwd = os.getcwd()
         repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         # Copy the fixture data the simulator needs into the temp dir.
-        for name in (
-            "hangzhou_agents_state_init.csv",
-            "hangzhou_profiles_with_names.md",
-            "citymap.md",
-        ):
-            src = os.path.join(repo_root, name)
-            if os.path.exists(src):
-                shutil.copy(src, os.path.join(self.tmp.name, name))
-        # Some simulators read news_source.md / news_cache.json — copy
-        # them if they exist; the simulator falls back gracefully if not.
-        for name in ("news_source.md", "news_cache.json"):
-            src = os.path.join(repo_root, name)
-            if os.path.exists(src):
-                shutil.copy(src, os.path.join(self.tmp.name, name))
+        data_src = os.path.join(repo_root, "data")
+        data_dst = os.path.join(self.tmp.name, "data")
+        if os.path.isdir(data_src):
+            shutil.copytree(data_src, data_dst)
         os.chdir(self.tmp.name)
         self.addCleanup(os.chdir, self.original_cwd)
 

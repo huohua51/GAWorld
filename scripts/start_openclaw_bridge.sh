@@ -6,12 +6,13 @@
 
 set -e
 
-GAWORLD_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+GAWORLD_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$GAWORLD_DIR"
 
 RELAY_PORT=8877
 OPENCLAW_URL="http://127.0.0.1:18789"
-SOUL_PATH="$GAWORLD_DIR/soul_gaworld.md"
+SOUL_PATH="$GAWORLD_DIR/examples/openclaw/soul_gaworld.md"
 CLUSTER="default"
 LOG_DIR="$GAWORLD_DIR/output/distributed"
 
@@ -39,7 +40,7 @@ echo "[2/3] 启动 Relay Server (port $RELAY_PORT)..."
 if curl -s --max-time 2 "http://127.0.0.1:$RELAY_PORT/health" > /dev/null 2>&1; then
     echo "  ✓ Relay Server 已在运行"
 else
-    python3 distributed_comm_server.py \
+    python3 -m gaworld.apps.distributed_comm_server \
         --host 0.0.0.0 \
         --port $RELAY_PORT \
         --state-path "$LOG_DIR/relay_state.json" \
@@ -68,7 +69,7 @@ echo "  Bridge 正在运行，按 Ctrl+C 停止"
 echo "========================================"
 echo ""
 
-python3 openclaw_bridge.py \
+python3 scripts/openclaw_bridge.py \
     --relay-url "http://127.0.0.1:$RELAY_PORT" \
     --openclaw-url "$OPENCLAW_URL" \
     --soul-path "$SOUL_PATH" \

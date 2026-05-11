@@ -11,10 +11,10 @@ Typical usage
 -------------
     # 1.  Start your OpenClaw agent (default gateway on :18789).
     # 2.  Run the bridge:
-    python openclaw_bridge.py \
+    python scripts/openclaw_bridge.py \
         --relay-url http://<relay-server>:8877 \
         --openclaw-url http://127.0.0.1:18789 \
-        --soul-path ./SOUL.md \
+        --soul-path ./examples/openclaw/SOUL.md \
         --name "李明" \
         --cluster default
 
@@ -482,16 +482,16 @@ def main():
         epilog="""
 Examples:
   # Basic usage with a SOUL.md file:
-  python openclaw_bridge.py --soul-path ./SOUL.md --name "李明"
+  python scripts/openclaw_bridge.py --soul-path ./examples/openclaw/SOUL.md --name "李明"
 
   # Connect to a remote relay server with authentication:
-  python openclaw_bridge.py \\
+  python scripts/openclaw_bridge.py \\
       --relay-url http://192.168.1.100:8877 \\
       --token my-secret-token \\
-      --soul-path ./SOUL.md
+      --soul-path ./examples/openclaw/SOUL.md
 
   # Override profile fields directly:
-  python openclaw_bridge.py \\
+  python scripts/openclaw_bridge.py \\
       --name "王芳" --age 28 --gender 女 --job "软件工程师"
 """,
     )

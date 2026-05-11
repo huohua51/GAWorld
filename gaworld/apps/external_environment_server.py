@@ -1,8 +1,12 @@
 import argparse
 import json
 import os
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from config import CONFIG
 from environment import EnvironmentSystem

@@ -4,8 +4,8 @@
 - Core simulator: `generative_city_sim.py` (CLI entrypoint, agent loop, LLM routing, scheduling, actions, logging, plots).
 - Configuration: `config.py` (LLM providers, routing, simulation params, data paths, events).
 - Environment events: `environment.py`.
-- Data assets: `hangzhou_agents_state_init.csv`, `hangzhou_profiles_with_names.md`, `citymap.md`.
-- Map generator: `generate_citymap.py` (build a new `citymap.md` from a text description).
+- Data assets: `data/hangzhou_agents_state_init.csv`, `data/hangzhou_profiles_with_names.md`, `data/citymap.md`.
+- Map generator: `scripts/generate_citymap.py` (build a new `data/citymap.md` from a text description).
 - Outputs: `output/` (logs, memory, plots, CSVs). Treat as generated artifacts.
 - Backups: `backup/` (historical scripts; not part of active runtime).
 
@@ -17,7 +17,7 @@
   - `python generative_city_sim.py interview --agent-id 31 --question "Question"`
   - `python generative_city_sim.py interview --agent-id 31 --questions-file questions.txt`
 - Generate a new city map:
-  - `python generate_citymap.py --description "a small city with about 1000 residents, in east china"`
+  - `python scripts/generate_citymap.py --description "a small city with about 1000 residents, in east china"`
 
 There is no build step beyond installing Python dependencies.
 
@@ -49,13 +49,13 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-05-07 8:01pm GMT+2
+# [GAWorld] recent context, 2026-05-11 7:44pm GMT+2
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 11 obs (1,864t read) | 260,746t work | 99% savings
+Stats: 28 obs (6,443t read) | 1,471,078t work | 100% savings
 
 ### Apr 29, 2026
 18 6:44a 🔵 Avatar generation not functioning
@@ -69,6 +69,24 @@ Stats: 11 obs (1,864t read) | 260,746t work | 99% savings
 34 7:06a 🔵 人生事件在模拟引擎中的完整数据流确认
 35 " 🟣 新增 tests/test_life_events.py 单元测试
 36 " 🔵 人生事件面板验证上线
+### May 11, 2026
+300 7:30p 🔄 Project file and folder structure reorganization
+301 " 🔵 GAWorld project structure inventory
+303 " 🔵 config.py structure and dependencies mapped
+304 " 🔵 gaworld/ typed config wrapper and migration status
+302 7:31p 🔵 Large files and directory structure identified
+305 7:32p ⚖️ Plan: split root config.py into gaworld/settings/ submodules
+306 " 🟣 Project file organization and refactoring initiated
+307 7:40p 🔄 Settings module split: runtime.py → behavior.py
+308 " 🔄 Tests and project structure docs added
+309 " 🔵 Import smoke test passes after settings refactor
+310 7:41p 🔵 CONFIG content equivalence verified via git diff
+311 " ✅ pyproject.toml pythonpath fixed for pytest module discovery
+312 " 🔵 All 7 tests pass after settings refactor
+313 " 🔵 Pre-existing pytest collection errors in test suite
+314 7:42p 🔴 tests/__init__.py added to enable fixtures subpackage import
+315 " 🔵 Full test suite: 282 passed, 2 pre-existing failures
+316 " 🔄 Settings refactor complete: config.py reduced from 631 to 12 lines
 
-Access 261k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 1471k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

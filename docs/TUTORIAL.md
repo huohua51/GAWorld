@@ -126,10 +126,10 @@ python generative_city_sim.py compare-event \
 ## 8. 生成新城市地图（可选）
 
 ```bash
-python generate_citymap.py --description "a small city with about 1000 residents, in east china"
+python scripts/generate_citymap.py --description "a small city with about 1000 residents, in east china"
 ```
 
-默认会更新 `citymap.md`。
+默认会更新 `data/citymap.md`。
 
 ## 9. 常见问题
 

@@ -2,8 +2,12 @@ import argparse
 import json
 import os
 import re
+import sys
+from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from generative_city_sim import CSV_PATH, MAP_PATH, build_agent, call_llm, load_city_map
 

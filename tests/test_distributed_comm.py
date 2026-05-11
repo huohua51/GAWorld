@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from distributed_comm import format_inbox_context
-from distributed_comm_server import DistributedRelayBackend
+from gaworld.apps.distributed_comm_server import DistributedRelayBackend
 
 
 class TestDistributedComm(unittest.TestCase):

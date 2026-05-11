@@ -6,7 +6,10 @@ import sys
 import time
 from copy import deepcopy
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from config import CONFIG
 from life_events import add_life_event, list_life_event_templates, list_life_events
@@ -15,10 +18,10 @@ from gaworld.logging_setup import get_logger
 _LOG = get_logger("gaworld.dashboard")
 
 
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DASHBOARD_ROOT = os.path.join(REPO_ROOT, "site", "dashboard")
 DASHBOARD_CONFIG_PATH = os.path.join(REPO_ROOT, "dashboard_config.json")
-PROFILE_PATH = os.path.join(REPO_ROOT, CONFIG.get("md_path", "hangzhou_profiles_with_names.md"))
+PROFILE_PATH = os.path.join(REPO_ROOT, CONFIG.get("md_path", "data/hangzhou_profiles_with_names.md"))
 RUN_LOG_PATH = os.path.join(REPO_ROOT, "output", "dashboard", "simulation_run.log")
 PROFILE_HEADER_RE = re.compile(r"^## Profile\s+(\d+)\s*[｜|]\s*(.+?)\s*$", re.MULTILINE)
 

@@ -3,6 +3,7 @@ import math
 import os
 import re
 from collections import defaultdict
+from pathlib import Path
 
 BASE_LAT = 30.2741
 BASE_LNG = 120.1551
@@ -86,6 +87,23 @@ DEFAULT_METRO_LINES = [
     {"name": "M2", "color": "#2b9ccf", "stops": ["University District", "Central Block", "City Hall", "Riverside Stadium", "Waterfront"]},
 ]
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_existing_path(path):
+    """Resolve moved data files while accepting legacy root-level paths."""
+    target = Path(str(path))
+    if target.exists():
+        return str(target)
+    if not target.is_absolute():
+        repo_target = PROJECT_ROOT / target
+        if repo_target.exists():
+            return str(repo_target)
+        data_target = PROJECT_ROOT / "data" / target.name
+        if data_target.exists():
+            return str(data_target)
+    return str(target)
+
 
 def _slug(text):
     return re.sub(r"\s+", " ", str(text or "").strip())
@@ -122,6 +140,7 @@ def infer_category(name):
 
 
 def _parse_map_file(map_path):
+    map_path = _resolve_existing_path(map_path)
     parsed = {
         "hubs": [],
         "nodes": {},
@@ -212,6 +231,7 @@ def load_city_map(map_path):
 
 
 def load_city_map_text(map_path):
+    map_path = _resolve_existing_path(map_path)
     if not os.path.exists(map_path):
         return ""
     try:

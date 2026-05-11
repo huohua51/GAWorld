@@ -60,7 +60,7 @@ GAWorld 支持通过 **OpenClaw Bridge** 将用户个人的 OpenClaw 智能体�
 
 ```bash
 cd GAWorld
-python distributed_comm_server.py --host 0.0.0.0 --port 8877
+python -m gaworld.apps.distributed_comm_server --host 0.0.0.0 --port 8877
 ```
 
 输出应显示：
@@ -120,10 +120,10 @@ gender: 男
 ### 第四步：启动 Bridge
 
 ```bash
-python openclaw_bridge.py \
+python scripts/openclaw_bridge.py \
     --relay-url http://<relay-server-ip>:8877 \
     --openclaw-url http://127.0.0.1:18789 \
-    --soul-path ./SOUL.md \
+    --soul-path ./examples/openclaw/SOUL.md \
     --cluster default
 ```
 
@@ -210,11 +210,11 @@ curl -X POST http://localhost:8877/auth/token \
 用户启动 Bridge 时需提供该 token：
 
 ```bash
-python openclaw_bridge.py --token your-secret-token-here ...
+python scripts/openclaw_bridge.py --token your-secret-token-here ...
 
 # 或通过环境变量
 export GAWORLD_TOKEN=your-secret-token-here
-python openclaw_bridge.py ...
+python scripts/openclaw_bridge.py ...
 ```
 
 ---
@@ -384,13 +384,13 @@ job: 数据分析师
 
 ```bash
 # 用户 A
-python openclaw_bridge.py --soul-path ./alice_soul.md --relay-url http://server:8877
+python scripts/openclaw_bridge.py --soul-path ./alice_soul.md --relay-url http://server:8877
 
 # 用户 B（另一台机器）
-python openclaw_bridge.py --soul-path ./bob_soul.md --relay-url http://server:8877
+python scripts/openclaw_bridge.py --soul-path ./bob_soul.md --relay-url http://server:8877
 
 # 用户 C（同一台机器上跑多个 OpenClaw agent）
-python openclaw_bridge.py --soul-path ./carol_soul.md --openclaw-url http://127.0.0.1:18790
+python scripts/openclaw_bridge.py --soul-path ./carol_soul.md --openclaw-url http://127.0.0.1:18790
 ```
 
 ### 在 GAWorld 仿真中推送 Tick 状态
@@ -414,7 +414,7 @@ if CONFIG.get("openclaw", {}).get("push_tick_to_relay") and relay_client.enabled
 ### 不使用 SOUL.md 直接指定人设
 
 ```bash
-python openclaw_bridge.py \
+python scripts/openclaw_bridge.py \
     --name "张伟" \
     --age 35 \
     --gender 男 \
@@ -449,7 +449,7 @@ A: 当前版本是被动模式（等待其他 agent 发消息）。如需主动�
 
 | 文件 | 变更类型 | 说明 |
 |------|----------|------|
-| `distributed_comm_server.py` | 修改 | 新增 agent_type、token认证、/tick、/agents/profile 端点 |
-| `openclaw_bridge.py` | 新增 | Bridge 适配层核心脚本 |
+| `gaworld/apps/distributed_comm_server.py` | 修改 | 新增 agent_type、token认证、/tick、/agents/profile 端点 |
+| `scripts/openclaw_bridge.py` | 新增 | Bridge 适配层核心脚本 |
 | `config.py` | 修改 | 新增 `openclaw` 配置段 |
 | `OPENCLAW_INTEGRATION.md` | 新增 | 本文档 |

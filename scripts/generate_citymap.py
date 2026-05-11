@@ -294,7 +294,7 @@ def generate_citymap(description: str, seed: Optional[int] = None) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a citymap.md from a text description.")
     parser.add_argument("--description", "-d", required=True, help="Text description of the city.")
-    parser.add_argument("--output", "-o", default="citymap.md", help="Output path for citymap.md")
+    parser.add_argument("--output", "-o", default="data/citymap.md", help="Output path for citymap.md")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     parser.add_argument("--dry-run", action="store_true", help="Print map to stdout instead of writing file")
     args = parser.parse_args()

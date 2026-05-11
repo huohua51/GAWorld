@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 from city_map_system import distance_between, load_city_map, shortest_path, travel_plan
-from generate_citymap import generate_citymap
+from scripts.generate_citymap import generate_citymap
 
 
 class TestCityMapSystem(unittest.TestCase):

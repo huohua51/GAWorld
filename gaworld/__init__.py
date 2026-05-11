@@ -7,6 +7,7 @@ introduced by the S1/S2 refactor:
 
 * :mod:`gaworld.logging_setup` – structured logging
 * :mod:`gaworld.env_loader`    – ``.env`` discovery
+* :mod:`gaworld.settings`      – split legacy ``CONFIG`` assembly
 * :mod:`gaworld.config`        – typed simulation configuration
 * :mod:`gaworld.core.agent`    – ``Agent`` dataclass adapter
 * :mod:`gaworld.io.web_scrape` – HTML / news content extraction

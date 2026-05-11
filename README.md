@@ -75,10 +75,12 @@ Across days, the simulator accumulates:
 - `memory_store.py`: memory persistence and vector DB helpers
 - `city_map_system.py`: graph, routes, travel, and tile map generation
 - `simulation_visualizer.py`: trace writer for playback
-- `dashboard_server.py`: local dashboard backend
-- `hangzhou_agents_state_init.csv`: seed state values
-- `hangzhou_profiles_with_names.md`: agent profiles
-- `citymap.md`: city map data
+- `gaworld/apps/dashboard_server.py`: local dashboard backend
+- `data/hangzhou_agents_state_init.csv`: seed state values
+- `data/hangzhou_profiles_with_names.md`: agent profiles
+- `data/citymap.md`: city map data
+- `scripts/`: launch and developer utilities
+- `docs/`: tutorials, integration notes, and design docs
 - `site/dashboard/`: local dashboard frontend
 - `site/simviz/`: playback viewer
 - `output/`: generated artifacts
@@ -200,7 +202,7 @@ The comparison report includes regular city-state metrics and intervention metri
 Generate a city map:
 
 ```bash
-python generate_citymap.py --description "a small city with about 1000 residents, in east china"
+python scripts/generate_citymap.py --description "a small city with about 1000 residents, in east china"
 ```
 
 Run the distributed relay:
@@ -459,5 +461,5 @@ Generated artifacts are written under `output/`, including:
 ## Additional Docs
 
 - [中文 README](./README.zh-CN.md)
-- [Tutorial](./TUTORIAL.md)
+- [Tutorial](./docs/TUTORIAL.md)
 - [Repository Guidelines](./AGENTS.md)

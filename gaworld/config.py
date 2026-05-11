@@ -153,9 +153,9 @@ class SimulationConfig:
 def _build_paths(raw: Mapping[str, Any]) -> PathsConfig:
     vis = raw.get("visualization", {}) or {}
     return PathsConfig(
-        csv_path=str(raw.get("csv_path", "hangzhou_agents_state_init.csv")),
-        md_path=str(raw.get("md_path", "hangzhou_profiles_with_names.md")),
-        map_path=str(raw.get("map_path", "citymap.md")),
+        csv_path=str(raw.get("csv_path", "data/hangzhou_agents_state_init.csv")),
+        md_path=str(raw.get("md_path", "data/hangzhou_profiles_with_names.md")),
+        map_path=str(raw.get("map_path", "data/citymap.md")),
         memory_dir=str(raw.get("memory_dir", "output/memory")),
         log_dir=str(raw.get("log_dir", "output/logs")),
         diary_dir=str(raw.get("diary_output_dir", "output/diaries")),

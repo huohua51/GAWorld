@@ -72,10 +72,12 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - `memory_store.py`：记忆持久化和向量库辅助
 - `city_map_system.py`：地图图结构、路线、出行和 tile map
 - `simulation_visualizer.py`：地图回放 trace 输出
-- `dashboard_server.py`：本地 dashboard 后端
-- `hangzhou_agents_state_init.csv`：智能体初始状态
-- `hangzhou_profiles_with_names.md`：智能体画像
-- `citymap.md`：城市地图数据
+- `gaworld/apps/dashboard_server.py`：本地 dashboard 后端
+- `data/hangzhou_agents_state_init.csv`：智能体初始状态
+- `data/hangzhou_profiles_with_names.md`：智能体画像
+- `data/citymap.md`：城市地图数据
+- `scripts/`：启动脚本和开发工具
+- `docs/`：教程、集成说明和设计文档
 - `site/dashboard/`：dashboard 前端
 - `site/simviz/`：轨迹回放页面
 - `output/`：生成结果
@@ -196,7 +198,7 @@ python generative_city_sim.py compare-event \
 生成城市地图：
 
 ```bash
-python generate_citymap.py --description "a small city with about 1000 residents, in east china"
+python scripts/generate_citymap.py --description "a small city with about 1000 residents, in east china"
 ```
 
 启动分布式 relay：
@@ -429,5 +431,5 @@ LLM 调用之前完成决策。
 ## 更多文档
 
 - [English README](./README.md)
-- [用户教程](./TUTORIAL.md)
+- [用户教程](./docs/TUTORIAL.md)
 - [仓库规范](./AGENTS.md)

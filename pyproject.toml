@@ -46,14 +46,11 @@ py-modules = [
     "config",
     "city_map_system",
     "custom_hooks",
-    "dashboard_server",
     "distributed_comm",
-    "distributed_comm_server",
     "economy_module",
     "environment",
     "experience_store",
     "extensibility",
-    "external_environment_server",
     "generative_city_sim",
     "human_realism",
     "intervention_policy",
@@ -150,6 +147,7 @@ warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
