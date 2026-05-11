@@ -49,13 +49,13 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-05-11 7:44pm GMT+2
+# [GAWorld] recent context, 2026-05-11 8:53pm GMT+2
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 28 obs (6,443t read) | 1,471,078t work | 100% savings
+Stats: 44 obs (10,136t read) | 2,764,472t work | 100% savings
 
 ### Apr 29, 2026
 18 6:44a 🔵 Avatar generation not functioning
@@ -87,6 +87,22 @@ Stats: 28 obs (6,443t read) | 1,471,078t work | 100% savings
 314 7:42p 🔴 tests/__init__.py added to enable fixtures subpackage import
 315 " 🔵 Full test suite: 282 passed, 2 pre-existing failures
 316 " 🔄 Settings refactor complete: config.py reduced from 631 to 12 lines
+344 8:38p 🟣 为智能体增加兴趣爱好系统
+345 " 🔵 GAWorld项目结构和关键模块概览
+346 " 🔵 智能体选择动作的决策系统架构
+348 8:40p 🔵 Remotion plugin skill structure documented
+349 " 🔵 GAWorld project structure overview
+350 " 🔵 docs/TUTORIAL.md - Chinese user tutorial documented
+351 " 🔵 CHANGELOG.md reveals recent major features and architecture
+352 " 🔵 GAWorldIntro.tsx scene structure revealed
+354 " 🟣 GAWorldTutorialCN.tsx Chinese tutorial video created
+355 8:43p ✅ Root.tsx updated to register two compositions
+356 " ✅ package.json render scripts updated for dual video output
+357 " 🔴 TypeScript/esbuild error in GAWorldTutorialCN.tsx line 385
+358 " 🔴 Fixed JSX parsing error in GAWorldTutorialCN.tsx line 385
+359 " 🔵 GAWorldTutorialCN still frame rendered successfully
+360 " 🟣 Remotion中文教程文档编写
+361 " 🟣 Remotion GAWorld中文教程视频帧渲染
 
-Access 1471k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 2764k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

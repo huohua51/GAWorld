@@ -52,6 +52,7 @@ class TestDefaultsCoverFrequentTasks(unittest.TestCase):
         "summary",
         "memory_consolidation",
         "daily_intentions",
+        "growth_profile",
         "routine_change",
         "external_environment",
     )

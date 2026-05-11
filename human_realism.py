@@ -4,6 +4,7 @@ import re
 
 import requests
 
+from gaworld.interests import format_growth_context, growth_focus
 from gaworld.logging_setup import get_logger
 from llm_providers import call_llm
 
@@ -312,11 +313,15 @@ def _fallback_intentions(agent, recent_episodes):
     avoidances = ["冲动决策"] if state.get("stress", 0.5) > 0.7 else ["长时间无效分心"]
     target_social = "增加与熟人的正向互动" if state.get("social_need", 0.5) > 0.55 else "保持适度社交"
     target_recovery = "确保休息与进食节奏"
+    focus = growth_focus(agent.get("growth_profile"), limit=2)
+    for name in focus:
+        priorities.append(f"发展{name}")
     return {
         "priorities": priorities[:4],
         "avoidances": avoidances[:2],
         "target_social": target_social,
         "target_recovery": target_recovery,
+        "growth_focus": focus,
     }
 
 
@@ -329,6 +334,7 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx):
         f"职业：{agent.get('job', '')}",
         f"性格与情绪特征：{agent.get('personality', '')}",
         f"当前状态：{json.dumps(agent.get('state', {}), ensure_ascii=False)}",
+        f"兴趣与技能成长画像：\n{format_growth_context(agent.get('growth_profile'))}",
     ])
     eps = recent_episodes[:5]
     eps_text = json.dumps(
@@ -358,12 +364,14 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx):
   "priorities": ["...","..."],
   "avoidances": ["..."],
   "target_social": "...",
-  "target_recovery": "..."
+  "target_recovery": "...",
+  "growth_focus": ["今日重点发展的兴趣或技能名称"]
 }}
 要求：
 1) priorities 2-4项，avoidances 1-2项。
-2) 都是中文短语。
-3) 不要输出其他文字。
+2) 都是中文短语，可自然包含兴趣恢复、技能练习或职业转型准备。
+3) growth_focus 0-2项，只能来自兴趣与技能成长画像里的名称。
+4) 不要输出其他文字。
 """
     llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
     try:
@@ -376,15 +384,20 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx):
         return fallback
     priorities = parsed.get("priorities", [])
     avoidances = parsed.get("avoidances", [])
+    growth_items = parsed.get("growth_focus", [])
     if not isinstance(priorities, list):
         priorities = []
     if not isinstance(avoidances, list):
         avoidances = []
+    if not isinstance(growth_items, list):
+        growth_items = []
     result = {
         "priorities": [str(x).strip() for x in priorities if str(x).strip()][:4] or fallback["priorities"],
         "avoidances": [str(x).strip() for x in avoidances if str(x).strip()][:2] or fallback["avoidances"],
         "target_social": str(parsed.get("target_social", "")).strip() or fallback["target_social"],
         "target_recovery": str(parsed.get("target_recovery", "")).strip() or fallback["target_recovery"],
+        "growth_focus": [str(x).strip() for x in growth_items if str(x).strip()][:2]
+        or fallback.get("growth_focus", []),
     }
     return result
 
@@ -469,7 +482,8 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
   "priorities": ["...","..."],
   "avoidances": ["..."],
   "target_social": "...",
-  "target_recovery": "..."
+  "target_recovery": "...",
+  "growth_focus": ["..."]
 }}
 仅输出 JSON。
 """
@@ -481,6 +495,9 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
             resp = ""
         parsed = _parse_json_dict(resp)
         if parsed:
+            parsed_growth_focus = parsed.get("growth_focus", [])
+            if not isinstance(parsed_growth_focus, list):
+                parsed_growth_focus = []
             result["summary"] = str(parsed.get("summary", "")).strip() or result["summary"]
             result["intentions"] = {
                 "priorities": [str(x).strip() for x in parsed.get("priorities", []) if str(x).strip()][:4]
@@ -489,6 +506,8 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
                 or fallback_intentions["avoidances"],
                 "target_social": str(parsed.get("target_social", "")).strip() or fallback_intentions["target_social"],
                 "target_recovery": str(parsed.get("target_recovery", "")).strip() or fallback_intentions["target_recovery"],
+                "growth_focus": [str(x).strip() for x in parsed_growth_focus if str(x).strip()][:2]
+                or fallback_intentions.get("growth_focus", []),
             }
     result["memory_text"] = f"[Day {day} Consolidation] {result['summary']}"
     return result
@@ -552,6 +571,8 @@ def intention_text(intentions):
     avoidances = intentions.get("avoidances", [])
     social = intentions.get("target_social", "")
     recovery = intentions.get("target_recovery", "")
+    growth = intentions.get("growth_focus", [])
     p_text = "、".join(str(x) for x in priorities if str(x).strip()) or "无"
     a_text = "、".join(str(x) for x in avoidances if str(x).strip()) or "无"
-    return f"优先：{p_text}；避免：{a_text}；社交：{social or '无'}；恢复：{recovery or '无'}"
+    g_text = "、".join(str(x) for x in growth if str(x).strip()) or "无"
+    return f"优先：{p_text}；避免：{a_text}；社交：{social or '无'}；恢复：{recovery or '无'}；成长：{g_text}"

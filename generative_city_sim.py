@@ -19,7 +19,14 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
-from gaworld.logging_setup import get_logger, LOG_MODE
+from gaworld.interests import (
+    bootstrap_growth_profiles,
+    format_growth_context,
+    match_growth_items,
+    save_agent_growth_profile,
+    update_growth_from_episode,
+)
+from gaworld.logging_setup import LOG_MODE, get_logger
 
 _LOG = get_logger("gaworld.sim")
 
@@ -1413,6 +1420,13 @@ HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
 HUMAN_MEMORY_CONFIG = HUMAN_REALISM_CONFIG.get("memory", {}) if HUMAN_REALISM_ENABLED else {}
 RECALL_CONFIG = HUMAN_MEMORY_CONFIG.get("recall", {}) if HUMAN_REALISM_ENABLED else {}
 MEMORY_REVIEW_CONFIG = HUMAN_MEMORY_CONFIG.get("review", {}) if HUMAN_REALISM_ENABLED else {}
+INTERESTS_CONFIG = CONFIG.get("interests", {})
+INTERESTS_ENABLED = bool(INTERESTS_CONFIG.get("enabled", True))
+INTERESTS_MAX_ITEMS = max(1, int(INTERESTS_CONFIG.get("max_items", 6)))
+INTERESTS_CACHE_PATH = INTERESTS_CONFIG.get("cache_path", "output/memory/growth_profiles.json")
+INTERESTS_PROGRESS_MINUTES = INTERESTS_CONFIG.get("progress_minutes_per_step")
+INTERESTS_DAILY_INSERT_CHANCE = float(INTERESTS_CONFIG.get("daily_insert_chance", 0.55))
+INTERESTS_WEEKEND_BOOST = float(INTERESTS_CONFIG.get("weekend_boost", 0.25))
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
 ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
@@ -2166,6 +2180,22 @@ def resolve_location(agent, activity, time_str, city_map):
 
     # ----- Category-based activity matching -----
     activity_categories = activity_to_categories(activity)
+    growth_matches = match_growth_items(agent.get("growth_profile"), activity) if INTERESTS_ENABLED else []
+    growth_categories = []
+    for item in growth_matches:
+        category = str(item.get("category", ""))
+        name = str(item.get("name", ""))
+        blob = f"{category} {name} {' '.join(item.get('activity_templates', []) or [])}"
+        if any(k in blob for k in ["运动", "健康", "跑步", "健身"]):
+            growth_categories.extend(["leisure"])
+        elif any(k in blob for k in ["阅读", "学习", "研究", "专业"]):
+            growth_categories.extend(["education", "leisure"])
+        elif any(k in blob for k in ["艺术", "创作", "摄影", "音乐", "内容"]):
+            growth_categories.extend(["leisure", "commerce"])
+        elif any(k in blob for k in ["技术", "编程", "职业", "沟通", "运营"]):
+            growth_categories.extend(["commerce", "education"])
+    if growth_categories:
+        activity_categories = list(dict.fromkeys(list(activity_categories or []) + growth_categories))
     activity_candidates = []
 
     if any(k in activity for k in ["工作", "上班", "加班"]):
@@ -3718,6 +3748,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     memory_hint = _format_memory_hint(memory_hits)
     external_hint = _external_rag_hint(agent, f"{day_type_zh} 日程 计划")
     intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
+    growth_context = format_growth_context(agent.get("growth_profile"), max_items=INTERESTS_MAX_ITEMS) if INTERESTS_ENABLED else "无"
     prompt = f"""
 你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
 角色资料：
@@ -3728,14 +3759,18 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 可参考的近期记忆：{memory_hint}
 可参考的额外信息：{external_hint}
 今日行为意图：{intent_hint}
+兴趣与技能成长画像：
+{growth_context}
 日程约束：{day_rule}
 弹性约束：{flexibility_rule}
 要求：
 1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
 2) 时间点需保持顺序，活动为中文短语；不要所有人都套同一个模板。
 3) 必须包含“睡前/睡觉/睡眠”类活动，并给出具体时间。
-4) 活动可以包含临时念头或外界触发，但要符合角色职业、状态、星期和近期意图。
-5) 仅输出 JSON，不要其他文字。
+4) 若兴趣与技能成长画像不为“无”，按现实约束自然插入 0-2 个兴趣恢复或技能练习活动；日常倾向约 {INTERESTS_DAILY_INSERT_CHANCE:.2f}，周末额外提高 {INTERESTS_WEEKEND_BOOST:.2f}，工作日少量，周末可更多。
+5) 高承诺工作/上课/医疗/睡眠不可被兴趣活动硬性覆盖，低承诺个人时间可被具体兴趣或技能活动替换。
+6) 活动可以包含临时念头或外界触发，但要符合角色职业、状态、星期和近期意图。
+7) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="daily_routine", agent_id=agent["id"])
     schedule = _parse_schedule(response)
@@ -3789,19 +3824,23 @@ def generate_schedule(agent):
     memory_hits = retrieve_relevant_memories(agent, "日程安排", max_items=VECTOR_DB_TOP_K)
     memory_hint = _format_memory_hint(memory_hits)
     external_hint = _external_rag_hint(agent, "长期日程 生活偏好 职业节奏")
+    growth_context = format_growth_context(agent.get("growth_profile"), max_items=INTERESTS_MAX_ITEMS) if INTERESTS_ENABLED else "无"
     prompt = f"""
 你是城市生活模拟器的日程生成器。请基于角色资料生成一天日程安排。
 角色资料：
 {profile_text}
 可参考的近期记忆：{memory_hint}
 可参考的额外信息：{external_hint}
+兴趣与技能成长画像：
+{growth_context}
 要求：
 1) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
 2) 6-10 项，时间升序覆盖早中晚，活动为中文短语。
 3) 必须包含“睡前/睡觉/睡眠”类活动，并给出具体时间。
 4) 若角色为退休/无业/待业/失业/家庭主妇/家庭主夫/已退休，不出现“工作/通勤/上班/加班”等活动。
 5) 若角色为学生，优先出现“上课/学习/实验”等活动；若作息偏晚，适度延后。
-6) 仅输出 JSON，不要其他文字。
+6) 若兴趣与技能成长画像不为“无”，把个人时间具体化为 0-2 个兴趣爱好或技能发展活动。
+7) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="schedule", agent_id=agent["id"])
     schedule = _parse_schedule(response)
@@ -4577,7 +4616,12 @@ def choose_action(
         "task_trigger": "任务压力触发",
         "impulse_pull": "临时冲动",
         "suggested_by_thought": "临时念头牵引",
+        "growth_interest": "兴趣恢复",
+        "growth_skill": "技能成长",
+        "growth_career": "职业成长牵引",
     }
+    growth_profile = agent.get("growth_profile") if INTERESTS_ENABLED else {}
+    activity_growth_matches = match_growth_items(growth_profile, activity) if growth_profile else []
 
     for act in options:
         components = {}
@@ -4597,6 +4641,28 @@ def choose_action(
             components["growth_drive"] = 0.6
         if activity == "睡前" and "回顾" in act:
             components["night_reflection"] = 1.0
+
+        growth_matches = match_growth_items(growth_profile, activity, act) if growth_profile else []
+        if growth_matches:
+            for item in growth_matches:
+                priority = float(item.get("priority", 0.5) or 0.5)
+                level = float(item.get("level", 0.2) or 0.2)
+                if item.get("kind") == "skill":
+                    base = 0.28 + priority * 0.55 + max(0.0, 0.45 - level) * 0.20
+                    if progress or maintain or quick:
+                        base += 0.18
+                    if float(s.get("econ_security", 0.5)) < 0.5 or item.get("career_link"):
+                        components["growth_career"] = components.get("growth_career", 0.0) + 0.20 * priority
+                    components["growth_skill"] = components.get("growth_skill", 0.0) + base
+                else:
+                    base = 0.20 + priority * 0.45
+                    if restorative or social or avoidant:
+                        base += 0.16
+                    if float(s.get("stress", 0.5)) > 0.60 or float(s.get("fatigue_debt", 0.2)) > 0.55:
+                        base += 0.12
+                    components["growth_interest"] = components.get("growth_interest", 0.0) + base
+        elif activity_growth_matches and any(k in act for k in ["练习", "学习", "继续", "整理", "完成", "阅读"]):
+            components["growth_skill"] = components.get("growth_skill", 0.0) + 0.20
 
         if act in recent_actions:
             components["recent_repeat"] = 0.4
@@ -5419,6 +5485,23 @@ def run_simulation():
                 agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
+    if INTERESTS_ENABLED:
+        bootstrap_growth_profiles(
+            agents,
+            cache_path=INTERESTS_CACHE_PATH,
+            memory_dir=CONFIG.get("memory_dir", "output/memory"),
+            llm=lambda prompt: call_llm(prompt, task="growth_profile", agent_id=None),
+            max_items=INTERESTS_MAX_ITEMS,
+            stateful=STATEFUL,
+        )
+        for agent in agents:
+            context = format_growth_context(agent.get("growth_profile"), max_items=INTERESTS_MAX_ITEMS)
+            growth_log = f"[GrowthProfile] {agent.get('name', agent['id'])}\n{context}\n"
+            print(growth_log.strip())
+            append_agent_log(agent, growth_log)
+    else:
+        for agent in agents:
+            agent["growth_profile"] = {}
     distributed_client = DistributedRelayClient(DISTRIBUTED_CONFIG)
     if distributed_client.enabled:
         registered = distributed_client.register_agents(agents)
@@ -6360,6 +6443,29 @@ def run_simulation():
                         "expected_outcome": str(plan.get("expected_outcome", "")).strip(),
                         "created_at_day": day,
                     }
+                    if INTERESTS_ENABLED:
+                        progress_minutes = step_minutes
+                        if INTERESTS_PROGRESS_MINUTES is not None:
+                            parsed_minutes = _parse_step_minutes(INTERESTS_PROGRESS_MINUTES)
+                            if parsed_minutes is not None:
+                                progress_minutes = parsed_minutes
+                        updated_growth, growth_progress = update_growth_from_episode(
+                            agent.get("growth_profile"),
+                            episode,
+                            step_minutes=progress_minutes,
+                        )
+                        agent["growth_profile"] = updated_growth
+                        episode["growth_matches"] = list(growth_progress.get("matches", []))
+                        episode["growth_progress"] = growth_progress
+                        if STATEFUL:
+                            save_agent_growth_profile(
+                                agent_id,
+                                agent.get("growth_profile", {}),
+                                CONFIG.get("memory_dir", "output/memory"),
+                            )
+                    else:
+                        episode["growth_matches"] = []
+                        episode["growth_progress"] = {"matches": [], "minutes": 0, "level_changes": {}}
                     agent.setdefault("episodes", []).append(episode)
                     update_habits_from_episode(agent, episode, HUMAN_REALISM_CONFIG)
                     append_agent_episode(agent_id, episode)

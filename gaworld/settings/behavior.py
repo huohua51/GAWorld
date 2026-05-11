@@ -77,6 +77,16 @@ def intervention_settings() -> dict[str, Any]:
 
 def human_realism_settings() -> dict[str, Any]:
     return {
+        # Agent interests and skill-growth profiles.
+        "interests": {
+            "enabled": True,
+            "max_items": 6,
+            "daily_insert_chance": 0.55,
+            "weekend_boost": 0.25,
+            # Null means use the current timeline step length.
+            "progress_minutes_per_step": None,
+            "cache_path": "output/memory/growth_profiles.json",
+        },
         # Human realism (experience accumulation + habit/need dynamics)
         "human_realism": {
             "enabled": True,
