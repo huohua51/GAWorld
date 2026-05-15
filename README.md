@@ -56,6 +56,7 @@ Across days, the simulator accumulates:
 - Realistic personal economy simulation (tax, social insurance, investment, macro cycles)
 - Realistic location system with category-based spatial matching, transport cost calculation, rush-hour and weather effects, and commute memory
 - Dynamic behavior system: mood-driven spontaneous urges, social encounter chains, need-based interrupts, environment event cascades, and commitment-aware schedule interruption
+- Interest and skill-growth system: per-agent hobbies, planned skills, practice time, growth progress, and schedule/work-choice influence
 - City map generation and route playback
 - Visualization trace export
 - Agent interview CLI
@@ -70,6 +71,7 @@ Across days, the simulator accumulates:
 - `environment.py`: environment event system
 - `intervention_policy.py`: lightweight recommendation, exposure control, stance, and risk metrics
 - `human_realism.py`: realism helpers, intentions, habits, memory consolidation
+- `gaworld/interests.py`: interest and skill-growth profile derivation, persistence, matching, and progress updates
 - `economy_module.py`: realistic personal finance layer (tax, social insurance, Engel spending, investment, macro cycles)
 - `dynamic_behavior.py`: dynamic behavior system (spontaneous urges, social chains, need interrupts, environment responses, schedule insertion)
 - `memory_store.py`: memory persistence and vector DB helpers
@@ -243,6 +245,7 @@ Important fields:
 - `memory_dir`, `log_dir`, `vector_db_path`: persistence locations
 - `visualization.output_dir`: trace output folder
 - `economy`: personal finance settings (tax brackets, social insurance rates, Engel curve, investment, macro cycle, shocks)
+- `interests`: per-agent hobby and skill-growth settings (enable switch, item cap, insert tendency, progress persistence)
 - `dynamic_behavior`: dynamic behavior system settings (enabled flag)
 - `intervention`: lightweight recommendation / exposure control and evaluation settings
 - `policy_events`: scheduled policy shocks
@@ -381,6 +384,29 @@ those areas.
 context-aware schedule changes. The system is opt-in via `CONFIG["dynamic_behavior"]["enabled"]`
 and runs once per agent per time-step, before the LLM-based activity adjustment.
 
+### Interest And Skill Growth
+
+`gaworld/interests.py` derives a persistent `growth_profile` for each agent from
+their job, personality, daily life, and values. The profile contains hobbies and
+planned skills with motivation, priority, current level, weekly target minutes,
+preferred time blocks, career relevance, and activity templates.
+
+The simulator uses this profile in four places:
+
+- daily schedules and daily routines can replace low-commitment personal time with
+  concrete activities such as reading, running, creation, professional study, or
+  communication practice;
+- daily intentions may include `growth_focus`, so reflection and next-day planning
+  can carry growth goals forward;
+- action choice gives matched hobby/skill actions extra weight without overriding
+  high-commitment work, school, medical, or sleep activities;
+- episodes record `growth_matches` and `growth_progress`, then update level,
+  total minutes, last practiced day, and streak counters.
+
+Growth data is runtime state, not source profile data. It is cached globally in
+`output/memory/growth_profiles.json` and persisted per agent as
+`output/memory/agent_<id>_growth.json`.
+
 **Commitment-Aware Interruption**
 
 Every activity carries a commitment level (0.95 for exams and surgery, 0.70 for work, 0.15 for
@@ -441,6 +467,8 @@ Generated artifacts are written under `output/`, including:
 - `output/logs/agent_<id>.log`
 - `output/memory/agent_<id>.json`
 - `output/memory/agent_<id>_episodes.jsonl`
+- `output/memory/agent_<id>_growth.json`
+- `output/memory/growth_profiles.json`
 - `output/memory/vector_db.sqlite`
 - `output/economy/daily_ledger.csv`, `wealth_snapshot.csv`, `macro_state.json`
 - `output/economy/agents/agent_<id>_ledger.csv`, `agent_<id>_snapshot.json`

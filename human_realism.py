@@ -541,13 +541,25 @@ def relationship_update(agent, neighbor_id, interaction_signal, cfg):
         item["closeness"] = _clamp(float(item.get("closeness", 0.5)) + 0.01)
         item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.015)
         item["friction"] = _clamp(float(item.get("friction", 0.5)) - 0.005)
-    item["last_interaction_day"] = int(agent.get("current_day", 0))
+    today = int(agent.get("current_day", 0))
+    item["last_interaction_day"] = today
+    # Mirror to last_contact_day so the social_network decay/dunbar
+    # subsystems share a single "last touched" clock.
+    item["last_contact_day"] = today
     return item
 
 
 def relationship_weight(agent, neighbor_id):
     rel = agent.get("relationships", {})
     item = rel.get(str(neighbor_id), {})
+    if isinstance(item, dict) and item.get("role"):
+        # Defer to the role-aware weight when the schema is populated.
+        try:
+            from social_network import role_aware_weight
+        except ImportError:  # pragma: no cover - fallback only if module missing
+            role_aware_weight = None  # type: ignore[assignment]
+        if role_aware_weight is not None:
+            return role_aware_weight(item)
     closeness = float(item.get("closeness", 0.5))
     trust = float(item.get("trust", 0.5))
     obligation = float(item.get("obligation", 0.5))

@@ -49,36 +49,16 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-05-11 8:53pm GMT+2
+# [GAWorld] recent context, 2026-05-15 7:01pm GMT+2
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 44 obs (10,136t read) | 2,764,472t work | 100% savings
+Stats: 50 obs (12,445t read) | 3,572,306t work | 100% savings
 
-### Apr 29, 2026
-18 6:44a 🔵 Avatar generation not functioning
-19 " 🔵 Avatar SVG files exist on disk but not rendering in UI
-20 " 🔵 HTTP server root mismatch prevents avatar loading
-21 6:45a 🔴 Generated missing avatar SVGs for all 51 agents
-28 7:05a 🔴 人生事件在网页面板中未显示
-29 " 🔴 为网页面板添加人生事件 API 端点
-31 " 🔴 人生事件 UI 面板完整实现
-32 " 🔴 人生事件面板交互逻辑与自动刷新完整落地
-34 7:06a 🔵 人生事件在模拟引擎中的完整数据流确认
-35 " 🟣 新增 tests/test_life_events.py 单元测试
-36 " 🔵 人生事件面板验证上线
 ### May 11, 2026
-300 7:30p 🔄 Project file and folder structure reorganization
-301 " 🔵 GAWorld project structure inventory
-303 " 🔵 config.py structure and dependencies mapped
-304 " 🔵 gaworld/ typed config wrapper and migration status
-302 7:31p 🔵 Large files and directory structure identified
-305 7:32p ⚖️ Plan: split root config.py into gaworld/settings/ submodules
-306 " 🟣 Project file organization and refactoring initiated
 307 7:40p 🔄 Settings module split: runtime.py → behavior.py
-308 " 🔄 Tests and project structure docs added
 309 " 🔵 Import smoke test passes after settings refactor
 310 7:41p 🔵 CONFIG content equivalence verified via git diff
 311 " ✅ pyproject.toml pythonpath fixed for pytest module discovery
@@ -103,6 +83,51 @@ Stats: 44 obs (10,136t read) | 2,764,472t work | 100% savings
 359 " 🔵 GAWorldTutorialCN still frame rendered successfully
 360 " 🟣 Remotion中文教程文档编写
 361 " 🟣 Remotion GAWorld中文教程视频帧渲染
+### May 13, 2026
+386 7:59p 🔵 GAWorld 项目现有文档结构
+387 " 🔵 GAWorld 项目完整技术栈梳理
+S130 为GAWorld项目创建文档：初学者教程（~20页）和科学研究方向头脑风暴 (May 13 at 8:06 PM)
+S129 为GAWorld项目撰写面向零基础初学者的中文详细教程（20页左右，含图片和表格，md格式） (May 13 at 8:06 PM)
+S131 Continue creating experiment proposals from ideas.md brainstorming document (May 13 at 8:11 PM)
+### May 14, 2026
+392 6:03p ⚖️ Research Experiment Workflow Established
+394 " 🔵 EXP-INFO-001 Misinformation Spread Proposal Content
+395 " 🔵 4 Research Proposal Details Analyzed
+393 6:04p 🔵 9 Research Proposal Experiments Identified
+396 6:06p 🔵 GAWorld Infrastructure Analysis Complete
+397 " 🔵 EXP-TRANS-001 Transportation Behavior Proposal
+398 " 🟣 GAWorld Experiment Framework Established
+399 6:38p 🔵 Unified Experiment Runner Framework exists with 9 registered experiments
+400 " 🔴 Experiment directory creation missing in base ExperimentRunner
+402 6:42p 🔴 Fixed mkdir in exp_memory_consistency.py run method
+401 6:43p 🔴 Fixed missing directory creation in exp_misinfo_spread.py run method
+403 6:45p 🔴 Fixed exp_abm_validation.py missing mkdir in run method
+404 " 🔵 Experiment framework uses non-existent CLI arguments for simulation
+405 6:46p 🔴 Fixed experiment runner CLI incompatibility using environment variables
+406 " 🔵 Simulation requires reset before first run after model changes
+407 " 🔵 Memory model version check fails with per-experiment memory_dir override
+408 " ⚖️ 实验框架搭建决策：隔离操作规范
+412 " 🔵 Memory Model Version System with Compatibility Enforcement
+413 " 🟣 Per-Experiment Memory Directory Isolation
+414 6:56p 🔵 Experiment Framework Creates Isolated Output Directories
+409 " 🔵 Memory Model Version Control机制发现
+410 " ✅ 实验运行器恢复memory_dir配置覆盖
+411 " 🔵 GAWORLD_CONFIG_OVERRIDES环境变量机制
+S132 Run research experiments from docs/proposals - established experiment framework with 9 experiment scripts and unified runner (May 14 at 7:02 PM)
+**Investigated**: Explored docs/proposals directory structure, checked simulation configuration system, examined memory model versioning, tested simulation execution with config overrides
 
-Access 2764k tokens of past work via get_observations([IDs]) or mem-search skill.
+**Learned**: - GAWorld uses memory_model_version tracking (currently version 3) with _enforce_memory_model_compat() validation
+    - Each experiment needs isolated memory directory to prevent version conflicts
+    - Simulation CLI doesn't support --sim-days directly - requires GAWORLD_CONFIG_OVERRIDES environment variable
+    - Full simulations take 5+ minutes even for 2-day runs
+
+**Completed**: - Created 9 experiment scripts in docs/proposals/experiments/ covering: misinformation spread, polarization, macro economy, emotion contagion, memory consistency, network evolution, policy framework, transport behavior, ABM validation
+    - Built run_experiment.py unified framework with --list, --run, --analyze, --compare actions
+    - Created docs/proposals/results/ directory structure for experiment outputs
+    - Experiment output dirs (e.g., exp_misinfo_spread/control/) contain experiment_config.json and isolated memory subdirectories
+
+**Next Steps**: Manual test of single experiment to validate output format, then either adjust experiment scripts or reduce default simulation days (14→2-3) for faster iteration before running all 9 experiments
+
+
+Access 3572k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

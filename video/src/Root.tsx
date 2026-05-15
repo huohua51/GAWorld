@@ -1,6 +1,6 @@
 import {Composition} from 'remotion';
 import {GAWorldIntro} from './GAWorldIntro';
-import {GAWorldTutorialCN} from './GAWorldTutorialCN';
+import {GAWorldTutorialCN, TUTORIAL_DURATION_IN_FRAMES} from './GAWorldTutorialCN';
 
 export const RemotionRoot = () => {
   return (
@@ -16,7 +16,7 @@ export const RemotionRoot = () => {
       <Composition
         id="GAWorldTutorialCN"
         component={GAWorldTutorialCN}
-        durationInFrames={1300}
+        durationInFrames={TUTORIAL_DURATION_IN_FRAMES}
         fps={30}
         width={1920}
         height={1080}

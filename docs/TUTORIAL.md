@@ -42,6 +42,7 @@ python generative_city_sim.py run
 
 - `output/logs/`：运行日志
 - `output/memory/`：Agent 记忆与状态
+- `output/memory/agent_<id>_growth.json`：Agent 的兴趣爱好、计划发展技能和练习进度
 - `output/state/agent_state_history.csv`：状态时间序列
 - `output/intervention/intervention_metrics.csv`：PolicySim 风格干预指标
 - `output/network/social_network.png`：社交网络图
@@ -140,6 +141,8 @@ python scripts/generate_citymap.py --description "a small city with about 1000 r
 在 `config.py` 中降低 `sim_days`、减少 `agent_ids`，或减少额外 LLM 调用配置。
 
 如果只想关闭干预评估，在 `config.py` 中设置 `intervention.enabled = False`。
+
+如果只想关闭兴趣爱好与技能成长系统，在 `config.py` 或 `dashboard_config.json` 中设置 `interests.enabled = False`。
 
 3. 修改配置后行为异常  
 先执行 `python generative_city_sim.py reset`，再重新运行。

@@ -53,6 +53,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 真实个人经济仿真（个税、五险一金、恩格尔系数消费、投资理财、宏观经济周期）
 - 真实位置系统：基于类别的空间匹配、出行成本计算、高峰时段和天气影响、通勤记忆
 - 动态行为系统：情绪驱动的即兴行为、社交偶遇链、需求中断、环境事件连锁反应、承诺度感知的日程中断
+- 兴趣爱好与技能成长系统：为每个智能体生成兴趣、计划发展的技能、练习时间、成长进度，并影响日程、行动、工作和生活选择
 - 城市地图生成与轨迹回放
 - 可视化 trace 导出
 - 单智能体采访 CLI
@@ -67,6 +68,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - `environment.py`：环境事件系统
 - `intervention_policy.py`：轻量推荐、曝光控制、立场和风险指标
 - `human_realism.py`：真实感增强、习惯、意图、记忆整合
+- `gaworld/interests.py`：兴趣爱好与技能成长画像推导、持久化、匹配和进度更新
 - `economy_module.py`：真实个人经济模块（个税、社保、恩格尔系数消费、投资、宏观周期）
 - `dynamic_behavior.py`：动态行为系统（即兴行为、社交链、需求中断、环境响应、日程插入）
 - `memory_store.py`：记忆持久化和向量库辅助
@@ -239,6 +241,7 @@ dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 - `memory_dir`、`log_dir`、`vector_db_path`：持久化路径
 - `visualization.output_dir`：轨迹输出目录
 - `economy`：个人财务配置（税率表、社保费率、恩格尔曲线、投资参数、宏观周期、冲击事件）
+- `interests`：兴趣爱好与技能成长配置（启用开关、成长项上限、日程插入倾向、进度持久化）
 - `dynamic_behavior`：动态行为系统配置（启用开关）
 - `intervention`：轻量推荐 / 曝光控制和干预评估配置
 - `policy_events`：政策事件
@@ -351,6 +354,22 @@ Refl: 感受：情绪有一点波动；教训：下次要更早判断状态和�
 不同区域类别带有价格水平乘数（商业区 1.35 倍、工业区 0.80 倍、教育区 0.85 倍等），
 影响智能体在该区域内的消费行为。
 
+### 兴趣爱好与技能成长系统
+
+`gaworld/interests.py` 会根据智能体的职业、性格、日常生活和价值观，为每个智能体派生并持久化
+`growth_profile`。成长画像包含兴趣爱好和计划发展的技能，每项记录名称、类别、动机、当前水平、优先级、
+每周目标分钟数、偏好时段、可放入日程的活动模板、是否关联职业发展、社交属性、累计练习时间和连续天数。
+
+主仿真会在四个环节使用这份画像：
+
+- 生成基础日程和今日日程时，低承诺的“个人时间”可以自然替换为阅读、运动、创作、专业学习或表达练习等具体活动；
+- 每日意图可以包含 `growth_focus`，让今天要发展的兴趣或技能进入计划、反思和次日整合；
+- 动作选择时，匹配兴趣/技能的动作会获得额外权重，但不会硬性覆盖工作、上课、医疗、睡眠等高承诺活动；
+- 每个 episode 会记录 `growth_matches` 和 `growth_progress`，并更新成长项的水平、累计分钟、最近练习日期和 streak。
+
+兴趣技能是运行时状态，不会写回原始 CSV 或 Markdown profile。全局推导缓存位于
+`output/memory/growth_profiles.json`，单智能体进度位于 `output/memory/agent_<id>_growth.json`。
+
 ### 动态行为系统
 
 `dynamic_behavior.py` 通过注入上下文感知的日程变更，让智能体的每日行程更接近真实人类。该系统
@@ -411,6 +430,8 @@ LLM 调用之前完成决策。
 - `output/logs/agent_<id>.log`
 - `output/memory/agent_<id>.json`
 - `output/memory/agent_<id>_episodes.jsonl`
+- `output/memory/agent_<id>_growth.json`
+- `output/memory/growth_profiles.json`
 - `output/memory/vector_db.sqlite`
 - `output/economy/daily_ledger.csv`、`wealth_snapshot.csv`、`macro_state.json`
 - `output/economy/agents/agent_<id>_ledger.csv`、`agent_<id>_snapshot.json`

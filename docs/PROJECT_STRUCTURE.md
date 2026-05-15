@@ -12,6 +12,7 @@ CLI/backward-compat entrypoints until their callers have been migrated.
 - `gaworld/settings/`: focused configuration fragments assembled into the legacy `CONFIG` dict.
 - `gaworld/core/`: typed core abstractions used by new code.
 - `gaworld/io/`: IO helpers such as HTTP guards and web scraping.
+- `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, and progress updates.
 - `gaworld/work/`: real-work task routing, queueing, adapters, and market data.
 - `gaworld/apps/`: runnable local servers and dashboard backend entrypoints.
 - `scripts/`: developer and launch utilities that are not imported by runtime modules.
@@ -22,7 +23,7 @@ CLI/backward-compat entrypoints until their callers have been migrated.
 - `gaworld/settings/llm.py`: LLM provider and routing defaults.
 - `gaworld/settings/runtime.py`: core simulation, paths, memory, planning, and concurrency defaults.
 - `gaworld/settings/environment.py`: external environment, distributed simulation, and OpenClaw defaults.
-- `gaworld/settings/behavior.py`: news, intervention, human-realism, and dynamic-behavior defaults.
+- `gaworld/settings/behavior.py`: news, intervention, interests, human-realism, and dynamic-behavior defaults.
 - `gaworld/settings/economy.py`: personal finance and macro-economy defaults.
 - `gaworld/settings/integrations.py`: extension hooks and real-work execution defaults.
 - `gaworld/settings/overrides.py`: dashboard, environment file, and `GAWORLD_CONFIG_OVERRIDES` merge logic.
@@ -41,6 +42,8 @@ New code that needs config assembly should prefer `gaworld.settings`.
 ## Generated Or Auxiliary Content
 
 - `output/`: generated simulation artifacts, logs, memory, plots, CSVs.
+  - `output/memory/agent_<id>_growth.json`: per-agent hobby/skill progress state.
+  - `output/memory/growth_profiles.json`: cached LLM-derived growth profiles.
 - `site/`: dashboard and visualization frontends.
 - `video/`: Remotion video project.
 - `tmp/`: local temporary/generated scratch content.

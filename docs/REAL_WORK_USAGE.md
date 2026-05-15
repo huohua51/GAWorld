@@ -69,6 +69,12 @@ output/work/
 
 `agent_<id>/` 名字直接对应 `hangzhou_agents_state_init.csv` 里的 id，方便溯源。
 
+如果启用了兴趣爱好与技能成长系统，真实工作路由会把 `agent["growth_profile"]` 中计划发展的技能和兴趣
+合并进能力匹配表面，但不会改变 `AgentCapabilities` 的 JSON schema。运行中可同时查看：
+
+- `output/memory/growth_profiles.json`：兴趣/技能画像推导缓存
+- `output/memory/agent_<id>_growth.json`：单个智能体的成长进度
+
 ---
 
 ## 3. 检查市场状态
@@ -187,6 +193,7 @@ class VideoStoryboardAdapter:
 | 现象 | 看哪 |
 | --- | --- |
 | 启动时长，capabilities 反复算 | `output/work/capabilities.json` 是否被每次都覆盖；profile 字段 hash 变了会触发重算 |
+| agent 技能看起来和真实工作不匹配 | 同时检查 `output/work/capabilities.json` 和 `output/memory/agent_<id>_growth.json`；职业能力来自 profile，计划发展技能来自 growth profile |
 | agent 永远不接单 | `market.jsonl` 里有没有匹配 agent `job_label` 的 job；`browse_probability_base` 是不是 0；agent 是不是当天已用完 quota |
 | 任务一直 pending 不 done | WorkerPool 是否启动（看日志 `WorkerPool started`）；adapter 是不是抛了未捕获异常（看 `adapter crashed` 日志） |
 | 产物文件存在但内容不对 | adapter 的 LLM prompt 在各自 `gaworld/work/adapters/*.py` 顶部，按需调 |

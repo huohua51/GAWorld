@@ -154,6 +154,57 @@ from human_realism import (
     update_habits_from_episode,
     update_needs,
 )
+from social_network import (
+    bootstrap_social_roster,
+    decay_relationships,
+    enforce_dunbar,
+    generate_ghost_event,
+    migrate_relationships,
+)
+from life_events import add_life_event as _add_life_event
+
+
+# Probability per (agent, day) of an off-screen ghost reaching out.
+GHOST_EVENT_DAILY_P = 0.18
+
+
+def _maybe_inject_ghost_event(agent, day, time_str):
+    """If the dice roll favours it, generate one off-screen ghost event
+    and push it through the life-events pipeline. Returns the event dict
+    or ``None``. Failures are swallowed — the sim must never block on
+    this path.
+    """
+    try:
+        if random.random() > GHOST_EVENT_DAILY_P:
+            return None
+        ev = generate_ghost_event(
+            agent,
+            current_day=day,
+            llm_call=lambda prompt, task=None, agent_id=None: call_llm(
+                prompt, task=task, agent_id=agent_id
+            ),
+            rng=random,
+        )
+        if not ev:
+            return None
+        agent_id = agent.get("id")
+        payload = {
+            "title": ev["title"],
+            "description": ev["description"],
+            "severity": ev.get("severity", 0.55),
+            "impact_tags": ev.get("impact_tags", ["relationship", "off_screen"]),
+            "state_effects": ev.get("state_effects", {}),
+            "schedule_mode": "scheduled",
+            "day": int(day),
+            "time": str(time_str or "08:30"),
+            "agent_ids": [int(agent_id)] if agent_id is not None else [],
+            "template_key": ev.get("template_key", "ghost_event"),
+            "created_by": "social_network",
+        }
+        return _add_life_event(payload, CONFIG)
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️  ghost event injection failed for {agent.get('name', '?')}: {exc}")
+        return None
 from intervention_policy import (
     INTERVENTION_METRICS,
     append_intervention_metrics,
@@ -5576,6 +5627,20 @@ def run_simulation():
                 rel[key].setdefault("obligation", 0.5)
                 rel[key].setdefault("friction", 0.5)
                 rel[key].setdefault("last_interaction_day", 0)
+            # Migrate existing records into the extended schema, then
+            # seed an off-screen roster (family, old friends, etc.) so
+            # the agent has relationships beyond the in-sim neighbours.
+            migrate_relationships(a, current_day=start_day)
+            try:
+                bootstrap_social_roster(
+                    a,
+                    lambda prompt, task=None, agent_id=None: call_llm(
+                        prompt, task=task, agent_id=agent_id
+                    ),
+                    current_day=start_day,
+                )
+            except Exception as exc:  # noqa: BLE001 - never block sim init
+                print(f"⚠️  {a.get('name', a.get('id'))} 场外社交档案初始化失败：{exc}")
 
     for a in agents:
         if not a.get("locations"):
@@ -5681,6 +5746,9 @@ def run_simulation():
         print(f"\n================= Day {day} ({day_desc}) =================")
         if distributed_client.enabled:
             distributed_client.refresh_directory()
+        if HUMAN_REALISM_ENABLED:
+            for _a in agents:
+                _maybe_inject_ghost_event(_a, day, "08:30")
         daily_logs = defaultdict(str)
         day_env_events = env_system.start_day(day, day_context=day_context, agents=agents)
         day_env_context = env_system.get_day_context_text()
@@ -6680,6 +6748,10 @@ def run_simulation():
                     budget,
                 )
                 agent["intentions"] = consolidated.get("intentions", agent.get("intentions", {}))
+                # Day-end: decay role-aware relationships, prune Dunbar
+                # overflow. Both operate in place on agent["relationships"].
+                decay_relationships(agent, current_day=day, cfg=HUMAN_REALISM_CONFIG)
+                enforce_dunbar(agent)
                 if STATEFUL:
                     save_agent_intentions(agent_id, agent.get("intentions", {}))
                     save_agent_habits(agent_id, agent.get("habits", {}))
@@ -7426,7 +7498,8 @@ def _build_arg_parser():
     parser = argparse.ArgumentParser(description="GAWorld simulator")
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("run", help="Run the full simulation")
+    run_cmd = subparsers.add_parser("run", help="Run the full simulation")
+    run_cmd.add_argument("--sim-days", type=int, default=None, help="Override simulation days")
     subparsers.add_parser("reset", help="Reset simulation memory/logs/cache")
 
     interview = subparsers.add_parser("interview", help="Interview a specific agent by ID")
@@ -7687,6 +7760,11 @@ def _main():
             max_messages=args.max_messages,
         )
         return
+
+    if getattr(args, "sim_days", None) is not None:
+        CONFIG["sim_days"] = int(args.sim_days)
+        global SIM_DAYS
+        SIM_DAYS = int(args.sim_days)
 
     run_simulation()
 

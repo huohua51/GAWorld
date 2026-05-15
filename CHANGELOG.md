@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`gaworld/interests.py` — interest and skill-growth system**
+  - Derives persistent per-agent `growth_profile` data from profile fields, with LLM JSON parsing, hash-based cache reuse, and heuristic fallback when the LLM is unavailable.
+  - Tracks hobbies and planned skills with motivation, priority, level, weekly target minutes, preferred time blocks, activity templates, career relevance, sociality, total practice minutes, last practiced day, and streak counters.
+  - New runtime artifacts: `output/memory/growth_profiles.json` and `output/memory/agent_<id>_growth.json`.
+  - Daily schedule and daily routine prompts now include growth context so low-commitment personal time can become concrete hobby or skill-development activity.
+  - Daily intentions can include `growth_focus`; episode records now include `growth_matches` and `growth_progress`.
+  - Action choice gives matched hobby/skill actions additional weight while preserving high-commitment activity guardrails.
+  - Real-work capability matching can incorporate planned growth skills/interests without changing the `AgentCapabilities` schema.
+  - Added unit tests for profile derivation, fallback/cache, progress updates, daily-intention budget behavior, mock LLM coverage, and daily routine prompt integration.
+
 - **`dynamic_behavior.py` — dynamic behavior system** (new module, ~550 lines)
   - **InterruptEngine**: priority queue of potential schedule interruptions. Each candidate is scored against the current activity's commitment level (0.95 for exams/surgery down to 0.05 for personal time). Personality-dependent threshold with stochastic acceptance gate.
   - **SpontaneityEngine**: mood-classified urge pools (happy/stressed/tired/bored/anxious/lonely), each with 4 context-aware activities. Time-of-day filtering (no shopping at 23:00), personality scaling (extroverts more social urges, introverts more solitary), duration estimation by activity type.
