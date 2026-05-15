@@ -1,0 +1,52 @@
+{
+  "agent_id": 7,
+  "items": [
+    {
+      "name": "沟通表达",
+      "kind": "skill",
+      "category": "职业",
+      "motivation": "希望提升长期选择空间和工作稳定性",
+      "level": 0.28,
+      "priority": 0.68,
+      "weekly_target_minutes": 180,
+      "preferred_time_blocks": [
+        "evening",
+        "weekend"
+      ],
+      "activity_templates": [
+        "练习沟通表达",
+        "整理表达材料"
+      ],
+      "career_link": true,
+      "sociality": 0.35,
+      "last_practiced_day": 0,
+      "total_minutes": 0,
+      "streak_days": 0
+    },
+    {
+      "name": "艺术创作",
+      "kind": "hobby",
+      "category": "艺术",
+      "motivation": "用创作表达情绪并获得恢复感",
+      "level": 0.3,
+      "priority": 0.58,
+      "weekly_target_minutes": 150,
+      "preferred_time_blocks": [
+        "evening",
+        "weekend"
+      ],
+      "activity_templates": [
+        "练习摄影",
+        "做一点创作",
+        "听音乐放松"
+      ],
+      "career_link": false,
+      "sociality": 0.3,
+      "last_practiced_day": 0,
+      "total_minutes": 0,
+      "streak_days": 0
+    }
+  ],
+  "notes": "基于职业、生活习惯和价值观规则推导。",
+  "source_hash": "9eb435a9bd79c8c210e0ed011b9b7a18"
+}

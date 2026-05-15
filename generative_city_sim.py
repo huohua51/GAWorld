@@ -5465,6 +5465,8 @@ def _enforce_memory_model_compat(sim_state):
     if not REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE:
         return
     current_version = sim_state.get("memory_model_version")
+    if current_version is None:
+        return  # Fresh start, no prior state
     if current_version != MEMORY_MODEL_VERSION:
         raise RuntimeError(
             "Memory model version changed. "

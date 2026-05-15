@@ -1,25 +1,53 @@
 {
   "home": "Building C-01",
   "workplace": "Central Block",
-  "current": "Building C-01",
-  "destination": "Building C-01",
+  "current": "Hangzhou Riverside Community Center",
+  "destination": "Hangzhou Riverside Community Center",
   "in_transit": false,
-  "transport_mode": "",
-  "travel_minutes": 0,
+  "transport_mode": "e-bike",
+  "travel_minutes": 8,
   "travel_progress": 1.0,
   "travel_route": [
-    "Building C-01"
+    "Riverwalk",
+    "Riverside Park",
+    "C-01 (Village Center)",
+    "Hangzhou Riverside Community Center"
   ],
-  "travel_cost": 0.0,
+  "travel_cost": 0.24,
   "rush_hour": false,
-  "arrival_time": "",
-  "frequent_places": {},
-  "preferred_modes": {},
+  "arrival_time": "23:55",
+  "frequent_places": {
+    "Central Block": 2,
+    "Public Services Center": 3,
+    "Courthouse": 2,
+    "Building C-01": 1,
+    "Riverside Fire Station": 1,
+    "Bridge Rd": 1,
+    "Riverside Bank Branch": 1,
+    "North Block": 1,
+    "Riverside Cinema": 1,
+    "C-01 (Village Center)": 1,
+    "Riverside Supermart": 1,
+    "C-02": 1,
+    "Corner Mart": 1,
+    "Central Parking Lot": 1,
+    "Building S-02": 1,
+    "Financial District": 1,
+    "Fitness Area": 1,
+    "Riverwalk": 1,
+    "Hangzhou Riverside Community Center": 1
+  },
+  "preferred_modes": {
+    "bike": 9,
+    "e-bike": 14
+  },
   "commute_route": {
     "mode": "",
     "distance_km": 0.0,
     "avg_minutes": 0,
     "trip_count": 0
   },
-  "daily_travel_cost": 0.0
+  "daily_travel_cost": 1.66,
+  "travel_distance_km": 2.362,
+  "depart_time": "23:47"
 }

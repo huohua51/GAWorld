@@ -60,8 +60,6 @@ class ExperimentRunner:
         self.experiment_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use GAWORLD_CONFIG_OVERRIDES to pass sim_days and output-dir
-        # Note: memory_dir is NOT overridden to avoid memory model version conflicts
         config_overrides = {
             "sim_days": days,
             "random_seed": seed,
@@ -69,9 +67,13 @@ class ExperimentRunner:
             "network_output_dir": str(self.experiment_dir / "network"),
             "diary_output_dir": str(self.experiment_dir / "diaries"),
             "log_dir": str(self.experiment_dir / "logs"),
-            "memory_dir": str(self.experiment_dir / "memory"),  # Allow per-experiment memory
+            "memory_dir": str(self.experiment_dir / "memory"),
             "environment_output_dir": str(self.experiment_dir / "environment"),
             "economy_output_dir": str(self.experiment_dir / "economy"),
+            "intervention": {
+                "enabled": True,
+                "output_dir": str(self.experiment_dir / "intervention"),
+            },
         }
 
         cmd = [

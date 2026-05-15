@@ -5,7 +5,7 @@
     "intervention_enabled": true,
     "description": "无信息注入基线"
   },
-  "days": 2,
+  "days": 7,
   "seed": 42,
-  "timestamp": "2026-05-15T00:46:40.786170"
+  "timestamp": "2026-05-16T03:25:18.258408"
 }

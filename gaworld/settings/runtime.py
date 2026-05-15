@@ -8,7 +8,7 @@ from typing import Any
 def simulation_settings() -> dict[str, Any]:
     return {
         # Simulation
-        "agent_ids": [2],
+        "agent_ids": [1, 2, 3, 4, 5],
         "sim_days": 2,
         "seconds_per_day": 10,
         # When False, simulation runs as fast as the CPU/LLM backend allows.
