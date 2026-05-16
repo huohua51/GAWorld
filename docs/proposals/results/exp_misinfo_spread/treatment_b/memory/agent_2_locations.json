@@ -1,0 +1,49 @@
+{
+  "home": "Building C-01",
+  "workplace": "Riverside Bank Branch",
+  "current": "Riverside Bank Branch",
+  "destination": "Central Bank Annex",
+  "in_transit": true,
+  "transport_mode": "metro",
+  "travel_minutes": 17,
+  "travel_progress": 0.5294117647058824,
+  "travel_route": [
+    "Riverside Bank Branch",
+    "C-01 (Village Center)",
+    "North Block",
+    "Central Block",
+    "City Hall",
+    "Financial District",
+    "Central Bank Annex"
+  ],
+  "travel_cost": 2.6,
+  "rush_hour": false,
+  "arrival_time": "12:55",
+  "frequent_places": {
+    "Hangzhou Riverside Community Center": 1,
+    "Building C-01": 2,
+    "Riverside Cinema": 2,
+    "Riverside Fire Station": 1,
+    "Bridge Rd": 1,
+    "Public Services Center": 1,
+    "City Hall": 1,
+    "Riverside Tower": 1,
+    "Central Bank Annex": 1,
+    "Stadium Plaza": 1,
+    "Riverside Bank Branch": 1
+  },
+  "preferred_modes": {
+    "e-bike": 8,
+    "bike": 4,
+    "metro": 1
+  },
+  "commute_route": {
+    "mode": "",
+    "distance_km": 0.0,
+    "avg_minutes": 0,
+    "trip_count": 0
+  },
+  "daily_travel_cost": 4.970000000000001,
+  "travel_distance_km": 5.326,
+  "depart_time": "12:38"
+}

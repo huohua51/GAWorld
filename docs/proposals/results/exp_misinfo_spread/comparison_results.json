@@ -2,10 +2,15 @@
   "control": {
     "treatment": "control",
     "total_agents": 1,
-    "days": 2,
+    "days": 7,
     "avg_misinfo_risk": {
+      "1": 0.0,
+      "2": 0.0,
       "3": 0.0,
-      "4": 0.0
+      "4": 0.0,
+      "5": 0.0,
+      "6": 0.0,
+      "7": 0.0
     },
     "peak_misinfo_risk": 0.0,
     "final_misinfo_risk": 0.0,
@@ -14,10 +19,15 @@
   "treatment_a": {
     "treatment": "treatment_a",
     "total_agents": 1,
-    "days": 2,
+    "days": 7,
     "avg_misinfo_risk": {
+      "1": 0.0,
+      "2": 0.0,
       "3": 0.0,
-      "4": 0.0
+      "4": 0.0,
+      "5": 0.0,
+      "6": 0.0,
+      "7": 0.0
     },
     "peak_misinfo_risk": 0.0,
     "final_misinfo_risk": 0.0,
@@ -26,10 +36,15 @@
   "treatment_b": {
     "treatment": "treatment_b",
     "total_agents": 1,
-    "days": 2,
+    "days": 7,
     "avg_misinfo_risk": {
+      "1": 0.0,
+      "2": 0.0,
       "3": 0.0,
-      "4": 0.0
+      "4": 0.0,
+      "5": 0.0,
+      "6": 0.0,
+      "7": 0.0
     },
     "peak_misinfo_risk": 0.0,
     "final_misinfo_risk": 0.0,

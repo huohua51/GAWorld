@@ -61,6 +61,7 @@ class ExperimentRunner:
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
         config_overrides = {
+            "agent_ids": [1, 2, 3, 4, 5],
             "sim_days": days,
             "random_seed": seed,
             "state_output_dir": str(self.experiment_dir / "state"),

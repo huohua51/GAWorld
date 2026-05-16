@@ -11,7 +11,7 @@
     "high_diversity_mode": true,
     "description": "误信息 + 强干预（高跨观点曝光）"
   },
-  "days": 2,
+  "days": 7,
   "seed": 42,
-  "timestamp": "2026-05-16T02:14:07.965825"
+  "timestamp": "2026-05-16T16:18:45.565827"
 }

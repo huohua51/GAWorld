@@ -10,7 +10,7 @@
     "intervention_enabled": true,
     "description": "单条误信息注入"
   },
-  "days": 2,
+  "days": 7,
   "seed": 42,
-  "timestamp": "2026-05-16T02:04:41.064313"
+  "timestamp": "2026-05-16T14:57:25.935069"
 }
