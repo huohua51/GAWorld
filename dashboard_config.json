@@ -1,16 +1,17 @@
 {
   "llm": {
     "routing": {
-      "default": "minimax",
+      "default": "qwen3_32b_local",
       "tasks": {
-        "schedule": "minimax"
+        "schedule": "qwen3_32b_local"
       }
     }
   },
   "sim_days": 1,
   "seconds_per_day": 10,
   "agent_ids": [
-    7
+    7,
+    51
   ],
   "simulate_realtime": false,
   "time_step_minutes": null

@@ -56,24 +56,41 @@ CONFIG = {
                 "model": os.environ.get("MINIMAX_MODEL", "MiniMax-M2.7"),
                 "api_key_env": "MINIMAX_API_KEY",
                 "api_key_envs": ["MINIMAX_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
-                # China-region Minimax expects the raw secret key in Authorization.
-                # Set MINIMAX_AUTHORIZATION_SCHEME=bearer for endpoints that require Bearer tokens.
-                "authorization_scheme": os.environ.get("MINIMAX_AUTHORIZATION_SCHEME", "raw"),
-                "authorization_retry_schemes": ["bearer"],
+                "authorization_scheme": os.environ.get("MINIMAX_AUTHORIZATION_SCHEME", "bearer"),
+                "authorization_retry_schemes": ["raw"],
                 "include_x_api_key": False,
                 "timeout": 120,
                 "max_tokens": 512,
             },
+            "dashscope_qwen": {
+                "type": "openai",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "qwen3.6-plus",
+                "api_key": os.environ.get("DASHSCOPE_API_KEY", "sk-74014db5e02341c88fb5ecb5eb1a3439"),
+                "timeout": 600,
+                "max_tokens": 512,
+                "temperature": 0.7,
+            },
+            "qwen3_32b_local": {
+                "type": "openai",
+                "base_url": "http://123.59.6.244:8000/v1",
+                "model": "Qwen3-32B",
+                "api_key": "EMPTY",
+                "timeout": 300,
+                "max_tokens": 512,
+                "temperature": 0.7,
+                "system_prompt": "/no_think",
+            },
         },
         "routing": {
-            "default": "minimax",
+            "default": "qwen3_32b_local",
             "tasks": {
-                "schedule": "minimax",
+                "schedule": "qwen3_32b_local",
             },
         },
     },
     # Simulation
-    "agent_ids": [4],
+    "agent_ids": [7, 51],
     "sim_days": 1,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
@@ -96,8 +113,8 @@ CONFIG = {
             "use_seed_script": True,
             "only_when_empty": True,
             "profile_items": 3,
-            "web_items": 1,
-            "use_web_search": True,
+            "web_items": 0,
+            "use_web_search": False,
             "prefer_cached_news": True,
             "max_chars_per_item": 280,
         },
@@ -245,7 +262,7 @@ CONFIG = {
     },
     # News / social media reading
     "news": {
-        "enabled": True,
+        "enabled": False,
         "sources_path": "news_source.md",
         "cache_path": "news_cache.json",
         "use_cache_first": True,

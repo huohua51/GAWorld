@@ -4873,8 +4873,18 @@ def planning(agent, perception_text, recall_context=None, decision_refs=None):
     if refs.get("transient_thought"):
         optional_sections.append(f"临时念头：{format_transient_thought(refs.get('transient_thought'))}")
     optional_text = "\n".join(optional_sections) if optional_sections else "无其他与当前规划强相关的补充参考。"
+    # 人格约束注入：为有 avatar 的 agent 加载核心性格约束
+    _AVATAR_PERSONA = {
+        51: (
+            "【人格约束】决策风格：先上手跑起来再说，不纠结方法论，信奉快速验证。"
+            "绝对不会：没能力还装懂、夸下海口、让别人替自己收拾烂摊子。"
+            "白天在实验室难以集中，夜深人静才是真正的工作状态。"
+            "强烈正义感，对不公平有本能抵触；对人际细节敏感，情绪容易被影响。"
+        ),
+    }
+    persona_hint = _AVATAR_PERSONA.get(agent.get("id", -1), "")
     prompt = f"""
-你是{agent['name']}。
+你是{agent['name']}。{(" " + persona_hint) if persona_hint else ""}
 你的感知是：{perception_text}
 {refs.get('emotion_text', _current_emotion_text(agent))}
 你的近期经验：{refs.get('memory_hint', memory_hint)}

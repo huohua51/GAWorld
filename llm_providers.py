@@ -113,6 +113,7 @@ class OpenAIProvider:
         stream=False,
         max_tokens=None,
         temperature=None,
+        system_prompt=None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -121,15 +122,20 @@ class OpenAIProvider:
         self.stream = bool(stream)
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.system_prompt = system_prompt
 
     def call(self, prompt):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        messages = []
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+        messages.append({"role": "user", "content": prompt})
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
@@ -205,7 +211,8 @@ class OpenAIProvider:
             )
             r.raise_for_status()
             data = r.json()
-            return data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            return msg.get("content") or msg.get("reasoning") or ""
 
         if self.stream:
             return _retrying(_do_streaming, provider=f"openai:{self.model}", task="")
