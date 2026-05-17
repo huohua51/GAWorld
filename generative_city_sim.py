@@ -117,6 +117,8 @@ from dynamic_behavior import (
 from extensibility import HookBus
 from environment import EnvironmentSystem, RemoteEnvironmentClient
 from llm_providers import call_llm
+from gaworld.work.runtime import RealWorkRuntime
+from gaworld.work.ingest import summarise_for_outcome as _rw_summarise
 from simulation_visualizer import (
     SimulationVisualizer,
     build_agent_step_payload,
@@ -5571,6 +5573,12 @@ def run_simulation():
 
     base_schedule_map = build_schedule_map(schedules)
     validate_action_space(schedules, actions)
+    # Real-work runtime: bootstrap capabilities + queue + market + workers.
+    # Returns None when CONFIG.real_work.enabled is False, in which case
+    # all real-work code paths are no-ops.
+    real_work_runtime = RealWorkRuntime.create(CONFIG, agents, llm_fn=call_llm)
+    if real_work_runtime is not None:
+        real_work_runtime.start()
     hook_bus.emit(
         "on_simulation_start",
         config=CONFIG,
@@ -5584,6 +5592,8 @@ def run_simulation():
     )
 
     for day in range(start_day, start_day + SIM_DAYS):
+        if real_work_runtime is not None:
+            real_work_runtime.tick_day(day)
         day_context = _resolve_day_context(
             day,
             start_weekday_idx=SIM_START_WEEKDAY_INDEX,
@@ -6158,6 +6168,18 @@ def run_simulation():
                         return_debug=True,
                     )
                     outcome = f"在【{activity}】中执行了【{act}】"
+                    if real_work_runtime is not None:
+                        rw_outcome = real_work_runtime.router.maybe_dispatch(
+                            agent, activity=activity, chosen_action=act,
+                            sim_day=day, sim_time=time_str,
+                        )
+                        if rw_outcome:
+                            outcome = rw_outcome
+                        rw_done = real_work_runtime.absorb_for(
+                            agent, sim_day=day, sim_time=time_str,
+                        )
+                        if rw_done:
+                            outcome = f"{outcome}｜回收：{_rw_summarise(rw_done)}"
                 reflection_recall = evoke_memory(
                     agent,
                     "reflection",

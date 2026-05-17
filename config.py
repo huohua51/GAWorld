@@ -90,6 +90,7 @@ CONFIG = {
         },
     },
     # Simulation
+
     "agent_ids": [7, 51],
     "sim_days": 1,
     "seconds_per_day": 10,
@@ -147,7 +148,7 @@ CONFIG = {
     # Distributed multi-machine simulation.
     # Run a relay server and let each node process its own local agent subset.
     "distributed": {
-        "enabled": False,
+        "enabled": True,
         "cluster": "default",
         # Leave empty to auto-generate using hostname + pid.
         "node_id": "",
@@ -534,6 +535,42 @@ CONFIG = {
             "on_agent_post_step": ["economy_module:on_agent_post_step"],
             "on_day_end": ["economy_module:on_day_end"],
             "on_simulation_end": ["economy_module:on_simulation_end"],
+        },
+    },
+    # Real Work Execution (gaworld/work/*).
+    # When enabled, "工作"-class activities can be dispatched to local
+    # adapters that produce real artifacts (HTML / .py / .md / lesson
+    # plans) under artifacts_dir, and agents can browse a mock job
+    # market. Disabled by default — flipping on must not change any
+    # other simulation behaviour.
+    "real_work": {
+        "enabled": True,
+        "queue_path": "output/work/queue.jsonl",
+        "artifacts_dir": "output/work",
+        "capabilities_cache": "output/work/capabilities.json",
+        "max_concurrent_tasks": 2,
+        "task_timeout_seconds": 600,
+        "tick_ingest_limit": 5,
+        "adapters": {
+            "web_design": {"enabled": True},
+            "code": {"enabled": True, "write_pytest": True},
+            "content": {"enabled": True},
+            "teaching": {"enabled": True},
+        },
+        "market": {
+            "enabled": True,
+            "seed_path": "gaworld/work/market_seed.json",
+            "store_path": "output/work/market.jsonl",
+            "browse_top_k": 5,
+            "max_taken_per_agent_per_day": 2,
+            "browse_probability_base": 0.15,
+            "expire_after_sim_days": 5,
+            "auto_replenish": True,
+            "replenish_threshold": 5,
+        },
+        "external_hooks": {
+            "webhook_url": "",
+            "mcp_server": "",
         },
     },
 }
