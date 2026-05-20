@@ -7,9 +7,9 @@
   "gross_monthly_salary": 9169.2,
   "net_monthly_salary": 7443.71,
   "base_hourly_income": 52.1,
-  "hourly_income": 52.1,
+  "hourly_income": 55.89,
   "income_volatility": 0.25,
-  "income_target_daily": 364.68,
+  "income_target_daily": 422.94,
   "monthly_tax": 29.19,
   "monthly_si_total": 1696.3,
   "monthly_si_breakdown": {
@@ -34,12 +34,12 @@
   "monthly_expense_estimate": 5582.78,
   "monthly_rent": 1321.59,
   "accounts": {
-    "checking": 2818.02,
+    "checking": 4708.7,
     "savings": 7153.44,
     "investment": 4479.93,
     "housing_fund": 57911.39
   },
-  "balance": 14451.39,
+  "balance": 16342.07,
   "portfolio_type": "aggressive",
   "portfolio_weights": {
     "deposits": 0.15,
@@ -52,20 +52,20 @@
     "inheritance": 3912.98,
     "total": 14451.39
   },
-  "daily_income": 0.0,
-  "daily_expense": 0.0,
+  "daily_income": 2334.000126216663,
+  "daily_expense": 443.352997702336,
   "daily_expense_by_category": {
     "food": 0.0,
     "clothing": 0.0,
-    "housing": 0.0,
-    "transport": 0.0,
+    "housing": 57.17406,
+    "transport": 322.08596356819834,
     "leisure": 0.0,
     "education": 0.0,
     "healthcare": 0.0,
-    "misc": 0.0
+    "misc": 64.09297413413758
   },
-  "lifetime_income": 0.0,
-  "lifetime_expense": 0.0,
-  "last_location": "",
+  "lifetime_income": 2334.000126216663,
+  "lifetime_expense": 443.352997702336,
+  "last_location": "Financial District",
   "shock_log": []
 }

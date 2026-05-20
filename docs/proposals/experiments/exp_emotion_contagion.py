@@ -84,6 +84,7 @@ class ExpEmotionContagion(ExperimentRunner):
 
     def run(self) -> bool:
         """Run the emotion contagion experiment."""
+        self.experiment_dir.mkdir(parents=True, exist_ok=True)
         config_record = {
             "treatment": self.treatment,
             "config": self.config,

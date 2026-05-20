@@ -161,7 +161,11 @@ from social_network import (
     generate_ghost_event,
     migrate_relationships,
 )
-from life_events import add_life_event as _add_life_event
+from life_events import (
+    add_life_event as _add_life_event,
+    life_events_for_agent,
+    list_life_events,
+)
 
 
 # Probability per (agent, day) of an off-screen ghost reaching out.
@@ -3755,6 +3759,258 @@ def normalize_flexible_schedule(base_schedule, candidate_schedule):
         return None
     return cleaned
 
+# ---------------------------------------------------------------------------
+# Daily-routine context aggregators
+#
+# The daily-routine LLM prompt now folds in four extra signals so that the
+# generated schedule feels like a continuation of the agent's life rather
+# than a fresh draft each morning:
+#   1. current body/mind state (emotion, stress, fatigue, hunger, ...)
+#   2. yesterday's salient episodes (continuation cues, unfinished business)
+#   3. recently triggered life events that still cast a shadow on today
+#   4. social pulse — recent interactions worth following up on
+#
+# Each aggregator is a pure function: easy to unit-test without an LLM call.
+# ---------------------------------------------------------------------------
+
+
+def _band_label(value, low, high, low_text, mid_text, high_text):
+    """Categorize a scalar in [0, 1] into a 3-tier human-readable label."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return mid_text
+    if v <= low:
+        return low_text
+    if v >= high:
+        return high_text
+    return mid_text
+
+
+def _state_brief_for_prompt(agent):
+    """Return a short Chinese paragraph summarising the agent's current state.
+
+    Reads ``agent['state']`` — emotion, stress, energy, hunger,
+    fatigue_debt, time_pressure, self_control, social_need.  Each value is
+    bucketed into a coarse band so the prompt language is robust to small
+    numeric jitter.
+    """
+    state = agent.get("state", {}) if isinstance(agent, dict) else {}
+
+    def _get(key, default):
+        try:
+            return float(state.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    emotion = _get("emotion", 0.5)
+    stress = _get("stress", 0.5)
+    energy = _get("energy", 0.6)
+    hunger = _get("hunger", 0.3)
+    fatigue = _get("fatigue_debt", 0.3)
+    time_pressure = _get("time_pressure", 0.3)
+    self_control = _get("self_control", 0.6)
+    social_need = _get("social_need", 0.5)
+
+    lines = [
+        f"- 情绪{_band_label(emotion, 0.4, 0.65, '偏低落', '中性', '偏积极')}"
+        f"（emotion={emotion:.2f}），"
+        f"压力{_band_label(stress, 0.4, 0.65, '较低', '中等', '偏高')}"
+        f"（stress={stress:.2f}）",
+        f"- 体力{_band_label(energy, 0.35, 0.7, '不足', '一般', '充沛')}"
+        f"（energy={energy:.2f}），"
+        f"饥饿{_band_label(hunger, 0.3, 0.65, '轻微', '一般', '明显')}"
+        f"（hunger={hunger:.2f}）",
+        f"- 疲劳{_band_label(fatigue, 0.35, 0.65, '尚可', '一般', '较重')}"
+        f"（fatigue_debt={fatigue:.2f}），"
+        f"时间紧迫感{_band_label(time_pressure, 0.35, 0.65, '较低', '中等', '偏高')}"
+        f"（time_pressure={time_pressure:.2f}）",
+        f"- 自控{_band_label(self_control, 0.4, 0.65, '偏弱', '一般', '偏强')}"
+        f"（self_control={self_control:.2f}），"
+        f"社交需求{_band_label(social_need, 0.4, 0.65, '较低', '中等', '偏高')}"
+        f"（social_need={social_need:.2f}）",
+    ]
+    return "当前身心状态：\n" + "\n".join(lines)
+
+
+def _yesterday_recap_for_prompt(agent, day, top_k=3):
+    """Surface 2-3 salient events from the previous simulation day.
+
+    When ``day`` is None or the agent has no prior-day episodes, returns a
+    short fallback line so the prompt section never becomes ``"None"`` or
+    an empty bullet list.
+    """
+    if day is None:
+        return "昨日关键回顾：昨日为模拟首日，无可参考回顾。"
+    try:
+        prev_day = int(day) - 1
+    except (TypeError, ValueError):
+        return "昨日关键回顾：昨日为模拟首日，无可参考回顾。"
+    if prev_day < 1:
+        return "昨日关键回顾：昨日为模拟首日，无可参考回顾。"
+
+    episodes = agent.get("episodes", []) if isinstance(agent, dict) else []
+    prev_eps = [
+        ep for ep in episodes
+        if isinstance(ep, dict) and int(ep.get("day", 0) or 0) == prev_day
+    ]
+    if not prev_eps:
+        return f"昨日关键回顾（Day {prev_day}）：昨日没有显著事件，整体平稳。"
+
+    prev_eps.sort(
+        key=lambda e: float(e.get("decayed_salience", e.get("salience", 0.0)) or 0.0),
+        reverse=True,
+    )
+    selected = prev_eps[: max(1, int(top_k))]
+    lines = []
+    for ep in selected:
+        time_str = str(ep.get("time", "")).strip() or "??:??"
+        activity = str(ep.get("final_activity", "")).strip() or "—"
+        action = str(ep.get("action", "")).strip()
+        reflection = str(ep.get("reflection", "")).strip()
+        line = f"- {time_str} {activity}"
+        if action:
+            line += f" → {action}"
+        if reflection:
+            # Reflections can be long — trim to keep the prompt focused.
+            line += f"（{reflection[:40]}）"
+        lines.append(line)
+    return f"昨日关键回顾（Day {prev_day}）：\n" + "\n".join(lines)
+
+
+def _recent_life_events_for_prompt(agent, day, max_age_days=2):
+    """Return a section describing recent triggered life events.
+
+    Reads ``output/life_events/events.json`` via :func:`list_life_events`
+    (no extra state on the agent dict).  Filters to events that:
+      * have been consumed (``status == "consumed"``) — i.e. actually fired,
+      * triggered within the last ``max_age_days`` simulation days,
+      * either target this agent or are unscoped (``agent_ids`` empty).
+    """
+    if day is None:
+        return "近期突发事件：无。"
+    try:
+        current_day = int(day)
+    except (TypeError, ValueError):
+        return "近期突发事件：无。"
+
+    try:
+        all_events = list_life_events(include_consumed=True)
+    except (OSError, ValueError):
+        return "近期突发事件：无。"
+
+    agent_id = agent.get("id") if isinstance(agent, dict) else None
+    try:
+        agent_id_int = int(agent_id) if agent_id is not None else None
+    except (TypeError, ValueError):
+        agent_id_int = None
+
+    relevant = []
+    for ev in all_events:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("status") != "consumed":
+            continue
+        try:
+            triggered_day = int(ev.get("triggered_day", 0))
+        except (TypeError, ValueError):
+            continue
+        if triggered_day <= 0:
+            continue
+        if triggered_day > current_day or current_day - triggered_day > int(max_age_days):
+            continue
+        if agent_id_int is not None:
+            agent_ids = ev.get("agent_ids") or []
+            if agent_ids and agent_id_int not in [
+                int(x) for x in agent_ids if isinstance(x, (int, float, str)) and str(x).strip().lstrip("-").isdigit()
+            ]:
+                continue
+        relevant.append(ev)
+
+    if not relevant:
+        return "近期突发事件：无。"
+
+    relevant.sort(
+        key=lambda e: (int(e.get("triggered_day", 0)), str(e.get("triggered_time", ""))),
+        reverse=True,
+    )
+    lines = []
+    for ev in relevant[:3]:
+        title = str(ev.get("title") or "突发事件").strip()
+        desc = str(ev.get("description") or "").strip()
+        try:
+            severity = float(ev.get("severity", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            severity = 0.0
+        trig_day = int(ev.get("triggered_day", 0))
+        trig_time = str(ev.get("triggered_time", "")).strip()
+        lines.append(
+            f"- Day {trig_day} {trig_time} {title}（严重度 {severity:.2f}）：{desc[:80]}".rstrip()
+        )
+    return "近期突发事件（仍在影响今天）：\n" + "\n".join(lines)
+
+
+def _social_pulse_for_prompt(agent, day, agents_by_id=None, max_age_days=2, top_k=3):
+    """Pick the top relationships that had recent interactions.
+
+    Ranks by ``relationship_weight`` (already in human_realism), filtered to
+    ``last_interaction_day >= day - max_age_days``.  If ``agents_by_id`` is
+    provided, we resolve names for friendlier prompt text.
+    """
+    if day is None:
+        return "近期社交脉动：无。"
+    try:
+        current_day = int(day)
+    except (TypeError, ValueError):
+        return "近期社交脉动：无。"
+
+    relationships = agent.get("relationships", {}) if isinstance(agent, dict) else {}
+    if not isinstance(relationships, dict) or not relationships:
+        return "近期社交脉动：无。"
+
+    candidates = []
+    for raw_id, item in relationships.items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            last_day = int(item.get("last_interaction_day", item.get("last_contact_day", 0)))
+        except (TypeError, ValueError):
+            continue
+        if current_day - last_day > int(max_age_days):
+            continue
+        try:
+            weight = float(relationship_weight(agent, raw_id))
+        except (TypeError, ValueError):
+            weight = 0.0
+        candidates.append((weight, raw_id, item, last_day))
+
+    if not candidates:
+        return "近期社交脉动：无。"
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    lines = []
+    for weight, raw_id, item, last_day in candidates[: max(1, int(top_k))]:
+        name = None
+        if isinstance(agents_by_id, dict):
+            peer = agents_by_id.get(raw_id) or agents_by_id.get(str(raw_id))
+            if peer is None:
+                try:
+                    peer = agents_by_id.get(int(raw_id))
+                except (TypeError, ValueError):
+                    peer = None
+            if isinstance(peer, dict):
+                name = peer.get("name")
+        label = name if name else f"邻居 #{raw_id}"
+        closeness = float(item.get("closeness", 0.5))
+        trust = float(item.get("trust", 0.5))
+        friction = float(item.get("friction", 0.5))
+        lines.append(
+            f"- {label}（亲密 {closeness:.2f}，信任 {trust:.2f}，"
+            f"摩擦 {friction:.2f}，最近互动 Day {last_day}）"
+        )
+    return "近期社交脉动：\n" + "\n".join(lines)
+
+
 def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     if not base_schedule:
         return base_schedule
@@ -3800,6 +4056,12 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     external_hint = _external_rag_hint(agent, f"{day_type_zh} 日程 计划")
     intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
     growth_context = format_growth_context(agent.get("growth_profile"), max_items=INTERESTS_MAX_ITEMS) if INTERESTS_ENABLED else "无"
+    # New: four contextual signals so the schedule reflects the agent's
+    # ongoing life rather than being regenerated from scratch each day.
+    state_brief_text = _state_brief_for_prompt(agent)
+    yesterday_recap_text = _yesterday_recap_for_prompt(agent, day)
+    recent_events_text = _recent_life_events_for_prompt(agent, day)
+    social_pulse_text = _social_pulse_for_prompt(agent, day)
     prompt = f"""
 你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
 角色资料：
@@ -3807,6 +4069,10 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 日期类型：{day_label}，{sim_date_text}，{weekday_zh}，{day_type_zh}
 基础日程（作为框架，不是死板脚本）：
 {base_text}
+{state_brief_text}
+{yesterday_recap_text}
+{recent_events_text}
+{social_pulse_text}
 可参考的近期记忆：{memory_hint}
 可参考的额外信息：{external_hint}
 今日行为意图：{intent_hint}
@@ -3821,7 +4087,11 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 4) 若兴趣与技能成长画像不为“无”，按现实约束自然插入 0-2 个兴趣恢复或技能练习活动；日常倾向约 {INTERESTS_DAILY_INSERT_CHANCE:.2f}，周末额外提高 {INTERESTS_WEEKEND_BOOST:.2f}，工作日少量，周末可更多。
 5) 高承诺工作/上课/医疗/睡眠不可被兴趣活动硬性覆盖，低承诺个人时间可被具体兴趣或技能活动替换。
 6) 活动可以包含临时念头或外界触发，但要符合角色职业、状态、星期和近期意图。
-7) 仅输出 JSON，不要其他文字。
+7) 日程应自然反映“当前身心状态”：情绪低/压力高/疲劳重时减少高强度任务、增加恢复性活动；精力充沛/情绪积极时可加入挑战性或社交活动。
+8) “昨日关键回顾”里的未完成或被打断事项可被自然延续到今日；昨日已让人疲惫或受挫的事项今日应缩减或推后。
+9) “近期突发事件”应优先反映在前一/两个时段（例如就医、处理纠纷、家庭责任、处理影响等），但不要凭空编造未在事件中提及的细节。
+10) “近期社交脉动”里有强互动对象时，可在合适时段加入跟进社交（约见、电话、回信等）；如最近无社交，可适度补一次轻量联络。
+11) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="daily_routine", agent_id=agent["id"])
     schedule = _parse_schedule(response)

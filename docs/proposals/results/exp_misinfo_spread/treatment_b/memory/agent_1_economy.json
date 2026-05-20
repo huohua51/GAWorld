@@ -7,9 +7,9 @@
   "gross_monthly_salary": 10195.28,
   "net_monthly_salary": 8254.88,
   "base_hourly_income": 57.93,
-  "hourly_income": 57.93,
+  "hourly_income": 59.05,
   "income_volatility": 0.25,
-  "income_target_daily": 405.49,
+  "income_target_daily": 456.22,
   "monthly_tax": 54.27,
   "monthly_si_total": 1886.13,
   "monthly_si_breakdown": {
@@ -34,12 +34,12 @@
   "monthly_expense_estimate": 6191.16,
   "monthly_rent": 1381.19,
   "accounts": {
-    "checking": 11463.19,
+    "checking": 11621.07,
     "savings": 25792.17,
     "investment": 10507.92,
     "housing_fund": 13197.32
   },
-  "balance": 47763.28,
+  "balance": 47921.16,
   "portfolio_type": "moderate",
   "portfolio_weights": {
     "deposits": 0.4,
@@ -52,20 +52,20 @@
     "inheritance": 0.0,
     "total": 47763.28
   },
-  "daily_income": 0.0,
-  "daily_expense": 0.0,
+  "daily_income": 687.1706114194055,
+  "daily_expense": 529.3352037411008,
   "daily_expense_by_category": {
-    "food": 0.0,
+    "food": 277.93471832262617,
     "clothing": 0.0,
-    "housing": 0.0,
-    "transport": 0.0,
+    "housing": 59.20046000000001,
+    "transport": 160.91024027562875,
     "leisure": 0.0,
     "education": 0.0,
     "healthcare": 0.0,
-    "misc": 0.0
+    "misc": 31.289785142845798
   },
-  "lifetime_income": 0.0,
-  "lifetime_expense": 0.0,
-  "last_location": "",
+  "lifetime_income": 687.1706114194055,
+  "lifetime_expense": 529.3352037411008,
+  "last_location": "Central Bank Annex",
   "shock_log": []
 }

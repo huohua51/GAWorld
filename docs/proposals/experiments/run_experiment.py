@@ -355,7 +355,7 @@ def analyze_experiment(
     try:
         module = __import__(module_name, fromlist=[class_name])
         exp_class = getattr(module, class_name)
-        exp_instance = exp_class.__new__(exp_class)
+        exp_instance = exp_class(treatment=treatment)
         exp_instance.experiment_dir = RESULTS_DIR / experiment_name / treatment
         exp_instance.results_dir = RESULTS_DIR / experiment_name
         return exp_instance.analyze()

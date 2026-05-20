@@ -1,17 +1,15 @@
 {
   "priorities": [
-    "维持日常节奏",
-    "发展编程技能",
-    "发展阅读"
+    "...",
+    "..."
   ],
   "avoidances": [
-    "长时间无效分心"
+    "..."
   ],
-  "target_social": "保持适度社交",
-  "target_recovery": "确保休息与进食节奏",
+  "target_social": "...",
+  "target_recovery": "...",
   "growth_focus": [
-    "编程技能",
-    "阅读"
+    "今日重点发展的兴趣或技能名称"
   ],
-  "day": 1
+  "day": 2
 }

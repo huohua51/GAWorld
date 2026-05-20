@@ -6,7 +6,7 @@
       "kind": "skill",
       "category": "职业",
       "motivation": "希望提升长期选择空间和工作稳定性",
-      "level": 0.49756000000000006,
+      "level": 0.95648,
       "priority": 0.68,
       "weekly_target_minutes": 180,
       "preferred_time_blocks": [
@@ -21,7 +21,7 @@
       "career_link": true,
       "sociality": 0.35,
       "last_practiced_day": 1,
-      "total_minutes": 213,
+      "total_minutes": 882,
       "streak_days": 1
     },
     {

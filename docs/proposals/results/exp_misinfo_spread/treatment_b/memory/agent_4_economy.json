@@ -7,9 +7,9 @@
   "gross_monthly_salary": 7573.58,
   "net_monthly_salary": 6172.47,
   "base_hourly_income": 43.03,
-  "hourly_income": 43.03,
+  "hourly_income": 43.08,
   "income_volatility": 0.25,
-  "income_target_daily": 301.22,
+  "income_target_daily": 339.56,
   "monthly_tax": 0.0,
   "monthly_si_total": 1401.11,
   "monthly_si_breakdown": {
@@ -34,12 +34,12 @@
   "monthly_expense_estimate": 5246.6,
   "monthly_rent": 1335.92,
   "accounts": {
-    "checking": 5745.22,
+    "checking": 7035.62,
     "savings": 13158.42,
     "investment": 5807.0,
     "housing_fund": 27773.46
   },
-  "balance": 24710.64,
+  "balance": 26001.04,
   "portfolio_type": "moderate",
   "portfolio_weights": {
     "deposits": 0.4,
@@ -52,20 +52,20 @@
     "inheritance": 0.0,
     "total": 24710.64
   },
-  "daily_income": 0.0,
-  "daily_expense": 0.0,
+  "daily_income": 1901.4081382000697,
+  "daily_expense": 611.0215542552211,
   "daily_expense_by_category": {
     "food": 0.0,
     "clothing": 0.0,
-    "housing": 0.0,
-    "transport": 0.0,
+    "housing": 57.661280000000005,
+    "transport": 505.9638412727638,
     "leisure": 0.0,
     "education": 0.0,
     "healthcare": 0.0,
-    "misc": 0.0
+    "misc": 47.396432982457306
   },
-  "lifetime_income": 0.0,
-  "lifetime_expense": 0.0,
-  "last_location": "",
+  "lifetime_income": 1901.4081382000697,
+  "lifetime_expense": 611.0215542552211,
+  "last_location": "Riverside Bus Station",
   "shock_log": []
 }

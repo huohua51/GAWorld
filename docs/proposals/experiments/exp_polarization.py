@@ -71,6 +71,7 @@ class ExpPolarization(ExperimentRunner):
 
     def run(self) -> bool:
         """Run the polarization experiment."""
+        self.experiment_dir.mkdir(parents=True, exist_ok=True)
         config_record = {
             "treatment": self.treatment,
             "config": self.config,
