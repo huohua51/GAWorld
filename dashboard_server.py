@@ -3,7 +3,9 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from copy import deepcopy
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
@@ -20,7 +22,15 @@ DASHBOARD_ROOT = os.path.join(REPO_ROOT, "site", "dashboard")
 DASHBOARD_CONFIG_PATH = os.path.join(REPO_ROOT, "dashboard_config.json")
 PROFILE_PATH = os.path.join(REPO_ROOT, CONFIG.get("md_path", "hangzhou_profiles_with_names.md"))
 RUN_LOG_PATH = os.path.join(REPO_ROOT, "output", "dashboard", "simulation_run.log")
+TODO_BOARD_PATH = os.path.join(REPO_ROOT, "output", "dashboard", "todo_board.json")
+TEST_LOG_DIR = os.path.join(REPO_ROOT, "output", "test-logs")
+TEST_LATEST_LOG_PATH = os.path.join(TEST_LOG_DIR, "latest.log")
 PROFILE_HEADER_RE = re.compile(r"^## Profile\s+(\d+)\s*[｜|]\s*(.+?)\s*$", re.MULTILINE)
+PYTEST_SUMMARY_RE = re.compile(
+    r"(?P<passed>\d+)\s+passed(?:,\s+(?P<skipped>\d+)\s+skipped)?(?:,\s+(?P<failed>\d+)\s+failed)?",
+    re.IGNORECASE,
+)
+TODO_LOCK = threading.RLock()
 
 RUN_STATE = {
     "process": None,
@@ -57,6 +67,69 @@ def _atomic_write_json(path, payload):
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, path)
+
+
+def _todo_board_payload():
+    with TODO_LOCK:
+        payload = _read_json_file(TODO_BOARD_PATH, {"items": []})
+        if isinstance(payload, list):
+            payload = {"items": payload}
+        if not isinstance(payload, dict):
+            payload = {"items": []}
+        items = payload.get("items", [])
+        return {"items": items if isinstance(items, list) else []}
+
+
+def _save_todo_board(items):
+    if not isinstance(items, list):
+        raise ValueError("items must be a list")
+    with TODO_LOCK:
+        payload = {
+            "items": items,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        _atomic_write_json(TODO_BOARD_PATH, payload)
+        return {"ok": True, **payload}
+
+
+def _normalize_todo_item(payload, existing=None):
+    item = dict(existing or {})
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    if not item.get("id"):
+        item["id"] = str(uuid.uuid4())
+        item["createdAt"] = now
+    for key in ("title", "proposer", "details", "priority", "status", "owner"):
+        if key in payload:
+            item[key] = str(payload.get(key, "")).strip()
+    item.setdefault("priority", "medium")
+    item.setdefault("status", "pending")
+    item.setdefault("owner", "")
+    item.setdefault("createdAt", now)
+    item["updatedAt"] = now
+    if not item.get("title") or not item.get("proposer") or not item.get("details"):
+        raise ValueError("title, proposer and details are required")
+    return item
+
+
+def _create_todo_item(payload):
+    with TODO_LOCK:
+        board = _todo_board_payload()
+        item = _normalize_todo_item(payload)
+        board["items"].insert(0, item)
+        return _save_todo_board(board["items"])
+
+
+def _update_todo_item(payload):
+    item_id = str(payload.get("id", "")).strip()
+    if not item_id:
+        raise ValueError("id is required")
+    with TODO_LOCK:
+        board = _todo_board_payload()
+        for index, item in enumerate(board["items"]):
+            if str(item.get("id")) == item_id:
+                board["items"][index] = _normalize_todo_item(payload, existing=item)
+                return _save_todo_board(board["items"])
+    raise ValueError(f"todo item {item_id} not found")
 
 
 def _dashboard_config():
@@ -193,6 +266,45 @@ def _tail_text(path, max_chars=12000):
         f.seek(max(0, size - max_chars))
         data = f.read()
     return data.decode("utf-8", errors="replace")
+
+
+def _test_status_payload():
+    log_path = TEST_LATEST_LOG_PATH
+    resolved_path = os.path.realpath(log_path) if os.path.exists(log_path) else ""
+    log_tail = _tail_text(log_path, max_chars=24000)
+    summary = {
+        "passed": 0,
+        "skipped": 0,
+        "failed": 0,
+        "status": "unknown",
+        "line": "",
+    }
+    for line in reversed(log_tail.splitlines()):
+        if " passed" in line and "===" in line:
+            match = PYTEST_SUMMARY_RE.search(line)
+            if match:
+                summary = {
+                    "passed": int(match.group("passed") or 0),
+                    "skipped": int(match.group("skipped") or 0),
+                    "failed": int(match.group("failed") or 0),
+                    "status": "passing" if int(match.group("failed") or 0) == 0 else "failing",
+                    "line": line.strip("= ").strip(),
+                }
+                break
+        if " failed" in line and "===" in line:
+            summary["status"] = "failing"
+            summary["line"] = line.strip("= ").strip()
+            break
+    latest_mtime = os.path.getmtime(log_path) if os.path.exists(log_path) else 0
+    return {
+        "service": "gaworld-test-loop.service",
+        "branch": os.environ.get("TEST_BRANCH", "tf"),
+        "log_path": log_path,
+        "resolved_log_path": resolved_path,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(latest_mtime)) if latest_mtime else "",
+        "summary": summary,
+        "log_tail": log_tail,
+    }
 
 
 def _memory_payload(agent_id):
@@ -360,6 +472,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8")
         return json.loads(raw) if raw.strip() else {}
 
+    def _read_form_body(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8")
+        parsed = parse_qs(raw, keep_blank_values=True)
+        return {key: values[0] if values else "" for key, values in parsed.items()}
+
+    def _redirect(self, location, status=303):
+        self.send_response(status)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def _handle_api_get(self, path, query):
         if path == "/api/config":
             return self._json_response(_config_summary())
@@ -380,6 +506,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_latest_trace_meta())
         if path == "/api/life-events":
             return self._json_response(_life_events_payload())
+        if path == "/api/todos":
+            return self._json_response(_todo_board_payload())
+        if path == "/api/tests/status":
+            return self._json_response(_test_status_payload())
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
@@ -397,6 +527,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_interview_agent(payload))
         if path == "/api/life-events":
             return self._json_response(_add_life_event(payload))
+        if path == "/api/todos":
+            return self._json_response(_save_todo_board(payload.get("items", [])))
+        if path == "/api/todos/create":
+            return self._json_response(_create_todo_item(payload))
+        if path == "/api/todos/update":
+            return self._json_response(_update_todo_item(payload))
+        if path == "/api/todos/clear":
+            return self._json_response(_save_todo_board([]))
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def do_GET(self):
@@ -411,6 +549,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self._json_response({"error": str(exc)}, status=500)
         if path in ("/", "/dashboard", "/dashboard/"):
             self.path = "/site/dashboard/index.html"
+        elif path in ("/board", "/board/", "/todo", "/todo/"):
+            self.path = "/todo_board.html"
+        elif path in ("/tests", "/tests/"):
+            self.path = "/site/tests/index.html"
         return super().do_GET()
 
     def do_HEAD(self):
@@ -418,11 +560,22 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         path = unquote(parsed.path)
         if path in ("/", "/dashboard", "/dashboard/"):
             self.path = "/site/dashboard/index.html"
+        elif path in ("/board", "/board/", "/todo", "/todo/"):
+            self.path = "/todo_board.html"
+        elif path in ("/tests", "/tests/"):
+            self.path = "/site/tests/index.html"
         return super().do_HEAD()
 
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        if path == "/api/todos/create-form":
+            try:
+                _create_todo_item(self._read_form_body())
+                return self._redirect("/board")
+            except Exception as exc:
+                _LOG.exception("POST %s failed: %s", path, exc)
+                return self._json_response({"error": str(exc)}, status=400)
         if not path.startswith("/api/"):
             return self._json_response({"error": "POST is only supported under /api"}, status=404)
         try:

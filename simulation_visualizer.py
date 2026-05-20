@@ -1,13 +1,13 @@
 import json
 import os
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from avatar_generator import ensure_agent_avatar
 from city_map_system import project_to_tile
 
 
 def _utc_timestamp():
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _atomic_write_json(path, payload):
