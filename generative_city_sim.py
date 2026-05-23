@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 import time
 import random
@@ -20,6 +21,8 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from config import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
 from gaworld.logging_setup import get_logger, LOG_MODE
+from gaworld.personal_twin.state import apply_daily_twin_update, build_initial_twin_state
+from gaworld.personal_twin.what_if import write_personal_what_if_report as _write_personal_what_if_report
 
 _LOG = get_logger("gaworld.sim")
 
@@ -167,6 +170,7 @@ from memory_store import (
     load_agent_location_action_bias,
     load_agent_memory,
     load_agent_schedule,
+    load_agent_twin_state,
     load_recent_actions,
     load_recent_log_blocks,
     load_sim_state,
@@ -177,6 +181,7 @@ from memory_store import (
     save_agent_locations,
     save_agent_memory,
     save_agent_schedule,
+    save_agent_twin_state,
     save_sim_state,
     seed_vector_db_from_memory,
     vector_db_add_entry,
@@ -1391,6 +1396,8 @@ def _apply_life_event_state_effects(agent, events):
 _BASE_AGENT_IDS = _coerce_positive_int_list(CONFIG.get("agent_ids", []))
 DISTRIBUTED_CONFIG = CONFIG.get("distributed", {})
 DISTRIBUTED_ENABLED = bool(DISTRIBUTED_CONFIG.get("enabled", False))
+PERSONAL_TWIN_CONFIG = CONFIG.get("personal_twin", {})
+PERSONAL_TWIN_ENABLED = bool(PERSONAL_TWIN_CONFIG.get("enabled", False))
 _DISTRIBUTED_LOCAL_AGENT_IDS = _coerce_positive_int_list(
     DISTRIBUTED_CONFIG.get("local_agent_ids", [])
 )
@@ -1428,6 +1435,7 @@ VISUALIZATION_FLUSH_EVERY_FRAMES = max(
 INTERVENTION_CONFIG = CONFIG.get("intervention", {})
 INTERVENTION_ENABLED = bool(INTERVENTION_CONFIG.get("enabled", False))
 INTERVENTION_OUTPUT_DIR = INTERVENTION_CONFIG.get("output_dir", "output/intervention")
+OPENCLAW_CONFIG = CONFIG.get("openclaw", {})
 SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
@@ -1802,6 +1810,19 @@ def _cli_create_agent_from_social(url=None, file_path=None, text=None, name=None
 def build_agent(agent_id, df, city_map=None):
     row = df[df["id"] == agent_id].iloc[0]
     text = parse_profile(load_profile_from_md(agent_id))
+    public_profile = {
+        "summary": _compact_text(text.get("daily_life") or text.get("personality", ""), max_chars=180),
+        "status": "",
+        "focus": _compact_text(text.get("job", ""), max_chars=64),
+        "tags": [
+            value for value in (
+                _compact_text(text.get("job", ""), max_chars=24),
+                _compact_text(text.get("personality", ""), max_chars=24),
+                _compact_text(text.get("values", ""), max_chars=24),
+            )
+            if value
+        ][:3],
+    }
     agent = {
         "id": agent_id,
         **text,
@@ -1828,7 +1849,9 @@ def build_agent(agent_id, df, city_map=None):
             "intervention_reward": float(row.get("intervention_reward", 0.0)),
         },
         "memory": [],
-        "social_neighbors": []
+        "social_neighbors": [],
+        "public_profile": public_profile,
+        "twin_status": build_initial_twin_state({"public_profile": public_profile}, PERSONAL_TWIN_CONFIG),
     }
     if city_map is None:
         city_map = load_city_map(MAP_PATH)
@@ -5385,6 +5408,15 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
             seed_vector_db_from_memory(agent)
+            saved_twin_state = load_agent_twin_state(agent["id"]) if PERSONAL_TWIN_ENABLED else {}
+            if saved_twin_state:
+                agent["twin_status"] = saved_twin_state
+                if isinstance(saved_twin_state.get("public_summary"), str) and saved_twin_state.get("public_summary"):
+                    agent["public_profile"]["summary"] = saved_twin_state.get("public_summary", "")
+                if isinstance(saved_twin_state.get("current_public_status"), str):
+                    agent["public_profile"]["status"] = saved_twin_state.get("current_public_status", "")
+                if isinstance(saved_twin_state.get("tomorrow_focus"), str) and saved_twin_state.get("tomorrow_focus"):
+                    agent["public_profile"]["focus"] = saved_twin_state.get("tomorrow_focus", "")
             if HUMAN_REALISM_ENABLED:
                 agent["episodes"] = load_agent_episodes(agent["id"])
                 agent["habits"] = load_agent_habits(agent["id"])
@@ -5403,6 +5435,8 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = []
             reset_agent_memory(agent["id"])
+            if PERSONAL_TWIN_ENABLED:
+                agent["twin_status"] = build_initial_twin_state(agent, PERSONAL_TWIN_CONFIG)
             if HUMAN_REALISM_ENABLED:
                 agent["episodes"] = []
                 agent["habits"] = {}
@@ -5419,7 +5453,12 @@ def run_simulation():
                 agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
-    distributed_client = DistributedRelayClient(DISTRIBUTED_CONFIG)
+    distributed_client = DistributedRelayClient(
+        {
+            **dict(DISTRIBUTED_CONFIG or {}),
+            "personal_twin": PERSONAL_TWIN_CONFIG,
+        }
+    )
     if distributed_client.enabled:
         registered = distributed_client.register_agents(agents)
         directory = distributed_client.refresh_directory()
@@ -5806,6 +5845,12 @@ def run_simulation():
 
             distributed_inbox = {}
             if distributed_client.enabled:
+                if bool(OPENCLAW_CONFIG.get("push_tick_to_relay", True)):
+                    distributed_client.update_tick(
+                        day=day,
+                        time_str=time_str,
+                        background=f"{background_text} {env_context}".strip(),
+                    )
                 distributed_inbox = distributed_client.poll_messages(
                     local_agent_ids=[a["id"] for a in agents],
                     day=day,
@@ -6616,6 +6661,18 @@ def run_simulation():
             daily_logs[agent["id"]] += diary_log
             append_agent_log(agent, diary_log)
             print(f"📓 {agent['name']} 的日记已写入：{diary_path}")
+            if PERSONAL_TWIN_ENABLED and bool(PERSONAL_TWIN_CONFIG.get("daily_self_update", True)):
+                twin_state, public_summary = apply_daily_twin_update(
+                    agent,
+                    PERSONAL_TWIN_CONFIG,
+                    day=day,
+                    day_memory=mem,
+                    diary_text=diary_text,
+                    intentions_text=intention_text(agent.get("intentions", {})),
+                )
+                if STATEFUL:
+                    save_agent_twin_state(agent["id"], twin_state)
+                print(f"🪞 {agent['name']} 的个人孪生公开摘要：{public_summary}")
         hook_bus.emit(
             "on_day_end",
             day=day,
@@ -7226,6 +7283,7 @@ def _write_comparison_report(output_root, event_payload, rows):
     return report_md, metrics_csv
 
 
+
 def _cli_compare_event(args):
     event_payload = {
         "day": int(args.event_day),
@@ -7314,6 +7372,108 @@ def _cli_compare_event(args):
                 f"- {item['metric']}: baseline={item['baseline_final']:.4f}, "
                 f"event={item['event_final']:.4f}, delta={item['delta_final']:.4f}"
             )
+
+
+def _cli_personal_what_if(args):
+    scenario_title = str(args.scenario_title or f"what_if_agent_{int(args.agent_id)}").strip()
+    event_payload = {
+        "day": int(args.event_day),
+        "time": str(args.event_time),
+        "name": scenario_title,
+        "description": f"个人孪生 What-if 假设：{str(args.question).strip()}",
+    }
+    wrapper = argparse.Namespace(
+        event_day=event_payload["day"],
+        event_time=event_payload["time"],
+        event_name=event_payload["name"],
+        event_description=event_payload["description"],
+        sim_days=args.sim_days,
+        agent_ids=[int(args.agent_id)],
+        seed=int(args.seed),
+        llm_provider=args.llm_provider,
+        output_root=args.output_root,
+    )
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    slug = _sanitize_slug(scenario_title)
+    root = os.path.join(args.output_root, f"{ts}_{slug}")
+    baseline_dir = os.path.join(root, "baseline")
+    event_dir = os.path.join(root, "scenario")
+    os.makedirs(baseline_dir, exist_ok=True)
+    os.makedirs(event_dir, exist_ok=True)
+
+    baseline_overrides = _build_compare_overrides(
+        baseline_dir,
+        include_event=False,
+        event_payload=event_payload,
+        args=wrapper,
+    )
+    event_overrides = _build_compare_overrides(
+        event_dir,
+        include_event=True,
+        event_payload=event_payload,
+        args=wrapper,
+    )
+    script_path = os.path.abspath(__file__)
+    python_bin = sys.executable
+    base_env = os.environ.copy()
+    env_without = dict(base_env)
+    env_with = dict(base_env)
+    env_without["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(baseline_overrides, ensure_ascii=False)
+    env_with["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(event_overrides, ensure_ascii=False)
+
+    reset_without_log = os.path.join(baseline_dir, "reset.log")
+    reset_with_log = os.path.join(event_dir, "reset.log")
+    rc = _run_cli_subprocess([python_bin, script_path, "reset"], env_without, reset_without_log)
+    if rc != 0:
+        raise RuntimeError(f"基线场景 reset 失败，日志：{reset_without_log}")
+    rc = _run_cli_subprocess([python_bin, script_path, "reset"], env_with, reset_with_log)
+    if rc != 0:
+        raise RuntimeError(f"What-if 场景 reset 失败，日志：{reset_with_log}")
+
+    run_without_log = os.path.join(baseline_dir, "run.log")
+    run_with_log = os.path.join(event_dir, "run.log")
+    proc_without, file_without = _launch_cli_subprocess(
+        [python_bin, script_path, "run"],
+        env_without,
+        run_without_log,
+    )
+    proc_with, file_with = _launch_cli_subprocess(
+        [python_bin, script_path, "run"],
+        env_with,
+        run_with_log,
+    )
+    code_without = proc_without.wait()
+    code_with = proc_with.wait()
+    file_without.close()
+    file_with.close()
+    if code_without != 0 or code_with != 0:
+        without_hint = _extract_run_failure_hint(run_without_log)
+        with_hint = _extract_run_failure_hint(run_with_log)
+        raise RuntimeError(
+            "个人 What-if 并行 simulation 运行失败。"
+            f"\n基线日志：{run_without_log}\n{without_hint}\n"
+            f"\n情景日志：{run_with_log}\n{with_hint}"
+        )
+
+    baseline_state_csv = os.path.join(baseline_overrides["state_output_dir"], "agent_state_history.csv")
+    event_state_csv = os.path.join(event_overrides["state_output_dir"], "agent_state_history.csv")
+    rows = _compose_comparison_rows(baseline_state_csv, event_state_csv)
+    report_md, metrics_csv = _write_comparison_report(root, event_payload, rows)
+    personal_report = _write_personal_what_if_report(
+        root,
+        question=args.question,
+        agent_id=args.agent_id,
+        event_payload=event_payload,
+        rows=rows,
+        baseline_dir=baseline_dir,
+        scenario_dir=event_dir,
+    )
+
+    print("\n✅ 个人 What-if simulation 完成")
+    print(f"输出目录: {root}")
+    print(f"通用报告: {report_md}")
+    print(f"个人报告: {personal_report}")
+    print(f"指标文件: {metrics_csv}")
 
 def _build_arg_parser():
     import argparse
@@ -7420,6 +7580,28 @@ def _build_arg_parser():
         "--output-root",
         default="output/comparisons",
         help="Output root for comparison artifacts",
+    )
+
+    personal_what_if = subparsers.add_parser(
+        "personal-what-if",
+        help="Run a personal-twin counterfactual simulation for one agent",
+    )
+    personal_what_if.add_argument("--agent-id", type=int, required=True, help="Target agent ID")
+    personal_what_if.add_argument("--question", required=True, help="What-if question in natural language")
+    personal_what_if.add_argument("--scenario-title", default=None, help="Optional scenario title")
+    personal_what_if.add_argument("--event-day", type=int, default=1, help="Injected scenario day index")
+    personal_what_if.add_argument("--event-time", default="09:00", help="Injected scenario time HH:MM")
+    personal_what_if.add_argument("--sim-days", type=int, default=None, help="Override simulation days")
+    personal_what_if.add_argument("--seed", type=int, default=42, help="Shared seed for both scenarios")
+    personal_what_if.add_argument(
+        "--llm-provider",
+        default=None,
+        help="Force both scenarios to use the same provider name",
+    )
+    personal_what_if.add_argument(
+        "--output-root",
+        default="output/personal_what_if",
+        help="Output root for personal what-if artifacts",
     )
 
     serve_viz = subparsers.add_parser(
@@ -7561,6 +7743,10 @@ def _main():
 
     if args.command == "compare-event":
         _cli_compare_event(args)
+        return
+
+    if args.command == "personal-what-if":
+        _cli_personal_what_if(args)
         return
 
     if args.command == "serve-viz":

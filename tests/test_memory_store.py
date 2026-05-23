@@ -50,6 +50,19 @@ class TestMemoryStoreCaches(unittest.TestCase):
         self.assertEqual(1, len(hits))
         self.assertEqual("memory", hits[0]["type"])
 
+    def test_twin_state_round_trip(self):
+        payload = {
+            "mode": "personal_twin",
+            "layers": {"private": {"status": "local_only"}},
+            "today_summary": "今天主要在准备面试。",
+        }
+        ms.save_agent_twin_state(11, payload)
+        loaded = ms.load_agent_twin_state(11)
+
+        self.assertEqual("personal_twin", loaded.get("mode"))
+        self.assertEqual("local_only", loaded.get("layers", {}).get("private", {}).get("status"))
+        self.assertIn("准备面试", loaded.get("today_summary", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

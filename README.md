@@ -2,28 +2,34 @@
 
 [English](./README.md) | [中文](./README.zh-CN.md)
 
-GAWorld is a generative multi-agent simulator for urban social behavior experiments.
+GAWorld is a generative multi-agent platform for urban social experiments and personal twin networks.
 It combines agent profiles, memory, social influence, environment events, policy shocks,
-economy, map-based movement, lightweight platform-intervention evaluation, and LLM-driven
-decision making into a replayable simulation workflow.
+economy, map-based movement, lightweight platform-intervention evaluation, distributed social relay,
+and LLM-driven decision making into a replayable simulation workflow.
 
 ## Overview
 
-GAWorld is designed as a controllable social experiment sandbox rather than a simple agent demo.
+GAWorld is designed as a controllable social experiment sandbox rather than a simple agent demo,
+and it can also act as a local-first personal twin runtime.
 You can:
 
 - run the same agents under different events or policies
 - compare counterfactual scenarios in parallel
 - preserve memory, habits, and relationships across days
+- run a personal twin on a local device while keeping raw memory and private context local
+- aggregate multiple local twins through a central relay into a distributed virtual social layer
+- run What-if / counterfactual simulations for one specific agent or personal twin
 - inspect traces, logs, interviews, and per-agent memory artifacts
 - evaluate PolicySim-style recommendation / exposure interventions without extra APIs
-- edit runtime parameters and profiles through a local dashboard
+- edit runtime parameters, profiles, and distributed social state through a local dashboard
 
 Typical use cases:
 
 - urban governance and policy simulation
 - agent memory and behavior-consistency experiments
 - social behavior and risk propagation studies
+- local-first personal twin and privacy-preserving memory experiments
+- distributed virtual social interaction across machines
 - teaching demos for complex systems or agent-based simulation
 
 ## Core Loop
@@ -51,7 +57,9 @@ Across days, the simulator accumulates:
 - Create new agents from social media pages or extracted text
 - Multi-backend LLM routing: Ollama, OpenAI-compatible, Anthropic-compatible
 - External RAG injection from CLI or files
+- Local-first personal twin configuration: private memory stays on device, only public social summaries are shared
 - Policy events and environment events
+- Personal What-if CLI for running a counterfactual branch for one twin
 - PolicySim-inspired recommendation / exposure intervention metrics
 - Realistic personal economy simulation (tax, social insurance, investment, macro cycles)
 - Realistic location system with category-based spatial matching, transport cost calculation, rush-hour and weather effects, and commute memory
@@ -59,8 +67,8 @@ Across days, the simulator accumulates:
 - City map generation and route playback
 - Visualization trace export
 - Agent interview CLI
-- Local dashboard for config editing, profile editing, run control, memory inspection, and interview
-- Distributed multi-machine mode with relay-based communication
+- Local dashboard for config editing, profile editing, run control, memory inspection, interview, and distributed social snapshot
+- Distributed multi-machine mode with relay-based communication, public profile exchange, social edges, recent cross-node messages, and tick sync
 
 ## Project Structure
 
@@ -209,6 +217,15 @@ Run the distributed relay:
 python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877
 ```
 
+Run a personal What-if scenario:
+
+```bash
+python generative_city_sim.py personal-what-if \
+  --agent-id 2 \
+  --question "What if I spend tomorrow preparing for interviews instead of focusing on my current job?" \
+  --sim-days 2
+```
+
 ## Dashboard
 
 The local dashboard provides:
@@ -221,6 +238,7 @@ The local dashboard provides:
 - per-agent memory inspection
 - interview execution
 - run log viewing
+- distributed virtual-social snapshot viewing (connected twins, social edges, recent cross-node messages)
 
 The dashboard stores local overrides in `dashboard_config.json`.
 Those values override `config.py` at runtime.

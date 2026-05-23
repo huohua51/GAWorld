@@ -207,6 +207,17 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+.distributed-panel { margin-top: 14px; }
+.social-meta {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-weight: 800;
+}
+.social-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
 
 .codebox {
   min-height: 150px;
@@ -235,6 +246,6 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
   .shell { width: min(100vw, calc(100vw - 12px)); padding-top: 8px; }
   h1 { font-size: 36px; }
   .panel, .masthead-copy { padding: 12px; }
-  .memory-grid { grid-template-columns: 1fr; }
+  .memory-grid, .social-grid { grid-template-columns: 1fr; }
   .timeline { grid-template-columns: 1fr; }
 }
