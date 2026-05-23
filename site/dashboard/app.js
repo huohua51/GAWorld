@@ -8,6 +8,8 @@ const state = {
   frameIndex: 0,
   pollTimer: null,
   avatarCache: new Map(),
+  distributedSocial: null,
+  selectedTwinState: null,
 };
 
 const els = {
@@ -40,6 +42,14 @@ const els = {
   interviewQuestions: document.getElementById("interviewQuestions"),
   interviewBtn: document.getElementById("interviewBtn"),
   interviewOutput: document.getElementById("interviewOutput"),
+  whatIfTitleInput: document.getElementById("whatIfTitleInput"),
+  whatIfQuestionInput: document.getElementById("whatIfQuestionInput"),
+  whatIfDayInput: document.getElementById("whatIfDayInput"),
+  whatIfTimeInput: document.getElementById("whatIfTimeInput"),
+  whatIfSimDaysInput: document.getElementById("whatIfSimDaysInput"),
+  whatIfProviderInput: document.getElementById("whatIfProviderInput"),
+  runWhatIfBtn: document.getElementById("runWhatIfBtn"),
+  whatIfOutput: document.getElementById("whatIfOutput"),
   lifeEventTemplateSelect: document.getElementById("lifeEventTemplateSelect"),
   lifeEventAgentInput: document.getElementById("lifeEventAgentInput"),
   lifeEventModeSelect: document.getElementById("lifeEventModeSelect"),
@@ -59,6 +69,13 @@ const els = {
   agentLogBox: document.getElementById("agentLogBox"),
   reloadStatusBtn: document.getElementById("reloadStatusBtn"),
   runLogBox: document.getElementById("runLogBox"),
+  reloadDistributedBtn: document.getElementById("reloadDistributedBtn"),
+  distributedStatusBadge: document.getElementById("distributedStatusBadge"),
+  distributedMetaLine: document.getElementById("distributedMetaLine"),
+  personalTwinBox: document.getElementById("personalTwinBox"),
+  distributedAgentsBox: document.getElementById("distributedAgentsBox"),
+  distributedEdgesBox: document.getElementById("distributedEdgesBox"),
+  distributedMessagesBox: document.getElementById("distributedMessagesBox"),
 };
 
 const ctx = els.mapCanvas.getContext("2d");
@@ -318,6 +335,7 @@ async function saveProfile() {
 async function loadMemory() {
   if (!state.selectedAgentId) return;
   const payload = await api(`/api/agents/${state.selectedAgentId}/memory`);
+  state.selectedTwinState = payload.twin_state || null;
   els.memoryBox.textContent = JSON.stringify(payload.memory || [], null, 2);
   els.stateMemoryBox.textContent = JSON.stringify({
     schedule: payload.schedule || {},
@@ -326,6 +344,77 @@ async function loadMemory() {
   }, null, 2);
   els.episodesBox.textContent = payload.episodes_tail || "暂无 episode。";
   els.agentLogBox.textContent = payload.log_tail || "暂无 agent 日志。";
+}
+
+function renderDistributedSocial() {
+  const payload = state.distributedSocial || {};
+  const snapshot = payload.snapshot || {};
+  const stats = snapshot.stats || {};
+  const personalTwin = payload.personal_twin || {};
+  const selectedSocialAgent = (snapshot.agents || []).find((item) => Number(item.agent_id) === Number(state.selectedAgentId));
+  const enabled = Boolean(payload.enabled);
+  const hasSnapshot = snapshot && Object.keys(snapshot).length > 0;
+  els.distributedStatusBadge.textContent = !enabled
+    ? "已关闭"
+    : hasSnapshot
+      ? "社交层在线"
+      : "Relay 离线";
+  els.distributedStatusBadge.className = `status-badge ${enabled && hasSnapshot ? "running" : enabled ? "error" : ""}`;
+  els.distributedMetaLine.textContent = [
+    `cluster=${payload.cluster || "default"}`,
+    `relay=${payload.relay_base_url || "-"}`,
+    enabled ? `agents=${stats.agent_count || 0}` : "distributed disabled",
+    enabled ? `edges=${stats.edge_count || 0}` : "",
+    payload.error ? `error=${payload.error}` : "",
+  ].filter(Boolean).join(" · ");
+  els.personalTwinBox.textContent = JSON.stringify({
+    config: personalTwin,
+    selected_agent: selectedSocialAgent || null,
+    selected_twin_state: state.selectedTwinState || null,
+  }, null, 2) || "暂无个人孪生状态。";
+
+  const agents = snapshot.agents || [];
+  if (!agents.length) {
+    els.distributedAgentsBox.textContent = "暂无远程分身。";
+  } else {
+    els.distributedAgentsBox.textContent = agents.map((agent) => {
+      const profile = agent.public_profile || {};
+      const counts = agent.message_counts || {};
+      return [
+        `#${agent.agent_id} ${agent.name || "Unnamed"} [${agent.agent_type || "native"}]`,
+        `节点：${agent.node_id || "-"} · 收/发：${counts.inbound || 0}/${counts.outbound || 0}`,
+        `摘要：${profile.summary || "-"}`,
+        `状态：${profile.status || (agent.public_state || {}).status || "-"}`,
+      ].join("\n");
+    }).join("\n\n");
+  }
+
+  const edges = snapshot.edges || [];
+  if (!edges.length) {
+    els.distributedEdgesBox.textContent = "暂无互动边。";
+  } else {
+    els.distributedEdgesBox.textContent = edges.map((edge) => [
+      `#${edge.agent_a} <-> #${edge.agent_b}`,
+      `互动次数：${edge.interaction_count || 0} · 最近意图：${edge.last_intent || "-"}`,
+      `最近内容：${edge.last_preview || "-"}`,
+    ].join("\n")).join("\n\n");
+  }
+
+  const recent = snapshot.recent_messages || [];
+  if (!recent.length) {
+    els.distributedMessagesBox.textContent = "暂无社交消息。";
+  } else {
+    els.distributedMessagesBox.textContent = recent.map((item) => [
+      `[Day ${item.day || "?"} ${item.time || ""}] ${item.from_name || item.from_agent} -> ${item.to_name || item.to_agent}`,
+      `主题：${item.topic || "-"} · 意图：${item.intent || "-"} · 状态：${item.status || "-"}`,
+      item.preview || "-",
+    ].join("\n")).join("\n\n");
+  }
+}
+
+async function loadDistributedSocial() {
+  state.distributedSocial = await api("/api/distributed/social");
+  renderDistributedSocial();
 }
 
 async function runSimulation(reset = false) {
@@ -470,6 +559,30 @@ async function interview() {
   els.interviewOutput.textContent = [result.stdout, result.stderr].filter(Boolean).join("\n") || `returncode=${result.returncode}`;
 }
 
+async function runPersonalWhatIf() {
+  if (!state.selectedAgentId) return;
+  const question = els.whatIfQuestionInput.value.trim();
+  if (!question) throw new Error("请先输入 What-if 问题");
+  els.whatIfOutput.textContent = "What-if 运行中...";
+  const payload = {
+    agent_id: state.selectedAgentId,
+    scenario_title: els.whatIfTitleInput.value.trim(),
+    question,
+    event_day: Number(els.whatIfDayInput.value || 1),
+    event_time: els.whatIfTimeInput.value.trim() || "09:00",
+    sim_days: Number(els.whatIfSimDaysInput.value || 2),
+    llm_provider: els.whatIfProviderInput.value.trim(),
+  };
+  const result = await api("/api/personal-what-if", { method: "POST", body: JSON.stringify(payload) });
+  els.whatIfOutput.textContent = [
+    result.output_root ? `output_root=${result.output_root}` : "",
+    result.personal_report ? `personal_report=${result.personal_report}` : "",
+    result.comparison_report ? `comparison_report=${result.comparison_report}` : "",
+    result.stdout || "",
+    result.stderr || "",
+  ].filter(Boolean).join("\n\n") || `returncode=${result.returncode}`;
+}
+
 function bindEvents() {
   els.saveConfigBtn.addEventListener("click", () => saveConfig().catch((error) => message(error.message, "error")));
   els.runBtn.addEventListener("click", () => runSimulation(false).catch((error) => message(error.message, "error")));
@@ -487,8 +600,12 @@ function bindEvents() {
   els.saveProfileBtn.addEventListener("click", () => saveProfile().catch((error) => message(error.message, "error")));
   els.refreshAgentBtn.addEventListener("click", () => loadProfile().catch((error) => message(error.message, "error")));
   els.reloadMemoryBtn.addEventListener("click", () => loadMemory().catch((error) => message(error.message, "error")));
+  els.reloadDistributedBtn.addEventListener("click", () => loadDistributedSocial().catch((error) => message(error.message, "error")));
   els.interviewBtn.addEventListener("click", () => interview().catch((error) => {
     els.interviewOutput.textContent = error.message;
+  }));
+  els.runWhatIfBtn.addEventListener("click", () => runPersonalWhatIf().catch((error) => {
+    els.whatIfOutput.textContent = error.message;
   }));
   els.lifeEventTemplateSelect.addEventListener("change", () => {
     els.lifeEventTitleInput.value = "";
@@ -513,12 +630,14 @@ async function init() {
   await loadLifeEvents();
   await loadProfile();
   await loadMemory();
+  await loadDistributedSocial();
   await refreshStatus();
   await loadTrace(false);
   state.pollTimer = window.setInterval(() => {
     refreshStatus().catch(() => {});
     loadTrace(false).catch(() => {});
     loadLifeEvents().catch(() => {});
+    loadDistributedSocial().catch(() => {});
   }, 2500);
 }
 
