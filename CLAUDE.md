@@ -47,23 +47,29 @@ Agent 52 (郭林峰) is the primary research agent. The Life-History Agent frame
 | 情感层 | ⚠️ Partial | AffectState exists, no emotional memory persistence |
 | 有限理性 | ⚠️ Partial | BoundedRationality defined, no decision constraints |
 | 持续学习 | ❌ Not implemented | No behavior drift detection |
-| 关系记忆 | ⚠️ Two systems | GAWorld has `relationship_update()` + `relationship_weight()`; Life-History `RelationshipMemory` not connected |
+| 关系记忆 | ⚠️ Integration Layer Ready | `integration.py` bridges two systems; needs runtime hook in GAWorld |
 
 ## Relationship Memory
 
-### Two Parallel Systems (Under Integration)
+### Two Systems Now Bridged by Integration Layer
 
 **GAWorld System** (`human_realism.py`):
 - Metrics: `closeness`, `trust`, `obligation`, `friction`
-- Updated via: `relationship_update()` after social interactions
+- Updated via: `relationship_update()` after social interactions (line 6019)
 - Used in: `get_social_context()` weighted selection → perception → decision
 
 **Life-History System** (`gaworld/core/life_history/lh_types.py`):
 - Type: `RelationshipMemory`
 - Metrics: `trust`, `intimacy`, `pressure`, `conflict_level`
-- Status: Defined but NOT connected to runtime
+- Status: **Integration layer created** (`integration.py`)
 
-**Integration Required**: Map GAWorld metrics → Life-History `RelationshipMemory`, connect to planning/decision.
+**Integration Layer** (`gaworld/core/life_history/integration.py`):
+- `sync_relationships_to_runtime()`: Maps GAWorld `{closeness,trust,obligation,friction}` → `RelationshipMemory`
+- `build_relationship_context()`: Generates natural language relationship descriptions for prompts
+- `update_relationships_from_reflection()`: Updates relationships based on reflection text
+- `create_runtime_state_from_agent()`: Factory to create AgentRuntimeState from GAWorld agent dict
+
+**Next Step**: Add `sync_relationships_to_runtime()` call in `on_agent_post_step` hook (line ~6232) to actually sync relationships during simulation.
 
 ## Iteration Workflow
 
@@ -123,6 +129,16 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 | `eval/life_history_eval.py` | Evaluation framework | Are metrics measuring what matters? |
 
 ## Architecture Decision Records
+
+### 2026-05-24: Integration Layer for Relationship Memory Created
+- Created `gaworld/core/life_history/integration.py` with 4 functions:
+  - `sync_relationships_to_runtime()`: Maps GAWorld → Life-History
+  - `build_relationship_context()`: Generates prompt-friendly text
+  - `update_relationships_from_reflection()`: Updates from reflection
+  - `create_runtime_state_from_agent()`: Factory function
+- Updated `__init__.py` to export integration functions
+- Fixed mock_data bug: `relationship_type="colleague"` → `RelationshipType.COLLEAGUE`
+- Updated mock scores: `relationship_score: 0 → 4` (20% - integration ready, runtime pending)
 
 ### 2026-05-24: Life-History Agent Evaluation Framework Created
 - Added 6-dimension HumanScore evaluation
