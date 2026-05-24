@@ -103,15 +103,29 @@ For Life-History Agent feature development:
 ## Running the Simulation
 
 ```bash
-# Run simulation with Agent 52
-python generative_city_sim.py --agents 52 --days 1
+# Run with all agents (ensure HUMAN_REALISM_ENABLED in config)
+python generative_city_sim.py run
 
-# Run Life-History evaluation
-python eval/life_history_eval.py 52
-
-# Output evaluation report
-# → output/eval/agent_52_life_history_eval.md
+# Check config for HUMAN_REALISM_ENABLED flag
+# config.py -> human_realism.enabled = true
 ```
+
+## GAWorld Runtime Integration
+
+When `HUMAN_REALISM_ENABLED=true`, the LifeHistoryEngine is automatically created for each agent:
+
+**Initialization** (line ~5187):
+- `agent["life_history_engine"] = create_life_history_engine(agent_id, agent_name)`
+
+**Each Day Start** (line ~5451):
+- `engine.sync_from_gaworld(agent, agents_by_id, day)` - Sync GAWorld state to all subsystems
+
+**Each Step - Planning** (line ~5816):
+- `engine.build_planning_context(activity, perception_text)` → injected into `plan_refs["life_history_context"]`
+- Appears in prompt as "⚠️ 决策参考：..."
+
+**Each Step - After Action** (line ~6130):
+- `engine.record_step_outcome(...)` - Records behavior, learns, updates preferences
 
 ## Updating This Document
 
@@ -134,6 +148,14 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 | `eval/life_history_eval.py` | Evaluation framework | Are metrics measuring what matters? |
 
 ## Architecture Decision Records
+
+### 2026-05-25: GAWorld Runtime Integration
+- Added `create_life_history_engine` import in `generative_city_sim.py`
+- Engine creation at `build_agent` stage (line ~5187) when `HUMAN_REALISM_ENABLED=True`
+- `sync_from_gaworld()` called at day start (line ~5451)
+- `build_planning_context()` injected into planning prompt (line ~5816)
+- `record_step_outcome()` called after each step (line ~6130)
+- LifeHistory context appears as "⚠️ 决策参考：..." in prompt
 
 ### 2026-05-25 (Phase 5): Life History Unified Engine
 - Created `unified_engine.py` with `LifeHistoryEngine` class

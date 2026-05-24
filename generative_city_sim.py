@@ -67,6 +67,7 @@ from human_realism import (
     update_habits_from_episode,
     update_needs,
 )
+from gaworld.core.life_history import create_life_history_engine
 from intervention_policy import (
     INTERVENTION_METRICS,
     append_intervention_metrics,
@@ -4685,6 +4686,8 @@ def planning(agent, perception_text, recall_context=None, decision_refs=None):
         optional_sections.append(f"相关社交网络情况：{refs['social_network_text']}")
     if refs.get("transient_thought"):
         optional_sections.append(f"临时念头：{format_transient_thought(refs.get('transient_thought'))}")
+    if refs.get("life_history_context"):
+        optional_sections.append(f"⚠️ 决策参考：{refs.get('life_history_context')}")
     optional_text = "\n".join(optional_sections) if optional_sections else "无其他与当前规划强相关的补充参考。"
     prompt = f"""
 你是{agent['name']}。
@@ -5182,6 +5185,12 @@ def run_simulation():
     agents = [build_agent(i, df, city_map=city_map) for i in AGENT_IDS]
     for agent in agents:
         initialize_agent_intervention_state(agent, INTERVENTION_CONFIG)
+        if HUMAN_REALISM_ENABLED:
+            from gaworld.core.life_history import create_life_history_engine
+            agent["life_history_engine"] = create_life_history_engine(
+                agent_id=agent["id"],
+                agent_name=agent["name"],
+            )
     if PRINT_AGENT_PROFILE:
         print_agent_profiles([a["id"] for a in agents])
     start_day = 1
@@ -5439,6 +5448,11 @@ def run_simulation():
             )
             for agent in agents:
                 agent["current_day"] = day
+                # Sync LifeHistoryEngine from GAWorld state
+                if "life_history_engine" in agent:
+                    engine = agent["life_history_engine"]
+                    agents_by_id = {a["id"]: a for a in agents}
+                    engine.sync_from_gaworld(agent, agents_by_id, day)
                 budget = {"remaining": max(0, max_extra)}
                 llm_budget_by_agent[agent["id"]] = budget
                 episodes = sorted(
@@ -5795,6 +5809,14 @@ def run_simulation():
                 plan_refs["memory_hint"] = plan_recall.get("hint", "")
                 plan_refs["recollection"] = plan_recall.get("recollection", "")
                 plan_refs["transient_thought"] = transient_thought
+                # Inject LifeHistory context if available
+                if "life_history_engine" in agent:
+                    lh_ctx = agent["life_history_engine"].build_planning_context(
+                        activity=scheduled_activity,
+                        perception_text=perc,
+                    )
+                    if lh_ctx:
+                        plan_refs["life_history_context"] = lh_ctx
                 plan = planning(agent, perc, recall_context=plan_recall, decision_refs=plan_refs)
                 plan_text = format_plan_text(plan)
                 activity, change_reason, changed = maybe_adjust_activity(
@@ -6103,6 +6125,20 @@ def run_simulation():
                     agent.setdefault("episodes", []).append(episode)
                     update_habits_from_episode(agent, episode, HUMAN_REALISM_CONFIG)
                     append_agent_episode(agent_id, episode)
+                    # Record to LifeHistoryEngine if available
+                    if "life_history_engine" in agent:
+                        agent["life_history_engine"].record_step_outcome(
+                            activity=effective_activity,
+                            plan_text=plan_text,
+                            action=act,
+                            outcome=outcome,
+                            reflection_text=refl_text,
+                            state_before=state_before,
+                            state_after=state_after,
+                            social_partners=partners,
+                            current_day=day,
+                            success=("成功" in outcome or "完成" in outcome),
+                        )
                     episode_text = (
                         f"Day {day} {time_str} {effective_activity}/{act} @ {location} "
                         f"driver={episode['decision_driver']} commitment={episode['commitment_level']} "
