@@ -6,6 +6,7 @@
 - gaworld.core.life_history.bounded_rationality_integration: 有限理性集成
 - gaworld.core.life_history.emotional_memory_integration: 情感记忆集成
 - gaworld.core.life_history.learning_integration: 持续学习集成
+- gaworld.core.life_history.unified_engine: 统一引擎 (Phase 5)
 """
 
 from .lh_types import (
@@ -74,6 +75,11 @@ from .learning_integration import (
     build_learning_context,
 )
 
+from .unified_engine import (
+    LifeHistoryEngine,
+    create_life_history_engine,
+)
+
 __all__ = [
     "AgentProfile",
     "Identity",
@@ -127,4 +133,7 @@ __all__ = [
     "update_preference_from_behavior",
     "get_activity_preference_hint",
     "build_learning_context",
+    # unified engine
+    "LifeHistoryEngine",
+    "create_life_history_engine",
 ]

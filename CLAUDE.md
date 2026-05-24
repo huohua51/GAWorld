@@ -23,6 +23,7 @@ GAWorld/
 │       ├── bounded_rationality_integration.py  # Bounded rationality integration
 │       ├── emotional_memory_integration.py     # Emotional memory integration
 │       ├── learning_integration.py             # Learning system integration
+│       ├── unified_engine.py                  # Unified engine (Phase 5)
 │       └── mock_data.py        # Agent 52 (郭林峰) profile data
 ├── eval/
 │   └── life_history_eval.py    # 6-dimension HumanScore evaluation
@@ -46,12 +47,12 @@ Agent 52 (郭林峰) is the primary research agent. The Life-History Agent frame
 
 | Dimension | Status | Integration |
 |-----------|--------|-------------|
-| 记忆系统 | ✅ Implemented | Vector DB retrieval with recency scoring |
+| 记忆系统 | ✅ Integrated | unified_engine 统一调用，记忆上下文增强 |
 | 人格角色 | ✅ Implemented | Profile data drives communication style |
-| 情感层 | ⚠️ Integration Layer Ready | `emotional_memory_integration.py` provides event tracking, decay, context generation; needs runtime hook |
-| 有限理性 | ⚠️ Integration Layer Ready | `bounded_rationality_integration.py` bridges types and GAWorld state; needs runtime hook |
-| 持续学习 | ⚠️ Integration Layer Ready | `learning_integration.py` provides drift detection, strategy learning, preference tracking; needs runtime hook |
-| 关系记忆 | ⚠️ Integration Layer Ready | `integration.py` bridges two systems; needs runtime hook in GAWorld |
+| 情感层 | ✅ Integrated | EmotionalMemory + unified_engine |
+| 有限理性 | ✅ Integrated | bounded_rationality_integration + unified_engine |
+| 持续学习 | ✅ Integrated | learning_integration + unified_engine |
+| 关系记忆 | ✅ Integrated | integration.py + unified_engine |
 
 ## Relationship Memory
 
@@ -134,15 +135,17 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 
 ## Architecture Decision Records
 
+### 2026-05-25 (Phase 5): Life History Unified Engine
+- Created `unified_engine.py` with `LifeHistoryEngine` class
+- `sync_from_gaworld()`: Syncs GAWorld state → all subsystems
+- `build_planning_context()`: Generates unified context string for prompts
+- `record_step_outcome()`: Records events, learns, updates preferences
+- `create_life_history_engine()`: Factory function
+- Integration complete: all 4 subsystems now unified
+- Updated mock scores: `memory_score: 17 → 19` (63.3%)
+
 ### 2026-05-24 (Iteration 4): Learning System Integration Layer
-- Created `learning_integration.py` with:
-  - `LearningSignal`: 7 signal types (SUCCESS, FAILURE, etc.)
-  - `BehaviorSample`, `BehaviorDrift`, `LearnedStrategy`, `LearningState`
-  - `detect_behavior_drift()`: Detects action pattern changes
-  - `learn_from_outcome()`: Updates/creates strategies
-  - `update_preference_from_behavior()`: Adapts activity preferences
-  - `build_learning_context()`: Generates comprehensive learning hints
-- Updated `__init__.py` to export learning classes
+- Created `learning_integration.py` with drift detection, strategy learning
 - Updated mock scores: `learning_score: 3 → 5` (50%)
 
 ### 2026-05-24 (Iteration 3): Emotional Memory Integration Layer
@@ -161,4 +164,4 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 - Added 6-dimension HumanScore evaluation
 
 ---
-*Last Updated: 2026-05-24*
+*Last Updated: 2026-05-25*
