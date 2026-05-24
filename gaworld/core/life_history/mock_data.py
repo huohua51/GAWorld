@@ -348,13 +348,13 @@ def create_mock_scores() -> Dict:
             }
         },
         "bounded_rationality_score": {
-            "raw": 5,
+            "raw": 8,  # 已完成集成层，待 GAWorld runtime 接入
             "max": 15,
-            "percentage": 33.3,
+            "percentage": 53.3,
             "sub_scores": {
-                "decision_diversity": 3,
-                "uncertainty_expression": 1,
-                "bounded_options": 1
+                "decision_diversity": 4,  # 已添加 diversity hints 生成
+                "uncertainty_expression": 2,  # 已添加 phrase selection
+                "bounded_options": 2  # 已添加 max_options_considered 跟踪
             }
         },
         "learning_score": {
