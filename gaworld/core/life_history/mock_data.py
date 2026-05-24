@@ -6,8 +6,8 @@
 from typing import Dict
 from .lh_types import (
     AgentProfile, Identity, LifeHistory, Values, PersonalityTraits,
-    CommunicationStyle, AffectState, RelationshipMemory, GoalStack, Goal,
-    ReflectionEntry, BoundedRationality, AgentRuntimeState, AffectType
+    CommunicationStyle, AffectState, RelationshipMemory, RelationshipType,
+    GoalStack, Goal, ReflectionEntry, BoundedRationality, AgentRuntimeState, AffectType
 )
 
 
