@@ -2882,6 +2882,32 @@ def _same_activity_habit_entry(agent, activity):
         "strength": avg_strength,
     }
 
+# =========================================================
+# 辅助函数
+# =========================================================
+
+def _is_outcome_success(outcome: str) -> bool:
+    """
+    判断行动结果是否成功
+
+    使用多关键词投票机制，避免单一关键词的脆性判断
+    """
+    if not outcome:
+        return False
+
+    success_keywords_pos = ["完成", "成功", "达成", "顺利", "不错", "好", "达标", "通过"]
+    success_keywords_neg = ["失败", "未完成", "糟糕", "挫折", "失误", "差", "没做成", "不算"]
+
+    pos_count = sum(1 for k in success_keywords_pos if k in outcome)
+    neg_count = sum(1 for k in success_keywords_neg if k in outcome)
+
+    if pos_count > neg_count:
+        return True
+    elif neg_count > pos_count:
+        return False
+    # 平局时，默认不成功（保守策略）
+    return False
+
 
 def _clip01(value):
     return float(np.clip(float(value), 0.0, 1.0))
@@ -6137,7 +6163,7 @@ def run_simulation():
                             state_after=state_after,
                             social_partners=partners,
                             current_day=day,
-                            success=("成功" in outcome or "完成" in outcome),
+                            success=_is_outcome_success(outcome),
                         )
                     episode_text = (
                         f"Day {day} {time_str} {effective_activity}/{act} @ {location} "

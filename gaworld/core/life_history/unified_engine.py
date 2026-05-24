@@ -56,7 +56,11 @@ class LifeHistoryEngine:
     agent_id: int
     agent_name: str
 
-    # 子系统状态
+    # 子系统状态 - 持久化
+    runtime_state: AgentRuntimeState = field(default_factory=None)
+    profile: Any = field(default=None)  # AgentProfile from GAWorld
+
+    # 子系统状态 - 工作内存
     emotional_memory: EmotionalMemory = field(default_factory=EmotionalMemory)
     learning_state: LearningState = field(default_factory=LearningState)
     bounded_rationality: BoundedRationality = field(default_factory=BoundedRationality)
@@ -67,6 +71,21 @@ class LifeHistoryEngine:
 
     # GAWorld agent 引用 (用于同步)
     _gaworld_agent: Optional[Dict] = None
+
+    def __post_init__(self):
+        # 确保运行时状态已初始化
+        if self.runtime_state is None:
+            from .lh_types import AgentRuntimeState, AgentProfile, GoalStack, AffectState
+            from .mock_data import create_agent_52_profile
+            # 用传入的 profile 或默认 profile
+            profile = self.profile if self.profile is not None else create_agent_52_profile()
+            self.profile = profile
+            self.runtime_state = AgentRuntimeState(
+                agent_id=self.agent_id,
+                profile=profile,
+                affect=AffectState(),
+                goals=GoalStack(),
+            )
 
     def sync_from_gaworld(
         self,
@@ -81,16 +100,26 @@ class LifeHistoryEngine:
         """
         self._gaworld_agent = agent
 
+        # 0. 同步 profile (如果 GAWorld 有 profile 数据)
+        if agent.get("profile") and self.profile is None:
+            self.profile = agent["profile"]
+            self.runtime_state.profile = self.profile
+
         # 1. 同步有限理性参数
         sync_bounded_rationality_from_agent(agent, self.bounded_rationality)
 
-        # 2. 同步关系记忆 (如果有 runtime_state)
-        # 注: 这里只是记录 agent 引用，实际关系数据在 agent["relationships"]
+        # 2. 同步关系记忆: GAWorld -> self.runtime_state
         self.other_agent_names = {
             aid: info.get("name", f"Agent {aid}")
             for aid, info in agents_by_id.items()
             if aid != self.agent_id
         }
+        sync_relationships_to_runtime(
+            agent,
+            self.runtime_state,
+            self.other_agent_names,
+            current_day,
+        )
 
         # 3. 衰减情感记忆
         if decay_emotional_memory_if_needed(
@@ -113,25 +142,9 @@ class LifeHistoryEngine:
         """
         parts = []
 
-        # 1. 关系上下文
-        if self._gaworld_agent:
-            # 创建临时 runtime_state 用于 build_relationship_context
-            from .lh_types import AgentRuntimeState, AgentProfile
-            from .mock_data import create_agent_52_profile
-
-            # 如果没有 profile，创建一个空的
-            profile = create_agent_52_profile()
-            runtime_state = AgentRuntimeState(
-                agent_id=self.agent_id,
-                profile=profile,
-            )
-            sync_relationships_to_runtime(
-                self._gaworld_agent,
-                runtime_state,
-                self.other_agent_names,
-                current_day=0,  # 不更新交互记录
-            )
-            rel_ctx = build_relationship_context(runtime_state, self.other_agent_names, top_k=2)
+        # 1. 关系上下文 - 使用持久化的 runtime_state
+        if self.runtime_state.relationships:
+            rel_ctx = build_relationship_context(self.runtime_state, self.other_agent_names, top_k=2)
             if rel_ctx and rel_ctx != "最近没有与任何熟人互动。":
                 parts.append(f"关系状态：{rel_ctx}")
 
@@ -239,19 +252,41 @@ class LifeHistoryEngine:
             satisfaction=satisfaction,
         )
 
-        # 3. 从反思更新关系 (如果 GAWorld agent 可用)
-        if self._gaworld_agent:
-            from .integration import update_relationships_from_reflection
-            runtime_state = AgentRuntimeState(
-                agent_id=self.agent_id,
-                profile=create_agent_52_profile() if hasattr(__import__, 'create_agent_52_profile') else None,
-            )
+        # 3. 从反思更新关系 - 使用持久化的 runtime_state，写回 GAWorld
+        if self._gaworld_agent and social_partners:
             update_relationships_from_reflection(
-                runtime_state,
+                self.runtime_state,
                 reflection_text,
                 social_partners,
                 current_day,
             )
+            # 同步回 GAWorld agent["relationships"]
+            self._sync_relationships_to_gaworld()
+
+    def _sync_relationships_to_gaworld(self) -> None:
+        """将 runtime_state.relationships 同步回 GAWorld agent["relationships"]"""
+        if not self._gaworld_agent:
+            return
+
+        gw_rels = self._gaworld_agent.setdefault("relationships", {})
+
+        for other_id, rel_mem in self.runtime_state.relationships.items():
+            key = str(other_id)
+            gw_item = gw_rels.setdefault(key, {
+                "closeness": 0.5,
+                "trust": 0.5,
+                "obligation": 0.5,
+                "friction": 0.5,
+                "last_interaction_day": 0,
+            })
+            # 从 RelationshipMemory 反向映射到 GAWorld 格式
+            # intimacy -> closeness (反推)
+            gw_item["closeness"] = min(1.0, rel_mem.intimacy + 0.2)
+            gw_item["trust"] = rel_mem.trust
+            # pressure -> obligation (反推)
+            gw_item["obligation"] = min(1.0, rel_mem.pressure + 0.3)
+            # conflict_level -> friction (反推)
+            gw_item["friction"] = min(1.0, rel_mem.conflict_level + 0.3)
 
     def get_memory_summary(self) -> str:
         """获取记忆摘要（用于日志）"""
@@ -278,11 +313,30 @@ class LifeHistoryEngine:
 # 便捷工厂函数
 # =========================================================
 
-def create_life_history_engine(agent_id: int, agent_name: str) -> LifeHistoryEngine:
-    """创建 LifeHistoryEngine 实例"""
+def create_life_history_engine(agent_id: int, agent_name: str, profile: Any = None) -> LifeHistoryEngine:
+    """创建 LifeHistoryEngine 实例
+
+    Args:
+        agent_id: Agent ID
+        agent_name: Agent name
+        profile: Optional AgentProfile from GAWorld. If not provided, uses default profile.
+    """
+    from .lh_types import AgentRuntimeState, GoalStack, AffectState
+    from .mock_data import create_agent_52_profile
+
+    actual_profile = profile if profile is not None else create_agent_52_profile()
+    runtime_state = AgentRuntimeState(
+        agent_id=agent_id,
+        profile=actual_profile,
+        affect=AffectState(),
+        goals=GoalStack(),
+    )
+
     return LifeHistoryEngine(
         agent_id=agent_id,
         agent_name=agent_name,
+        profile=actual_profile,
+        runtime_state=runtime_state,
         emotional_memory=EmotionalMemory(),
         learning_state=LearningState(),
         bounded_rationality=BoundedRationality(

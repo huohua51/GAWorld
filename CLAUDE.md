@@ -52,7 +52,7 @@ Agent 52 (郭林峰) is the primary research agent. The Life-History Agent frame
 | 情感层 | ✅ Integrated | EmotionalMemory + unified_engine |
 | 有限理性 | ✅ Integrated | bounded_rationality_integration + unified_engine |
 | 持续学习 | ✅ Integrated | learning_integration + unified_engine |
-| 关系记忆 | ✅ Integrated | integration.py + unified_engine |
+| 关系记忆 | ✅ Persistent State + Bidirectional Sync | runtime_state.relationships persists, syncs to GAWorld each step |
 
 ## Relationship Memory
 
@@ -74,7 +74,10 @@ Agent 52 (郭林峰) is the primary research agent. The Life-History Agent frame
 - `update_relationships_from_reflection()`: Updates relationships based on reflection text
 - `create_runtime_state_from_agent()`: Factory to create AgentRuntimeState from GAWorld agent dict
 
-**Next Step**: Add `sync_relationships_to_runtime()` call in `on_agent_post_step` hook (line ~6232) to actually sync relationships during simulation.
+**Runtime Integration** (as of commit 9a7f0fe+):
+- `sync_from_gaworld()` called at day start: syncs GAWorld relationships → `LifeHistoryEngine.runtime_state`
+- `build_planning_context()` uses persistent `runtime_state.relationships` (not temp state)
+- `record_step_outcome()` updates `runtime_state.relationships` and syncs back to `agent["relationships"]`
 
 ## Iteration Workflow
 
@@ -149,6 +152,19 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 
 ## Architecture Decision Records
 
+### 2026-05-25: P1 Bug Fixes - Relationship Persistence and Architecture
+**P1 Fixes:**
+- Relationship updates now persist: `LifeHistoryEngine.runtime_state` holds `AgentRuntimeState` with `relationships` dict
+- `sync_from_gaworld()` syncs GAWorld → `runtime_state` at day start
+- `record_step_outcome()` updates `runtime_state.relationships` then syncs back to `agent["relationships"]` via `_sync_relationships_to_gaworld()`
+- `build_planning_context()` now uses `self.runtime_state` (not temp `create_agent_52_profile()`)
+- Added `profile` parameter to `create_life_history_engine()` for per-agent profiles
+
+**P2 Fixes:**
+- Success detection replaced brittle `"成功" in outcome` with `_is_outcome_success()` using multi-keyword voting
+- Committed `eval/` and `docs/` to git for reproducibility
+- Updated CLAUDE.md to reflect actual integration state
+
 ### 2026-05-25: GAWorld Runtime Integration
 - Added `create_life_history_engine` import in `generative_city_sim.py`
 - Engine creation at `build_agent` stage (line ~5187) when `HUMAN_REALISM_ENABLED=True`
@@ -159,10 +175,6 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 
 ### 2026-05-25 (Phase 5): Life History Unified Engine
 - Created `unified_engine.py` with `LifeHistoryEngine` class
-- `sync_from_gaworld()`: Syncs GAWorld state → all subsystems
-- `build_planning_context()`: Generates unified context string for prompts
-- `record_step_outcome()`: Records events, learns, updates preferences
-- `create_life_history_engine()`: Factory function
 - Integration complete: all 4 subsystems now unified
 - Updated mock scores: `memory_score: 17 → 19` (63.3%)
 
