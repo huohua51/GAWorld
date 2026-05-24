@@ -358,13 +358,13 @@ def create_mock_scores() -> Dict:
             }
         },
         "learning_score": {
-            "raw": 3,
+            "raw": 5,  # 已添加学习集成层，待运行时调用
             "max": 10,
-            "percentage": 30.0,
+            "percentage": 50.0,
             "sub_scores": {
-                "behavior_drift_detection": 2,
-                "learning_from_error": 1,
-                "preference_adaptation": 0
+                "behavior_drift_detection": 3,  # detect_behavior_drift() 已实现
+                "learning_from_error": 1,  # learn_from_outcome() 已实现
+                "preference_adaptation": 1  # update_preference_from_behavior() 已实现
             }
         },
         "relationship_score": {

@@ -5,6 +5,7 @@
 - gaworld.core.life_history.integration: 关系记忆集成
 - gaworld.core.life_history.bounded_rationality_integration: 有限理性集成
 - gaworld.core.life_history.emotional_memory_integration: 情感记忆集成
+- gaworld.core.life_history.learning_integration: 持续学习集成
 """
 
 from .lh_types import (
@@ -58,6 +59,21 @@ from .emotional_memory_integration import (
     decay_emotional_memory_if_needed,
 )
 
+from .learning_integration import (
+    LearningSignal,
+    BehaviorSample,
+    BehaviorDrift,
+    LearnedStrategy,
+    LearningState,
+    detect_behavior_drift,
+    get_drift_warning_message,
+    learn_from_outcome,
+    get_strategy_reminder,
+    update_preference_from_behavior,
+    get_activity_preference_hint,
+    build_learning_context,
+)
+
 __all__ = [
     "AgentProfile",
     "Identity",
@@ -98,4 +114,17 @@ __all__ = [
     "infer_emotional_event_from_gaworld",
     "get_emotional_context_from_memory",
     "decay_emotional_memory_if_needed",
+    # learning
+    "LearningSignal",
+    "BehaviorSample",
+    "BehaviorDrift",
+    "LearnedStrategy",
+    "LearningState",
+    "detect_behavior_drift",
+    "get_drift_warning_message",
+    "learn_from_outcome",
+    "get_strategy_reminder",
+    "update_preference_from_behavior",
+    "get_activity_preference_hint",
+    "build_learning_context",
 ]

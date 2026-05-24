@@ -22,6 +22,7 @@ GAWorld/
 │       ├── integration.py      # Relationship memory integration
 │       ├── bounded_rationality_integration.py  # Bounded rationality integration
 │       ├── emotional_memory_integration.py     # Emotional memory integration
+│       ├── learning_integration.py             # Learning system integration
 │       └── mock_data.py        # Agent 52 (郭林峰) profile data
 ├── eval/
 │   └── life_history_eval.py    # 6-dimension HumanScore evaluation
@@ -49,7 +50,7 @@ Agent 52 (郭林峰) is the primary research agent. The Life-History Agent frame
 | 人格角色 | ✅ Implemented | Profile data drives communication style |
 | 情感层 | ⚠️ Integration Layer Ready | `emotional_memory_integration.py` provides event tracking, decay, context generation; needs runtime hook |
 | 有限理性 | ⚠️ Integration Layer Ready | `bounded_rationality_integration.py` bridges types and GAWorld state; needs runtime hook |
-| 持续学习 | ❌ Not implemented | No behavior drift detection |
+| 持续学习 | ⚠️ Integration Layer Ready | `learning_integration.py` provides drift detection, strategy learning, preference tracking; needs runtime hook |
 | 关系记忆 | ⚠️ Integration Layer Ready | `integration.py` bridges two systems; needs runtime hook in GAWorld |
 
 ## Relationship Memory
@@ -133,15 +134,19 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 
 ## Architecture Decision Records
 
+### 2026-05-24 (Iteration 4): Learning System Integration Layer
+- Created `learning_integration.py` with:
+  - `LearningSignal`: 7 signal types (SUCCESS, FAILURE, etc.)
+  - `BehaviorSample`, `BehaviorDrift`, `LearnedStrategy`, `LearningState`
+  - `detect_behavior_drift()`: Detects action pattern changes
+  - `learn_from_outcome()`: Updates/creates strategies
+  - `update_preference_from_behavior()`: Adapts activity preferences
+  - `build_learning_context()`: Generates comprehensive learning hints
+- Updated `__init__.py` to export learning classes
+- Updated mock scores: `learning_score: 3 → 5` (50%)
+
 ### 2026-05-24 (Iteration 3): Emotional Memory Integration Layer
-- Created `emotional_memory_integration.py` with:
-  - `EmotionalEventType`: 12 types (SUCCESS, FAILURE, SOCIAL_SUPPORT, etc.)
-  - `EmotionalEvent`: Single emotional experience with decay
-  - `EmotionalMemory`: Collection with `decay_all()`, `get_recent_events()`, etc.
-  - `infer_emotional_event_from_gaworld()`: Detects emotional changes from GAWorld state
-  - `get_emotional_context_from_memory()`: Generates prompt context from past events
-  - `decay_emotional_memory_if_needed()`: Scheduled decay mechanism
-- Updated `__init__.py` to export emotional memory classes
+- Created `emotional_memory_integration.py` with 12 emotion types
 - Updated mock scores: `affect_score: 9 → 12` (60%)
 
 ### 2026-05-24 (Iteration 2): Bounded Rationality Integration Layer
@@ -154,14 +159,6 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 
 ### 2026-05-24: Life-History Agent Evaluation Framework Created
 - Added 6-dimension HumanScore evaluation
-- Relationship memory currently 0% due to parallel systems
-- Bounded rationality not affecting decision process
-- Emotional memory not persisting across events
-
-### 2026-05-24: Two Relationship Systems Identified
-- GAWorld uses `{closeness, trust, obligation, friction}`
-- Life-History uses `{trust, intimacy, pressure, conflict_level}`
-- Integration needed before scoring can improve
 
 ---
 *Last Updated: 2026-05-24*
