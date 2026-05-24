@@ -49,85 +49,86 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-05-15 7:01pm GMT+2
+# [GAWorld] recent context, 2026-05-24 7:29pm GMT+2
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (12,445t read) | 3,572,306t work | 100% savings
+Stats: 50 obs (11,709t read) | 2,844,292t work | 100% savings
 
-### May 11, 2026
-307 7:40p 🔄 Settings module split: runtime.py → behavior.py
-309 " 🔵 Import smoke test passes after settings refactor
-310 7:41p 🔵 CONFIG content equivalence verified via git diff
-311 " ✅ pyproject.toml pythonpath fixed for pytest module discovery
-312 " 🔵 All 7 tests pass after settings refactor
-313 " 🔵 Pre-existing pytest collection errors in test suite
-314 7:42p 🔴 tests/__init__.py added to enable fixtures subpackage import
-315 " 🔵 Full test suite: 282 passed, 2 pre-existing failures
-316 " 🔄 Settings refactor complete: config.py reduced from 631 to 12 lines
-344 8:38p 🟣 为智能体增加兴趣爱好系统
-345 " 🔵 GAWorld项目结构和关键模块概览
-346 " 🔵 智能体选择动作的决策系统架构
-348 8:40p 🔵 Remotion plugin skill structure documented
-349 " 🔵 GAWorld project structure overview
-350 " 🔵 docs/TUTORIAL.md - Chinese user tutorial documented
-351 " 🔵 CHANGELOG.md reveals recent major features and architecture
-352 " 🔵 GAWorldIntro.tsx scene structure revealed
-354 " 🟣 GAWorldTutorialCN.tsx Chinese tutorial video created
-355 8:43p ✅ Root.tsx updated to register two compositions
-356 " ✅ package.json render scripts updated for dual video output
-357 " 🔴 TypeScript/esbuild error in GAWorldTutorialCN.tsx line 385
-358 " 🔴 Fixed JSX parsing error in GAWorldTutorialCN.tsx line 385
-359 " 🔵 GAWorldTutorialCN still frame rendered successfully
-360 " 🟣 Remotion中文教程文档编写
-361 " 🟣 Remotion GAWorld中文教程视频帧渲染
-### May 13, 2026
-386 7:59p 🔵 GAWorld 项目现有文档结构
-387 " 🔵 GAWorld 项目完整技术栈梳理
-S130 为GAWorld项目创建文档：初学者教程（~20页）和科学研究方向头脑风暴 (May 13 at 8:06 PM)
-S129 为GAWorld项目撰写面向零基础初学者的中文详细教程（20页左右，含图片和表格，md格式） (May 13 at 8:06 PM)
-S131 Continue creating experiment proposals from ideas.md brainstorming document (May 13 at 8:11 PM)
-### May 14, 2026
-392 6:03p ⚖️ Research Experiment Workflow Established
-394 " 🔵 EXP-INFO-001 Misinformation Spread Proposal Content
-395 " 🔵 4 Research Proposal Details Analyzed
-393 6:04p 🔵 9 Research Proposal Experiments Identified
-396 6:06p 🔵 GAWorld Infrastructure Analysis Complete
-397 " 🔵 EXP-TRANS-001 Transportation Behavior Proposal
-398 " 🟣 GAWorld Experiment Framework Established
-399 6:38p 🔵 Unified Experiment Runner Framework exists with 9 registered experiments
-400 " 🔴 Experiment directory creation missing in base ExperimentRunner
-402 6:42p 🔴 Fixed mkdir in exp_memory_consistency.py run method
-401 6:43p 🔴 Fixed missing directory creation in exp_misinfo_spread.py run method
-403 6:45p 🔴 Fixed exp_abm_validation.py missing mkdir in run method
-404 " 🔵 Experiment framework uses non-existent CLI arguments for simulation
-405 6:46p 🔴 Fixed experiment runner CLI incompatibility using environment variables
-406 " 🔵 Simulation requires reset before first run after model changes
-407 " 🔵 Memory model version check fails with per-experiment memory_dir override
-408 " ⚖️ 实验框架搭建决策：隔离操作规范
-412 " 🔵 Memory Model Version System with Compatibility Enforcement
-413 " 🟣 Per-Experiment Memory Directory Isolation
-414 6:56p 🔵 Experiment Framework Creates Isolated Output Directories
-409 " 🔵 Memory Model Version Control机制发现
-410 " ✅ 实验运行器恢复memory_dir配置覆盖
-411 " 🔵 GAWORLD_CONFIG_OVERRIDES环境变量机制
-S132 Run research experiments from docs/proposals - established experiment framework with 9 experiment scripts and unified runner (May 14 at 7:02 PM)
-**Investigated**: Explored docs/proposals directory structure, checked simulation configuration system, examined memory model versioning, tested simulation execution with config overrides
+### May 16, 2026
+471 6:01a 🔵 Config fix successful - 5 agents now running
+473 6:32a 🟣 Academic paper written on misinformation spread research
+### May 18, 2026
+493 8:24p 🔵 Treatment B Experiment Data Validated
+494 " 🔵 Agent 4 Information Isolation Pattern Confirmed
+495 " 🔵 Agent 2 Stance Score Time-Series Drift
+496 8:25p 🔵 Experiment Framework Available for Polarization and Emotion Contagion Studies
+498 " 🔵 Unified Experiment Runner Framework with 9 Registered Experiments
+502 " 🔴 Experiment Directory Creation Bug Confirmed - Still Unfixed
+500 8:26p 🔴 Experiment Runner Directory Creation Bug in exp_polarization.py
+504 " 🔴 Edit Attempt Shows userModified:false - Fix Not Applied
+505 " 🔴 Fix Not Applied - All Experiment Scripts Have Same Bug
+520 8:36p 🟣 Second Experiment and NeurIPS Paper Writing
+521 " 🟣 Polarization Experiments Launched in Parallel
+524 " 🟣 New Experiment Session Started
+525 8:41p 🟣 exp_polarization Experiment Running
+527 " 🟣 Second experiment in progress with NIPS paper output
+529 8:51p ⚖️ Second experiment with NeurIPS paper output
+531 8:52p 🟣 Second Experiment Running with NIPS Paper Generation
+526 " ✅ Polarization Experiment Metrics Updating
+533 9:02p 🔴 Fixed missing treatment attribute in analyze_experiment()
+528 " 🔵 GAWorld polarization experiments running in parallel
+530 9:12p 🟣 Polarization experiment running dual conditions
+532 9:23p 🔵 Polarization Experiment Running with Dual Conditions
+### May 19, 2026
+534 3:13a 🟣 Created NeurIPS-format paper for polarization experiment
+535 6:20p 🔵 Skills marketplace contains oba/superpowers collection
+536 " ✅ Installed obra/superpowers@brainstorming skill globally
+537 " ✅ Installed remaining 5 obra/superpowers skills globally
+538 6:21p ✅ Installed systematic-debugging skill
+539 " ✅ Installed writing-plans skill
+540 " ✅ Installed requesting-code-review skill
+541 6:22p ✅ Completed obra/superpowers collection - all 6 skills installed
+542 " 🟣 Planning multi-agent research team for Experiment 3
+543 " 🔵 GAWorld project contains 9 experiment modules
+544 6:40p 🔵 GAWorld research vision documented in ideas.md
+545 " 🔵 GAWorld unified experiment runner framework discovered
+546 " 🔵 Exp_emotion_contagion selected as experiment for multi-agent team
+547 7:07p ⚖️ Simulation duration reduced from 150 to 50 days
+548 " 🟣 Multi-agent research team specification created
+549 7:08p 🟣 Multi-agent research team implementation plan created
+550 7:19p 🔵 generative_city_sim.py requires subcommand syntax
+551 " 🔵 generative_city_sim.py requires subcommand syntax
+552 " 🟣 Multi-agent research team architecture designed for GAWorld experiments
+553 7:33p 🔵 50-day macro economy simulation is actively running
+554 7:36p 🔵 Simulation runs full 24-hour day cycles per simulation day
+555 7:41p 🔵 50-day simulation process has stopped
+556 7:52p ⚖️ User chose 3-day simulation test to verify base simulator functionality
+S161 Found generative_city_sim.py entry point is `_main` not `main` - import test failed (May 19 at 8:03 PM)
+S162 Found key insight: simulation works when called directly but not via subprocess (May 19 at 8:08 PM)
+S163 1-day simulation with 2 agents is running but only produces initialization data (May 19 at 8:08 PM)
+S164 Simulation is running but slow due to LLM calls - proposing switch to exp_polarization (May 19 at 8:10 PM)
+S165 Simulation running in background (PID 69881) - also checking exp_polarization data availability (May 19 at 8:12 PM)
+557 8:13p ⚖️ User chose to run 3-day simulation in background with nohup
+S167 Examining exp_polarization intervention metrics data in detail (May 19 at 8:13 PM)
+558 8:14p 🟣 Multi-agent research team launched with exp_polarization data
+S168 多智能体研究团队完成exp_polarization实验并撰写论文 (May 19 at 8:14 PM)
+S166 Multi-agent research team launched with exp_polarization data - two background tasks running (May 19 at 8:14 PM)
+S170 多智能体研究团队完成exp_polarization实验，后台exp_macro_economy仿真运行中 (May 19 at 8:15 PM)
+559 8:16p 🔵 多智能体研究团队完成exp_polarization实验
+560 " 🔵 exp_macro_economy后台仿真正在运行
+### May 20, 2026
+S169 多智能体研究团队完成exp_polarization实验并撰写论文 (May 20 at 4:25 AM)
+**Investigated**: 探索了GAWorld平台上的exp_polarization实验数据，研究多样性干预对在线极化的影响。
 
-**Learned**: - GAWorld uses memory_model_version tracking (currently version 3) with _enforce_memory_model_compat() validation
-    - Each experiment needs isolated memory directory to prevent version conflicts
-    - Simulation CLI doesn't support --sim-days directly - requires GAWORLD_CONFIG_OVERRIDES environment variable
-    - Full simulations take 5+ minutes even for 2-day runs
+**Learned**: 1) 多样性干预可能适得其反：干预组极化(1.514)高于控制组(1.462)+3.6%；2) Agent 4完全隔离：20%智能体零立场、零跨观点曝光；3) 方差降低≠极化减少。
 
-**Completed**: - Created 9 experiment scripts in docs/proposals/experiments/ covering: misinformation spread, polarization, macro economy, emotion contagion, memory consistency, network evolution, policy framework, transport behavior, ABM validation
-    - Built run_experiment.py unified framework with --list, --run, --analyze, --compare actions
-    - Created docs/proposals/results/ directory structure for experiment outputs
-    - Experiment output dirs (e.g., exp_misinfo_spread/control/) contain experiment_config.json and isolated memory subdirectories
+**Completed**: 1) superpower技能安装完成；2) 4角色多智能体团队(Experimenter/Data Analyst/Paper Writer/Paper Reviewer)；3) exp_polarization数据验证；4) polarization_paper.md(234行)生成；5) shared_state.json更新为approved状态。
 
-**Next Steps**: Manual test of single experiment to validate output format, then either adjust experiment scripts or reduce default simulation days (14→2-3) for faster iteration before running all 9 experiments
+**Next Steps**: 3天仿真实验(PID 69881)在后台继续运行。
 
 
-Access 3572k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 2844k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

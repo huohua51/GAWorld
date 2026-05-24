@@ -4,6 +4,96 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-05-22 — Robustness Audit (S4)
+
+Static-analysis sweep over the post-S3 codebase. Confirmed that the LLM provider retry framework, worker-pool fault chain, and per-adapter LLM guards were already production-ready; identified and closed 5 surviving silent-failure spots.
+
+### Fixed
+
+- **`generative_city_sim.py` L155 + L4889**: `print("⚠️  ...")` warnings during ghost event injection and off-screen social roster bootstrap now go through `_LOG.warning(...)` so they show up in structured logs.
+- **`generative_city_sim.py` L4727**: Invalid `RANDOM_SEED` config no longer silently runs unseeded — emits `_LOG.warning(...)` so the user knows reproducibility was lost.
+- **`gaworld/memory/store.py` L99**: Log-cache warm-up `OSError` no longer silently swallowed; emits `_LOG.debug(...)` breadcrumb. Behaviour unchanged (still falls back to whatever lines were already ingested).
+- **`gaworld/memory/store.py` L418**: Vector DB close errors during teardown no longer silently swallowed; emits `_LOG.debug(...)` breadcrumb. First logger in that module.
+
+### Docs
+
+- **`docs/PHASE4_AUDIT.md`** — written. Documents every `except Exception` (27), silent `except: pass` (13), and live HTTP call (9) in the post-S3 repo, explains why each is either correct or was fixed, and records *why* the phase-0 "fragile error handling" baseline overstated the problem.
+
+## [Unreleased] — 2026-05-22 — Architecture Refactor (S3)
+
+Module reorganisation, monolith decomposition, performance fix, and bilingual docs refresh.
+
+### Added
+
+- **`gaworld/<sub>/` package homes for 11 previously top-level modules.** Each legacy file is now a 16-line `sys.modules` aliasing shim — the legacy import path keeps working, but new code should use the canonical `gaworld.<sub>.<module>` path.
+
+  | Legacy import path | New canonical path |
+  | --- | --- |
+  | `memory_store` | `gaworld.memory.store` |
+  | `social_network` | `gaworld.social.network` |
+  | `city_map_system` | `gaworld.world.city_map` |
+  | `environment` | `gaworld.env.system` |
+  | `economy_module` | `gaworld.economy.finance` |
+  | `dynamic_behavior` | `gaworld.behavior.dynamic` |
+  | `llm_providers` | `gaworld.llm.providers` |
+  | `human_realism` | `gaworld.cognition.realism` |
+  | `intervention_policy` | `gaworld.policy.intervention` |
+  | `life_events` | `gaworld.events.life` |
+  | `distributed_comm` | `gaworld.distributed.comm` |
+
+  Aliasing uses `sys.modules[__name__] = _module` so the legacy and canonical names resolve to the *same* module object — module-level state, private attribute reassignment, and monkey-patching all propagate transparently.
+
+- **`gaworld/sim/` — extracted sub-modules from the `generative_city_sim.py` monolith.** Pulled out as cohesive groups rather than line-count slices, with re-exports left at the original locations so importers keep working:
+  - `_utils.py` (~300 lines) — pure helpers (time, dates, env-context cleanup, weekday/weekend logic, JSON markers, path utilities).
+  - `agents_loader.py` (~180 lines) — profile parsing (`parse_profile`, payload coercion/normalisation, profile-block formatting).
+  - `_schedule.py` (~450 lines) — schedule plumbing (`_parse_schedule`, `_heuristic_schedule`, `ensure_sleep_in_schedule`, `format_plan_text`, `_compact_text`, recall labels).
+  - `_location.py` (~370 lines) — agent movement (`_infer_workplace`, `_infer_home`, `assign_agent_locations`, `_update_commute_memory`, `_update_transit_progress`, `move_agent`).
+  - `_rag.py` (~60 lines) — external-RAG hint helpers (`_agent_has_external_rag`, `_external_rag_hint`).
+  - `_cognition.py` (~130 lines) — `get_social_context`, `perception`, `social_influence`. Uses the module-attribute LLM dispatch pattern so test mocks propagate.
+  - `_diary.py` (~230 lines) — long-term memory + daily diary (`_append_memory_record`, `daily_summary`, `generate_daily_diary`, `save_daily_diary`, `_top_day_episode_lines`, `_fallback_daily_diary`).
+  - `_news.py` (~760 lines, 20 names) — external information acquisition: source plumbing (`fetch_social_page_profile_source`, `load_news_sources`, `load_news_cache`, `update_news_cache`), interest scoring (`_extract_interest_keywords`, `_score_news_relevance`, `choose_news_for_agent`, `_domain_from_url`, `_build_agent_preferred_sites`, `_choose_info_target`), acquisition pipelines (`info_seek_and_store`, `search_web_and_store`, `read_news_and_store`), search-engine plumbing (`web_search`, `_extract_google_results`, `_extract_baidu_results`, `_extract_bing_results`, `_extract_generic_results`, `_build_search_query`, `_estimate_curiosity`). Kept the legacy `re.findall(r"\\(...)\\)"` over-escape verbatim — looks like a bug in source, but per Surgical Changes we don't "fix" it during extraction.
+  - `_prompt.py` (~280 lines, 5 names) — prompt-fragment builders that turn agent state into Chinese prompt sections: `_band_label` (3-tier scalar → label), `_state_brief_for_prompt` (emotion/stress/energy/hunger/fatigue/time-pressure/self-control/social-need summary), `_yesterday_recap_for_prompt` (top-k prior-day episodes), `_recent_life_events_for_prompt` (consumed life events in window), `_social_pulse_for_prompt` (top-weighted relationships with recent interaction).
+  - `_schedule.py` extended (+170 lines, +8 names) — six normalisation helpers (`_jitter_schedule_times`, `normalize_schedule_to_base`, `_dedupe_schedule_items`, `_enforce_schedule_min_gap`, `_has_enough_schedule_anchors`, `normalize_flexible_schedule`) plus the JSON-block extractor / schedule-change parser pair (`_extract_json_block`, `_parse_schedule_change`). `normalize_flexible_schedule` now reads its six `DAILY_PLAN_*` knobs at *call time* via `CONFIG.get(...)` — module-load snapshots break under tests that replace `CONFIG[section]` wholesale (same lesson as the S3 Phase 3 `_bootstrap_agent_external_rag` perf-fix).
+  - `_rag.py` extended (~180 lines, +5 names) — `_append_external_payload_to_agent`, `_heuristic_bootstrap_external_items`, `_parse_bootstrap_external_items`, `_llm_bootstrap_external_items`, `_summarize_bootstrap_web_item`. The `_bootstrap_agent_external_rag` orchestrator stays in gen_city_sim because tests do `patch.object(sim, "_llm_bootstrap_external_items", ...)` and the orchestrator's bare-name lookups must resolve in `sim`'s globals.
+  - `_action.py` (new, ~100 lines, 3 names) — pure JSON parsers used by `choose_action` and friends: `_parse_action_space`, `_parse_location_bias`, `_parse_policy_effect`. The `choose_action` orchestrator itself is deferred — see `docs/RUN_SIMULATION_EXTRACTION_PLAN.md` for the dependency-graph reasoning.
+  - `_utils.py` extended (+1 name) — `_sanitize_extra_text` lifted here as a prerequisite for the RAG bootstrap extraction (was a 4-line helper used 19 times in gen_city_sim).
+
+  Net: `generative_city_sim.py` shrank from 7,032 → 5,753 lines after the news + prompt + schedule + RAG + action extractions (≈18% in five slices); total monolith decomposition since S3 began: ~3,000 lines lifted out (≈42%) without breaking the legacy import surface.
+
+### Deferred (with plan)
+
+- **`run_simulation` orchestrator (1,380 lines).** Not extracted in this round — dependency graph too tangled, and lifting it without first migrating the per-step helpers (`evoke_memory`, `_social_relationship_snapshot`, `_activity_matches_keywords`, `_build_recall_context_labels`) would silently break the `patch.object(sim, ...)` test rig. Instead: inserted phase-section banners inside the function body (PHASE 1 init, PHASE 2 social network, PHASE 3 day loop with 3a/3b/3c sub-phases) as a navigation aid for a future lift. Full prerequisites + ordering recorded in `docs/RUN_SIMULATION_EXTRACTION_PLAN.md`.
+
+### Extraction discipline notes
+
+- **Surgical Changes preserved verbatim where it counts.** Spotted two source-code quirks during the news extraction — `r"\\(...)\\)"` over-escaped regex and `"\\n".join(...)` (literal backslash-n instead of newline). Both look like upstream bugs, but per the project rule we restored them byte-for-byte with a comment, rather than "fixing while we're here". Behaviour-preserving refactors should never silently change behaviour.
+
+### Fixed
+
+- **External-RAG bootstrap was firing real network calls during the e2e smoke test.** `_bootstrap_agent_external_rag` was reading the module-load snapshot `EXTERNAL_RAG_CONFIG`, but test fixtures replace `CONFIG["external_rag"]` *wholesale* (a new dict) — so the snapshot kept pointing at the original, fully-enabled config and the disable never took effect. Switched to a runtime lookup `CONFIG.get("external_rag", {}).get("bootstrap", {})`. **Result:** `test_e2e_smoke` went from 9.59 s → 1.50 s (6.4× faster); full unit suite went from 11 s → 3.34 s (3.3× faster).
+
+- **`gaworld/world/city_map.py` path resolution after relocation.** `PROJECT_ROOT = Path(__file__).resolve().parent` evaluated to `gaworld/world/` instead of the repo root once the file moved out of the project root, breaking 15 city-map tests with `IndexError`. Corrected to `Path(__file__).resolve().parents[2]` with a comment explaining the depth.
+
+- **`gaworld/llm/__init__.py` had a reverse-pointing import** (`from llm_providers import …`) that became a circular import the moment the root `llm_providers.py` was turned into a shim importing back into `gaworld.llm`. Rewrote `__init__.py` to import from the `.providers` sibling instead.
+
+### Docs
+
+- **`docs/REFACTOR_PLAN.md`** — full six-phase refactor plan with goal/risk analysis per phase.
+- **`docs/REFACTOR_BASELINE.md`** — pre-refactor metrics baseline (337 pass / 4 fail / 11 s; ruff 544 errors; e2e_smoke 9.59 s with the bootstrap hot-spot).
+- **`docs/PROJECT_STRUCTURE.md`** — rewritten to reflect the 13 `gaworld/` sub-packages, the 11 shim mapping table, the `gaworld/sim/` sub-modules, the path-resolution gotcha, and the post-S3 test baseline.
+- **`README.md` / `README.zh-CN.md` — Project Structure sections rewritten** to list canonical `gaworld.<sub>.<module>` paths and explain the legacy-shim compatibility story.
+
+### Internal patterns established
+
+- **`sys.modules`-aliasing shim** as the standard pattern for legacy import paths — preserves module-level state, monkey-patching, and private attribute access; the alternative (`from X import *`) silently loses all of these.
+- **Module-attribute LLM dispatch** (`from gaworld.llm import providers as _llm_providers; _llm_providers.call_llm(...)`) instead of `from gaworld.llm.providers import call_llm`. The test mock installer reassigns the module attribute, which is invisible to `from`-bound names.
+- **CONFIG runtime lookup, not module-load snapshot.** Test fixtures replace `CONFIG[section]` wholesale — module-level snapshots like `_THING_CONFIG = CONFIG["thing"]` capture a now-stale dict reference. Always read via `CONFIG.get("thing", {})...` at call sites.
+- **Migration pre-check** — before relocating a file, grep for `__file__`, `PROJECT_ROOT`, `Path(...).parent`, and check for pre-existing placeholder `__init__.py` files (which may contain reverse-pointing imports that need to be flipped to siblings).
+
+### Test status
+
+339 pass / 2 pre-existing flaky failures, full suite 3.34 s.
+
 ## [Unreleased] — 2026-05-01 — Economy + Location + Dynamic Behavior
 
 ### Added

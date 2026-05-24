@@ -11,11 +11,9 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import date, datetime, timedelta
 import matplotlib.pyplot as plt
 import networkx as nx
 from html import unescape
-from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
@@ -35,65 +33,12 @@ _LOG = get_logger("gaworld.sim")
 # ---------------------------------------------------------------------------
 _LOG_SIMPLE: bool = LOG_MODE == "simple"
 
-
-def _clean_env_context(env_text: str, max_chars: int = 80) -> str:
-    """Strip static background and intervention text; return dynamic events only.
-
-    The env context string is structured as:
-      背景：<static>  当前环境事件：<dynamic>  平台干预推荐：<intervention>
-
-    In simple mode we only want the dynamic part, and skip it entirely when
-    it only contains the boilerplate "今日外部环境总体平稳" phrase.
-    """
-    if not env_text:
-        return ""
-    # Drop platform intervention section (verbose, repeated, often truncated).
-    for marker in ("平台干预推荐：", "\n平台干预推荐"):
-        idx = env_text.find(marker)
-        if idx != -1:
-            env_text = env_text[:idx]
-    env_text = env_text.strip()
-    # Keep only the part after "当前环境事件：".
-    dyn_marker = "当前环境事件："
-    idx = env_text.find(dyn_marker)
-    if idx != -1:
-        env_text = env_text[idx + len(dyn_marker):].strip()
-    # Skip uninformative boilerplate.
-    if not env_text or "今日外部环境总体平稳" in env_text:
-        return ""
-    if len(env_text) > max_chars:
-        env_text = env_text[:max_chars].rstrip() + "…"
-    return env_text
-
-
-def _clean_reflection(text: str, max_chars: int = 160) -> str:
-    """Return a clean Chinese reflection, stripping LLM reasoning leakage.
-
-    Some LLM backends prepend English chain-of-thought ("The user says: …")
-    before the actual Chinese answer.  When detected, we try to extract only
-    the structured Chinese key-value pairs (感受/教训/后续倾向).
-    """
-    if not text:
-        return text
-    # Measure English-character ratio.
-    ascii_alpha = sum(1 for c in text if c.isascii() and c.isalpha())
-    if ascii_alpha / max(len(text), 1) < 0.10:
-        # Looks clean — just truncate.
-        return text[:max_chars] + ("…" if len(text) > max_chars else "")
-    # Extract structured Chinese parts, skipping polluted 结果 field.
-    parts: list[str] = []
-    for key in ("感受", "教训", "后续倾向"):
-        m = re.search(rf"{key}[：:]\s*([^；\n]+)", text)
-        if not m:
-            continue
-        val = m.group(1).strip()
-        val_ascii = sum(1 for c in val if c.isascii() and c.isalpha())
-        if val_ascii / max(len(val), 1) < 0.30:
-            parts.append(f"{key}：{val}")
-    if parts:
-        return "；".join(parts)
-    # Fallback: truncate original.
-    return text[:max_chars] + ("…" if len(text) > max_chars else "")
+# Text-cleaning helpers moved to ``gaworld.sim._utils`` during the S3
+# refactor. Re-exported here so existing in-file callers keep working.
+from gaworld.sim._utils import (  # noqa: E402
+    _clean_env_context,
+    _clean_reflection,
+)
 
 from city_map_system import (
     all_locations as city_all_locations,
@@ -207,7 +152,11 @@ def _maybe_inject_ghost_event(agent, day, time_str):
         }
         return _add_life_event(payload, CONFIG)
     except Exception as exc:  # noqa: BLE001
-        print(f"⚠️  ghost event injection failed for {agent.get('name', '?')}: {exc}")
+        _LOG.warning(
+            "ghost event injection failed for %s: %s",
+            agent.get("name", "?"),
+            exc,
+        )
         return None
 from intervention_policy import (
     INTERVENTION_METRICS,
@@ -250,163 +199,27 @@ from memory_store import (
 # =========================================================
 # Utils
 # =========================================================
-def _parse_step_minutes(value):
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    text = str(value).strip().lower()
-    if not text:
-        return None
-    match = re.match(r"^(\d+)\s*(m|min|mins|minute|minutes|h|hour|hours)?$", text)
-    if not match:
-        return None
-    amount = int(match.group(1))
-    unit = match.group(2)
-    if not unit or unit.startswith("m"):
-        return amount
-    if unit.startswith("h"):
-        return amount * 60
-    return amount
-
-def _time_str_to_minutes(time_str):
-    if not re.match(r"^\d{2}:\d{2}$", str(time_str)):
-        return None
-    hh, mm = time_str.split(":")
-    return int(hh) * 60 + int(mm)
-
-def _minutes_to_time_str(minutes):
-    minutes = int(minutes) % (24 * 60)
-    hh = minutes // 60
-    mm = minutes % 60
-    return f"{hh:02d}:{mm:02d}"
-
-def _build_time_grid(step_minutes):
-    step = max(1, int(step_minutes))
-    return [_minutes_to_time_str(m) for m in range(0, 24 * 60, step)]
-
-def _format_external_env_event(ev):
-    if not isinstance(ev, dict):
-        return str(ev)
-    etype = str(ev.get("type", "event"))
-    topic = str(ev.get("topic", "")).strip()
-    severity = float(ev.get("severity", 0.0))
-    description = str(ev.get("description", ev.get("name", ""))).strip()
-    topic_part = f"/{topic}" if topic else ""
-    return f"{etype}{topic_part}({severity:.2f}) {description}".strip()
-
-_WEEKDAY_ORDER = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-_WEEKDAY_ZH = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-_WEEKDAY_ALIASES = {
-    "mon": "monday",
-    "tue": "tuesday",
-    "wed": "wednesday",
-    "thu": "thursday",
-    "fri": "friday",
-    "sat": "saturday",
-    "sun": "sunday",
-    "周一": "monday",
-    "周二": "tuesday",
-    "周三": "wednesday",
-    "周四": "thursday",
-    "周五": "friday",
-    "周六": "saturday",
-    "周日": "sunday",
-}
-
-def _weekday_to_index(name):
-    key = str(name or "").strip().lower()
-    key = _WEEKDAY_ALIASES.get(key, key)
-    if key not in _WEEKDAY_ORDER:
-        return None
-    return _WEEKDAY_ORDER.index(key)
-
-def _build_weekend_indexes(raw_days):
-    if not isinstance(raw_days, (list, tuple, set)):
-        raw_days = [raw_days]
-    indexes = set()
-    for day_name in raw_days:
-        idx = _weekday_to_index(day_name)
-        if idx is not None:
-            indexes.add(idx)
-    return indexes or {5, 6}
-
-def _parse_sim_start_date(value):
-    if value is None:
-        return date.today()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()
-    if not text or text.lower() == "today":
-        return date.today()
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return date.today()
-
-def _resolve_day_context(day_number, start_weekday_idx=0, weekend_indexes=None, start_date=None):
-    safe_day = max(1, int(day_number or 1))
-    sim_date = None
-    if isinstance(start_date, date):
-        sim_date = start_date + timedelta(days=safe_day - 1)
-        idx = sim_date.weekday()
-    else:
-        idx = (int(start_weekday_idx) + safe_day - 1) % 7
-    weekend_indexes = weekend_indexes or {5, 6}
-    is_weekend = idx in weekend_indexes
-    return {
-        "sim_date": sim_date.isoformat() if sim_date else "",
-        "sim_date_zh": (
-            f"{sim_date.year}年{sim_date.month:02d}月{sim_date.day:02d}日"
-            if sim_date else ""
-        ),
-        "weekday_index": idx,
-        "weekday_en": _WEEKDAY_ORDER[idx],
-        "weekday_zh": _WEEKDAY_ZH[idx],
-        "day_type": "weekend" if is_weekend else "weekday",
-        "day_type_zh": "周末" if is_weekend else "工作日",
-    }
-
-def _clear_dir(path):
-    if not path or not os.path.exists(path):
-        return
-    for name in os.listdir(path):
-        target = os.path.join(path, name)
-        try:
-            if os.path.islink(target) or os.path.isfile(target):
-                os.remove(target)
-            elif os.path.isdir(target):
-                shutil.rmtree(target)
-        except OSError:
-            continue
-
-
-def _stable_json_marker(value):
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except (TypeError, ValueError):
-        return repr(value)
-
-
-def _coerce_positive_int_list(values):
-    if values is None:
-        return []
-    if not isinstance(values, (list, tuple, set)):
-        values = [values]
-    seen = set()
-    out = []
-    for raw in values:
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if value <= 0 or value in seen:
-            continue
-        seen.add(value)
-        out.append(value)
-    return out
+# The pure-utility helpers that used to live in this section were extracted
+# into ``gaworld.sim._utils`` during the S3 refactor. They are re-exported
+# here unchanged so internal callers keep working without any rename.
+from gaworld.sim._utils import (  # noqa: E402
+    _WEEKDAY_ALIASES,
+    _WEEKDAY_ORDER,
+    _WEEKDAY_ZH,
+    _build_time_grid,
+    _build_weekend_indexes,
+    _clear_dir,
+    _coerce_positive_int_list,
+    _format_external_env_event,
+    _minutes_to_time_str,
+    _parse_sim_start_date,
+    _parse_step_minutes,
+    _resolve_day_context,
+    _sanitize_extra_text,
+    _stable_json_marker,
+    _time_str_to_minutes,
+    _weekday_to_index,
+)
 
 # --------------------------------------------------------------------
 # HTML extraction helpers — delegated to gaworld.io.web_scrape.
@@ -428,794 +241,38 @@ from gaworld.io.web_scrape import (  # noqa: E402
 )
 
 
-def fetch_social_page_profile_source(
-    url,
-    timeout=12,
-    max_chars=12000,
-    user_agent="GAWorld/1.0",
-):
-    if not url:
-        raise ValueError("缺少 URL")
-    headers = {"User-Agent": user_agent}
-    resp = requests.get(url, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    if not resp.encoding:
-        resp.encoding = resp.apparent_encoding
-    raw_text = resp.text or ""
-    title = _extract_title(raw_text)
-    meta_desc = _extract_meta_content(
-        raw_text,
-        "description",
-        "og:description",
-        "twitter:description",
-    )
-    content = _extract_news_main_content(raw_text)
-    if len(content) < 200:
-        content = _strip_html(raw_text)
-    combined = "\n".join(
-        part for part in [
-            f"页面标题：{title}" if title else "",
-            f"页面摘要：{meta_desc}" if meta_desc else "",
-            content,
-        ]
-        if part
-    ).strip()
-    if max_chars and len(combined) > max_chars:
-        combined = combined[:max_chars]
-    return {
-        "url": url,
-        "title": title,
-        "summary": meta_desc,
-        "content": combined,
-    }
+# --------------------------------------------------------------------
+# External information acquisition (news / search / info-seek) —
+# extracted to ``gaworld.sim._news``. Re-exported here for backwards
+# compatibility: tests use ``patch.object(sim, "_choose_info_target", ...)``
+# and ``patch.object(sim, "_build_agent_preferred_sites", ...)``, and
+# ``generate_agent_rag_seed.py`` calls ``sim.web_search`` /
+# ``sim._domain_from_url``. New code should import from
+# ``gaworld.sim._news`` directly.
+# --------------------------------------------------------------------
+from gaworld.sim._news import (  # noqa: E402
+    fetch_social_page_profile_source,
+    load_news_sources,
+    load_news_cache,
+    update_news_cache,
+    _extract_interest_keywords,
+    _score_news_relevance,
+    choose_news_for_agent,
+    _domain_from_url,
+    _build_agent_preferred_sites,
+    _choose_info_target,
+    info_seek_and_store,
+    _estimate_curiosity,
+    _build_search_query,
+    _extract_google_results,
+    _extract_baidu_results,
+    _extract_bing_results,
+    _extract_generic_results,
+    web_search,
+    search_web_and_store,
+    read_news_and_store,
+)
 
-def load_news_sources(path):
-    if not path or not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return []
-    urls = re.findall(r"\\((https?://[^)\\s]+)\\)", text)
-    urls.extend(re.findall(r"https?://[^\\s)]+", text))
-    cleaned = []
-    seen = set()
-    for url in urls:
-        url = url.strip().rstrip(").,;")
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        cleaned.append(url)
-    return cleaned
-
-def load_news_cache(path):
-    if not path or not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-    if isinstance(data, dict):
-        data = data.get("items", [])
-    if not isinstance(data, list):
-        return []
-    cleaned = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        url = str(item.get("url", "")).strip()
-        text = str(item.get("text", "")).strip()
-        if not url or not text:
-            continue
-        cleaned.append({
-            "url": url,
-            "text": text,
-            "title": str(item.get("title", "")).strip(),
-            "fetched_at": str(item.get("fetched_at", "")).strip(),
-        })
-    return cleaned
-
-def update_news_cache(path, sources, config=None):
-    config = config or {}
-    existing = load_news_cache(path)
-    if not sources:
-        return existing
-    timeout = int(config.get("timeout", 8))
-    max_chars = int(config.get("max_chars", 2000))
-    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
-    items = []
-    seen = set()
-    for url in sources:
-        url = str(url).strip()
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        excerpt, title = fetch_news_excerpt(
-            url,
-            timeout=timeout,
-            max_chars=max_chars,
-            user_agent=user_agent,
-            return_title=True,
-        )
-        if not excerpt:
-            continue
-        items.append({
-            "url": url,
-            "title": title,
-            "text": excerpt,
-            "fetched_at": time.strftime("%Y-%m-%d"),
-        })
-    if not items:
-        return existing
-    cache_dir = os.path.dirname(path)
-    if cache_dir:
-        os.makedirs(cache_dir, exist_ok=True)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
-    except OSError:
-        return existing
-    return items
-
-def _extract_interest_keywords(agent, max_items=24):
-    profile_fields = [
-        "job",
-        "personality",
-        "daily_life",
-        "values",
-        "work_style",
-        "living",
-        "residence",
-    ]
-    seed_text = " ".join(str(agent.get(k, "")) for k in profile_fields)
-    tokens = re.findall(r"[A-Za-z]{3,}|[\u4e00-\u9fff]{2,8}", seed_text)
-    stopwords = {
-        "自己", "一些", "这种", "这个", "那个", "他们", "我们", "你们",
-        "以及", "对于", "非常", "比较", "可以", "因为", "所以", "但是",
-        "工作", "生活", "习惯", "日常", "态度", "价值观", "情绪", "性格",
-        "城市", "社会", "公共", "事务", "时候", "进行", "觉得", "喜欢",
-        "about", "into", "with", "from", "that", "this", "have", "their",
-    }
-    counts = defaultdict(int)
-    for raw in tokens:
-        token = raw.lower().strip()
-        if len(token) < 2 or token in stopwords:
-            continue
-        counts[token] += 1
-    ranked = sorted(counts.items(), key=lambda x: (-x[1], -len(x[0]), x[0]))
-    return [k for k, _ in ranked[:max_items]]
-
-def _score_news_relevance(url, title, excerpt, interests):
-    if not interests:
-        return 0.0, []
-    domain = urlparse(url).netloc.lower() if url else ""
-    haystack = " ".join(
-        [
-            str(url or "").lower(),
-            str(domain or "").lower(),
-            str(title or "").lower(),
-            str(excerpt or "").lower(),
-        ]
-    )
-    if not haystack.strip():
-        return 0.0, []
-    matched = []
-    score = 0.0
-    for kw in interests:
-        if kw and kw in haystack:
-            matched.append(kw)
-            score += 1.0 + min(len(kw), 10) * 0.05
-    return score, matched[:8]
-
-def choose_news_for_agent(
-    agent,
-    news_cache,
-    news_sources,
-    use_cache_first=True,
-    seen_urls=None,
-):
-    seen_urls = seen_urls or set()
-    interests = _extract_interest_keywords(agent)
-
-    def _pick_best_from_cache(items):
-        ranked = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            url = str(item.get("url", "")).strip()
-            if not url or url in seen_urls:
-                continue
-            title = str(item.get("title", "")).strip()
-            text = str(item.get("text", "")).strip()
-            score, matched = _score_news_relevance(url, title, text, interests)
-            ranked.append((score + random.random() * 0.05, matched, item))
-        if not ranked:
-            return None
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        top_n = ranked[: min(3, len(ranked))]
-        chosen = random.choice(top_n)
-        return chosen[2], chosen[0], chosen[1]
-
-    if use_cache_first and news_cache:
-        picked = _pick_best_from_cache(news_cache)
-        if picked:
-            item, score, matched = picked
-            return (
-                item.get("url", ""),
-                item.get("text", ""),
-                item.get("title", ""),
-                score,
-                matched,
-            )
-
-    candidate_sources = [u for u in news_sources if u and u not in seen_urls]
-    if candidate_sources:
-        source_ranked = []
-        for source_url in candidate_sources:
-            score, matched = _score_news_relevance(source_url, "", "", interests)
-            source_ranked.append((score + random.random() * 0.05, matched, source_url))
-        source_ranked.sort(key=lambda x: x[0], reverse=True)
-        best_score, best_matched, best_url = source_ranked[0]
-        return best_url, "", "", best_score, best_matched
-
-    if news_cache:
-        picked = _pick_best_from_cache(news_cache)
-        if picked:
-            item, score, matched = picked
-            return (
-                item.get("url", ""),
-                item.get("text", ""),
-                item.get("title", ""),
-                score,
-                matched,
-            )
-    return "", "", "", 0.0, []
-
-def _domain_from_url(url):
-    domain = urlparse(str(url or "")).netloc.lower().strip()
-    if domain.startswith("www."):
-        domain = domain[4:]
-    return domain
-
-def _build_agent_preferred_sites(agent, news_sources=None, news_cache=None, max_sites=6):
-    news_sources = news_sources or []
-    news_cache = news_cache or []
-    interests = _extract_interest_keywords(agent, max_items=18)
-    fallback_domains = [
-        "baidu.com",
-        "bing.com",
-        "google.com",
-        "thepaper.cn",
-        "news.qq.com",
-        "weibo.com",
-        "zhihu.com",
-    ]
-    domain_scores = defaultdict(float)
-    for url in news_sources:
-        domain = _domain_from_url(url)
-        if domain:
-            domain_scores[domain] += 0.6
-            score, _ = _score_news_relevance(url, "", "", interests)
-            domain_scores[domain] += score
-    for item in news_cache:
-        if not isinstance(item, dict):
-            continue
-        url = str(item.get("url", "")).strip()
-        title = str(item.get("title", "")).strip()
-        text = str(item.get("text", "")).strip()
-        domain = _domain_from_url(url)
-        if not domain:
-            continue
-        score, _ = _score_news_relevance(url, title, text, interests)
-        domain_scores[domain] += 0.5 + score
-    for domain in fallback_domains:
-        domain_scores[domain] += 0.2
-    ranked = sorted(domain_scores.items(), key=lambda x: (-x[1], x[0]))
-    return [domain for domain, _ in ranked[:max(1, int(max_sites))]]
-
-def _choose_info_target(
-    agent,
-    news_cache,
-    news_sources,
-    preferred_sites,
-    seen_urls=None,
-    used_queries=None,
-    config=None,
-):
-    config = config or {}
-    seen_urls = seen_urls or set()
-    used_queries = used_queries or set()
-    direct_visit_ratio = float(config.get("prefer_source_visit_ratio", 0.55))
-    interests = _extract_interest_keywords(agent)
-
-    preferred_cache = []
-    for item in news_cache or []:
-        if not isinstance(item, dict):
-            continue
-        url = str(item.get("url", "")).strip()
-        if not url or url in seen_urls:
-            continue
-        domain = _domain_from_url(url)
-        if preferred_sites and domain not in preferred_sites:
-            continue
-        title = str(item.get("title", "")).strip()
-        text = str(item.get("text", "")).strip()
-        score, matched = _score_news_relevance(url, title, text, interests)
-        preferred_cache.append((score + random.random() * 0.03, matched, url, title, text))
-    preferred_cache.sort(key=lambda x: x[0], reverse=True)
-
-    preferred_sources = []
-    for url in news_sources or []:
-        url = str(url).strip()
-        if not url or url in seen_urls:
-            continue
-        domain = _domain_from_url(url)
-        if preferred_sites and domain not in preferred_sites:
-            continue
-        score, matched = _score_news_relevance(url, "", "", interests)
-        preferred_sources.append((score + random.random() * 0.03, matched, url))
-    preferred_sources.sort(key=lambda x: x[0], reverse=True)
-
-    if random.random() < direct_visit_ratio and preferred_cache:
-        score, matched, url, title, text = preferred_cache[0]
-        return {
-            "mode": "direct_source",
-            "query": "",
-            "engine": "",
-            "url": url,
-            "title": title,
-            "content": text,
-            "score": score,
-            "matched": matched,
-        }
-    if random.random() < direct_visit_ratio and preferred_sources:
-        score, matched, url = preferred_sources[0]
-        text = fetch_news_excerpt(
-            url,
-            timeout=int(config.get("content_timeout", config.get("timeout", 8))),
-            max_chars=int(config.get("content_max_chars", 2000)),
-            user_agent=str(config.get("user_agent", "GAWorld/1.0")),
-        )
-        if text:
-            return {
-                "mode": "direct_source",
-                "query": "",
-                "engine": "",
-                "url": url,
-                "title": "",
-                "content": text,
-                "score": score,
-                "matched": matched,
-            }
-
-    query = _build_search_query(agent, used_queries=used_queries)
-    if preferred_sites and random.random() < 0.85:
-        query = f"{query} site:{random.choice(preferred_sites)}"
-    engine, results = web_search(query, config=config)
-    if not results:
-        return None
-
-    ranked = []
-    timeout = int(config.get("content_timeout", config.get("timeout", 8)))
-    max_chars = int(config.get("content_max_chars", 2000))
-    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
-    for item in results:
-        url = str(item.get("url", "")).strip()
-        if not url or url in seen_urls:
-            continue
-        title = str(item.get("title", "")).strip()
-        snippet = str(item.get("snippet", "")).strip()
-        excerpt = fetch_news_excerpt(url, timeout=timeout, max_chars=max_chars, user_agent=user_agent)
-        content = excerpt or snippet
-        if not content:
-            continue
-        score, matched = _score_news_relevance(url, title, content, interests)
-        if preferred_sites and _domain_from_url(url) in preferred_sites:
-            score += 0.9
-        ranked.append((score + random.random() * 0.03, matched, url, title, content))
-    if not ranked:
-        return None
-    ranked.sort(key=lambda x: x[0], reverse=True)
-    score, matched, url, title, content = ranked[0]
-    return {
-        "mode": "web_search",
-        "query": query,
-        "engine": engine,
-        "url": url,
-        "title": title,
-        "content": content,
-        "score": score,
-        "matched": matched,
-    }
-
-def info_seek_and_store(
-    agent,
-    day=None,
-    time_str=None,
-    news_cache=None,
-    news_sources=None,
-    preferred_sites=None,
-    seen_urls=None,
-    used_queries=None,
-    config=None,
-):
-    config = config or {}
-    target = _choose_info_target(
-        agent=agent,
-        news_cache=news_cache or [],
-        news_sources=news_sources or [],
-        preferred_sites=preferred_sites or [],
-        seen_urls=seen_urls or set(),
-        used_queries=used_queries or set(),
-        config=config,
-    )
-    if not target:
-        return None, None, "", ""
-
-    title = target.get("title", "")
-    url = target.get("url", "")
-    content = str(target.get("content", "")).strip()
-    if not url or not content:
-        return None, None, "", ""
-    mode = target.get("mode", "direct_source")
-    query = target.get("query", "")
-    engine = target.get("engine", "")
-
-    profile_text = "\\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
-    prompt = f"""
-你是{agent['name']}。
-角色资料：
-{profile_text}
-
-你本次的信息获取方式：{mode}
-检索词：{query or "N/A"}
-来源：{title or "N/A"} ({url})
-内容摘要：
-{content}
-
-请用1-2句写出你为何会关注这条信息，以及你的看法。
-"""
-    thought = call_llm(prompt, task="info_seek_reaction", agent_id=agent["id"]).strip()
-    if not thought:
-        thought = "这条信息符合我近期关注，我会继续观察。"
-
-    memory_excerpt_chars = int(config.get("memory_excerpt_chars", 700))
-    memory_excerpt = content
-    if memory_excerpt_chars > 0 and len(memory_excerpt) > memory_excerpt_chars:
-        memory_excerpt = memory_excerpt[:memory_excerpt_chars].rsplit(" ", 1)[0].strip() if " " in memory_excerpt else memory_excerpt[:memory_excerpt_chars]
-        memory_excerpt = f"{memory_excerpt}..."
-
-    stamp = f"Day {day} {time_str}" if day and time_str else "InfoSeek"
-    preferred_text = ", ".join(preferred_sites or []) if preferred_sites else "N/A"
-    memory_entry = (
-        f"[{stamp}] 信息获取：{mode}\n"
-        f"偏好站点：{preferred_text}\n"
-        f"检索词：{query or 'N/A'}\n"
-        f"来源：{title or 'N/A'} ({url})\n"
-        f"内容：{memory_excerpt}\n"
-        f"想法：{thought}"
-    )
-    agent["memory"].append(memory_entry)
-    save_agent_memory(agent)
-    vector_db_add_entry(agent["id"], "info_seek", memory_entry, sim_day=day, sim_time=time_str or "info_seek")
-
-    log = f"""
-[InfoSeek {agent['name']} @ {time_str}]
-Mode: {mode}
-Query: {query or "N/A"}
-Engine: {engine or "N/A"}
-PreferredSites: {preferred_text}
-Result: {title or "N/A"}
-URL: {url}
-MatchedInterests: {", ".join(target.get("matched", [])) if target.get("matched") else "N/A"}
-RelevanceScore: {float(target.get("score", 0.0)):.2f}
-"""
-    return memory_entry, log, url, query
-
-def _estimate_curiosity(agent):
-    state = agent.get("state", {})
-    platform_dependence = float(state.get("platform_dependence", 0.5))
-    risk_preference = float(state.get("risk_preference", 0.5))
-    text = " ".join(
-        str(agent.get(k, ""))
-        for k in ("personality", "daily_life", "values", "job")
-    )
-    boosts = {
-        "好奇": 0.25,
-        "探索": 0.20,
-        "新鲜": 0.12,
-        "学习": 0.10,
-        "研究": 0.10,
-        "科技": 0.08,
-        "关注": 0.06,
-        "trend": 0.06,
-        "research": 0.10,
-    }
-    dampens = {
-        "保守": 0.12,
-        "封闭": 0.15,
-        "排斥": 0.10,
-        "抗拒": 0.10,
-    }
-    score = 0.20 + 0.45 * platform_dependence + 0.20 * risk_preference
-    for key, value in boosts.items():
-        if key in text.lower() or key in text:
-            score += value
-    for key, value in dampens.items():
-        if key in text:
-            score -= value
-    return max(0.05, min(0.98, score))
-
-def _build_search_query(agent, used_queries=None):
-    used_queries = used_queries or set()
-    interests = _extract_interest_keywords(agent, max_items=16)
-    if not interests:
-        interests = ["本地新闻", "行业动态", "公共政策"]
-    name = agent.get("name", "该居民")
-    job = str(agent.get("job", "")).strip()
-    seeds = []
-    for kw in interests[:8]:
-        seeds.extend(
-            [
-                f"{kw} 最新消息",
-                f"{kw} 今日新闻",
-                f"{kw} 趋势",
-            ]
-        )
-        if job:
-            seeds.append(f"{job} {kw} 资讯")
-    random.shuffle(seeds)
-    for q in seeds:
-        if q not in used_queries:
-            return q
-    return f"{name} 关注话题 今日新闻"
-
-def _extract_google_results(html_text, max_results=5):
-    results = []
-    blocks = re.findall(r'(?is)<a[^>]+href="(/url\?q=[^"]+)"[^>]*>(.*?)</a>', html_text)
-    for href, anchor in blocks:
-        qs = parse_qs(urlparse(href).query)
-        raw_url = (qs.get("q") or [""])[0]
-        raw_url = unquote(raw_url).strip()
-        if not raw_url.startswith("http"):
-            continue
-        title = _normalize_text(_strip_html(anchor))
-        if len(title) < 6:
-            continue
-        results.append({"url": raw_url, "title": title, "snippet": ""})
-        if len(results) >= max_results:
-            break
-    return results
-
-def _extract_baidu_results(html_text, max_results=5):
-    results = []
-    blocks = re.findall(r'(?is)<h3[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>\s*</h3>', html_text)
-    for href, anchor in blocks:
-        url = unquote(href).strip()
-        if not url.startswith("http"):
-            continue
-        title = _normalize_text(_strip_html(anchor))
-        if len(title) < 4:
-            continue
-        results.append({"url": url, "title": title, "snippet": ""})
-        if len(results) >= max_results:
-            break
-    return results
-
-def _extract_bing_results(html_text, max_results=5):
-    results = []
-    blocks = re.findall(r'(?is)<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>.*?</li>', html_text)
-    for block in blocks:
-        link = re.search(r'(?is)<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>\s*</h2>', block)
-        if not link:
-            continue
-        url = unquote(link.group(1)).strip()
-        if not url.startswith("http"):
-            continue
-        title = _normalize_text(_strip_html(link.group(2)))
-        snippet_match = re.search(r'(?is)<p[^>]*>(.*?)</p>', block)
-        snippet = _normalize_text(_strip_html(snippet_match.group(1))) if snippet_match else ""
-        if len(title) < 4:
-            continue
-        results.append({"url": url, "title": title, "snippet": snippet})
-        if len(results) >= max_results:
-            break
-    return results
-
-def _extract_generic_results(html_text, max_results=5):
-    results = []
-    links = re.findall(r'(?is)<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', html_text)
-    for href, anchor in links:
-        title = _normalize_text(_strip_html(anchor))
-        if len(title) < 10:
-            continue
-        results.append({"url": unquote(href).strip(), "title": title, "snippet": ""})
-        if len(results) >= max_results:
-            break
-    return results
-
-def web_search(query, config=None):
-    config = config or {}
-    engines = config.get("engines", ["google", "baidu", "bing"])
-    timeout = int(config.get("timeout", 8))
-    max_results = int(config.get("max_results", 4))
-    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
-    search_urls = {
-        "google": f"https://www.google.com/search?q={quote_plus(query)}&hl=zh-CN",
-        "baidu": f"https://www.baidu.com/s?wd={quote_plus(query)}",
-        "bing": f"https://www.bing.com/search?q={quote_plus(query)}",
-    }
-    extractors = {
-        "google": _extract_google_results,
-        "baidu": _extract_baidu_results,
-        "bing": _extract_bing_results,
-    }
-    headers = {"User-Agent": user_agent}
-    for engine in engines:
-        search_url = search_urls.get(str(engine).lower())
-        if not search_url:
-            continue
-        try:
-            resp = requests.get(search_url, headers=headers, timeout=timeout)
-            resp.raise_for_status()
-            html_text = resp.text or ""
-        except requests.RequestException:
-            continue
-        extractor = extractors.get(str(engine).lower(), _extract_generic_results)
-        results = extractor(html_text, max_results=max_results)
-        if not results:
-            results = _extract_generic_results(html_text, max_results=max_results)
-        if results:
-            return engine, results
-    return "", []
-
-def search_web_and_store(agent, query, day=None, time_str=None, config=None, seen_urls=None):
-    config = config or {}
-    seen_urls = seen_urls or set()
-    engine, results = web_search(query, config=config)
-    if not results:
-        return None, None, ""
-    interests = _extract_interest_keywords(agent)
-    timeout = int(config.get("content_timeout", config.get("timeout", 8)))
-    max_chars = int(config.get("content_max_chars", 2000))
-    user_agent = str(config.get("user_agent", "GAWorld/1.0"))
-
-    ranked = []
-    for item in results:
-        url = str(item.get("url", "")).strip()
-        if not url or url in seen_urls:
-            continue
-        title = str(item.get("title", "")).strip()
-        snippet = str(item.get("snippet", "")).strip()
-        excerpt = fetch_news_excerpt(
-            url,
-            timeout=timeout,
-            max_chars=max_chars,
-            user_agent=user_agent,
-        )
-        candidate_text = excerpt or snippet
-        if not candidate_text:
-            continue
-        score, matched = _score_news_relevance(url, title, candidate_text, interests)
-        ranked.append((score + random.random() * 0.03, matched, url, title, candidate_text))
-
-    if not ranked:
-        return None, None, ""
-
-    ranked.sort(key=lambda x: x[0], reverse=True)
-    score, matched, url, title, content = ranked[0]
-    profile_text = "\\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
-    prompt = f"""
-你是{agent['name']}。
-角色资料：
-{profile_text}
-
-你主动搜索了：{query}
-搜索结果标题：{title}
-内容摘要：
-{content}
-
-请用1-2句写出你为何关注这个信息，以及你的看法。
-"""
-    thought = call_llm(prompt, task="web_search_reaction", agent_id=agent["id"]).strip()
-    if not thought:
-        thought = "这条信息与我关注的话题相关，我会继续跟进。"
-
-    memory_excerpt_chars = int(config.get("memory_excerpt_chars", 700))
-    memory_excerpt = content.strip()
-    if memory_excerpt_chars > 0 and len(memory_excerpt) > memory_excerpt_chars:
-        memory_excerpt = memory_excerpt[:memory_excerpt_chars].rsplit(" ", 1)[0].strip() if " " in memory_excerpt else memory_excerpt[:memory_excerpt_chars]
-        memory_excerpt = f"{memory_excerpt}..."
-
-    stamp = f"Day {day} {time_str}" if day and time_str else "WebSearch"
-    memory_entry = (
-        f"[{stamp}] 主动搜索：{query}\n"
-        f"搜索引擎：{engine or 'unknown'}\n"
-        f"结果：{title} ({url})\n"
-        f"内容：{memory_excerpt}\n"
-        f"想法：{thought}"
-    )
-    agent["memory"].append(memory_entry)
-    save_agent_memory(agent)
-    vector_db_add_entry(agent["id"], "web_search", memory_entry, sim_day=day, sim_time=time_str or "search")
-
-    log = f"""
-[WebSearch {agent['name']} @ {time_str}]
-Query: {query}
-Engine: {engine or "N/A"}
-Result: {title}
-URL: {url}
-MatchedInterests: {", ".join(matched) if matched else "N/A"}
-RelevanceScore: {score:.2f}
-"""
-    return memory_entry, log, url
-
-def read_news_and_store(agent, source_url, day=None, time_str=None, config=None, excerpt=None, title=None):
-    config = config or {}
-    if not excerpt:
-        excerpt = fetch_news_excerpt(
-            source_url,
-            timeout=int(config.get("timeout", 8)),
-            max_chars=int(config.get("max_chars", 2000)),
-            user_agent=str(config.get("user_agent", "GAWorld/1.0")),
-        )
-    if not excerpt:
-        return None, None
-    profile_text = "\\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"年龄：{agent.get('age', '')}",
-        f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
-        f"日常生活与习惯：{agent.get('daily_life', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
-    prompt = f"""
-你是{agent['name']}。
-角色资料：
-{profile_text}
-
-你刚阅读了一条新闻/社交媒体内容（节选）：
-{excerpt}
-
-请用1-2句写出你的反应，尽量体现角色身份与态度。
-"""
-    response = call_llm(prompt, task="news_reaction", agent_id=agent["id"]).strip()
-    if not response:
-        return None, None
-    stamp = f"Day {day} {time_str}" if day and time_str else "NewsRead"
-    title_text = f" 标题：{title}" if title else ""
-    memory_excerpt_chars = int(config.get("memory_excerpt_chars", 600))
-    memory_excerpt = excerpt.strip()
-    if memory_excerpt_chars > 0 and len(memory_excerpt) > memory_excerpt_chars:
-        memory_excerpt = memory_excerpt[:memory_excerpt_chars].rsplit(" ", 1)[0].strip() if " " in memory_excerpt else memory_excerpt[:memory_excerpt_chars]
-        memory_excerpt = f"{memory_excerpt}..."
-    memory_entry = (
-        f"[{stamp}] 来源：{source_url}{title_text}\n"
-        f"内容：{memory_excerpt}\n"
-        f"想法：{response}"
-    )
-    agent["memory"].append(memory_entry)
-    save_agent_memory(agent)
-    vector_db_add_entry(agent["id"], "news", memory_entry, sim_day=day, sim_time=time_str or "news")
-    log = f"""
-[NewsRead {agent['name']} @ {time_str}]
-Source: {source_url}
-Title: {title or "N/A"}
-Response: {response}
-"""
-    return memory_entry, log
 
 def reset_simulation():
     memory_dir = CONFIG.get("memory_dir", "output/memory")
@@ -1472,9 +529,9 @@ REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE = bool(
 )
 HUMAN_REALISM_CONFIG = CONFIG.get("human_realism", {})
 HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
-HUMAN_MEMORY_CONFIG = HUMAN_REALISM_CONFIG.get("memory", {}) if HUMAN_REALISM_ENABLED else {}
-RECALL_CONFIG = HUMAN_MEMORY_CONFIG.get("recall", {}) if HUMAN_REALISM_ENABLED else {}
-MEMORY_REVIEW_CONFIG = HUMAN_MEMORY_CONFIG.get("review", {}) if HUMAN_REALISM_ENABLED else {}
+# HUMAN_MEMORY_CONFIG / RECALL_CONFIG / MEMORY_REVIEW_CONFIG snapshots
+# removed in run-split-1 — their only consumers (the evoke_memory cluster)
+# moved to ``gaworld.sim._memory_recall`` and now read CONFIG at call time.
 INTERESTS_CONFIG = CONFIG.get("interests", {})
 INTERESTS_ENABLED = bool(INTERESTS_CONFIG.get("enabled", True))
 INTERESTS_MAX_ITEMS = max(1, int(INTERESTS_CONFIG.get("max_items", 6)))
@@ -1542,7 +599,8 @@ DAILY_PLAN_MAX_SHIFT_MINUTES = max(0, int(DAILY_PLAN_FLEX_CONFIG.get("max_time_s
 DAILY_PLAN_MIN_GAP_MINUTES = max(1, int(DAILY_PLAN_FLEX_CONFIG.get("min_gap_minutes", 15)))
 DAILY_PLAN_ALLOW_INSERTIONS = bool(DAILY_PLAN_FLEX_CONFIG.get("allow_insertions", True))
 EXTERNAL_RAG_CONFIG = CONFIG.get("external_rag", {})
-EXTERNAL_RAG_TOP_K = max(1, int(EXTERNAL_RAG_CONFIG.get("top_k", 2)))
+# EXTERNAL_RAG_TOP_K was moved to gaworld.sim._rag along with its only
+# caller (_external_rag_hint); the constant is now re-exported from there.
 CALENDAR_CONFIG = CONFIG.get("calendar", {})
 SIM_START_DATE = _parse_sim_start_date(CALENDAR_CONFIG.get("start_date", "today"))
 SIM_START_WEEKDAY_INDEX = _weekday_to_index(CALENDAR_CONFIG.get("start_weekday", "monday"))
@@ -1551,41 +609,13 @@ if SIM_START_WEEKDAY_INDEX is None:
 SIM_WEEKEND_INDEXES = _build_weekend_indexes(CALENDAR_CONFIG.get("weekend_days", ["saturday", "sunday"]))
 AGENT_IMPORT_OUTPUT_DIR = CONFIG.get("agent_import_output_dir", "output/imported_agents")
 
-RECALL_STAGE_ENTRY_TYPES = {
-    "planning": ["meta_memory", "memory", "episode", "reflection", "plan", "action", "log"],
-    "action": ["episode", "reflection", "meta_memory", "memory", "action", "plan", "log"],
-    "reflection": ["reflection", "episode", "meta_memory", "memory", "action", "plan", "log"],
-    "interview": ["meta_memory", "memory", "episode", "reflection", "action", "plan", "log"],
-}
-RECALL_STAGE_HINTS = {
-    "planning": ["计划", "打算", "安排", "经验", "教训"],
-    "action": ["行动", "选择", "做法", "后果"],
-    "reflection": ["反思", "感受", "经验", "情绪"],
-    "interview": ["访谈", "经历", "回忆", "看法"],
-}
-POSITIVE_RECALL_HINTS = (
-    "顺利",
-    "满意",
-    "开心",
-    "支持",
-    "完成",
-    "收获",
-    "稳定",
-    "放松",
-    "认可",
-)
-NEGATIVE_RECALL_HINTS = (
-    "失败",
-    "挫败",
-    "焦虑",
-    "压力",
-    "冲突",
-    "不满",
-    "拖延",
-    "后悔",
-    "疲惫",
-    "孤独",
-)
+# RECALL_STAGE_ENTRY_TYPES / RECALL_STAGE_HINTS /
+# POSITIVE_RECALL_HINTS / NEGATIVE_RECALL_HINTS moved to
+# ``gaworld.sim._memory_recall`` and re-exported below at the
+# memory-recall import block.  The two POSITIVE/NEGATIVE tuples still
+# have an in-file consumer (the affect-sentiment lookup further down);
+# the re-export binds them in this module's globals so the bare-name
+# lookups continue to resolve.
 
 # =========================================================
 # 政策事件
@@ -1604,41 +634,17 @@ def load_profile_from_md(agent_id):
         raise ValueError(f"Profile {agent_id} not found")
     return match.group(0)
 
-def parse_profile(block):
-    def _extract(pattern, default=""):
-        match = re.search(pattern, block)
-        return match.group(1) if match else default
-
-    p = {}
-    p["name"] = _extract(r"## Profile \d+｜(.+)")
-    base = _extract(r"\*\*基础信息\*\*：(.+)")
-    p["age"] = int(re.search(r"(\d+)岁", base).group(1))
-    p["living"] = re.search(r"居住(?:于)?(.+?)[，。]", base).group(1)
-    p["job"] = _extract(r"\*\*职业与工作节奏\*\*：(.+)")
-    p["personality"] = _extract(r"\*\*性格与情绪特征\*\*：(.+)")
-    p["daily_life"] = _extract(r"\*\*日常生活与生活习惯\*\*：(.+)")
-    p["values"] = _extract(r"\*\*价值观与公共事务态度\*\*：(.+)")
-    p["work_style"] = p["job"]
-    return p
-
-def _safe_text(value, default=""):
-    text = str(value if value is not None else "").strip()
-    return text if text else default
-
-def _safe_int(value, default):
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return int(default)
-
-def _safe_float(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
-
-def _clip_state_value(value, default=0.5):
-    return float(np.clip(_safe_float(value, default), 0.0, 1.0))
+# Profile parsing + payload coercion helpers moved to
+# ``gaworld.sim.agents_loader`` during the S3 refactor. Re-exported here so
+# the rest of this file (and external callers like
+# ``generate_agent_rag_seed.py``) keep working unchanged.
+from gaworld.sim.agents_loader import (  # noqa: E402
+    _clip_state_value,
+    _safe_float,
+    _safe_int,
+    _safe_text,
+    parse_profile,
+)
 
 def _next_profile_id(df, md_path):
     max_id = 0
@@ -1698,64 +704,12 @@ def _parse_agent_seed_payload(text):
         return {}
     return raw if isinstance(raw, dict) else {}
 
-def _default_imported_agent_payload(source, override_name=None):
-    source_title = _safe_text(source.get("title"), "社交媒体用户")
-    name = _safe_text(override_name, source_title[:12] or "社交媒体用户")
-    return {
-        "name": name,
-        "gender": "未知",
-        "age": 28,
-        "hukou": "未知",
-        "residence": "杭州",
-        "job": "自媒体/平台活跃用户",
-        "personality": "表达欲较强，部分信息不完整，需在模拟中进一步补足。",
-        "daily_life": "日常活动受线上平台内容发布、浏览和社交互动影响较大。",
-        "values": "关注与个人内容、平台环境和公共讨论相关的话题。",
-        "education_income": "根据社交媒体内容估计，教育与收入信息未完全公开。",
-        "social_network": "线上互动关系较多，线下社交网络待进一步观察。",
-        "source_summary": _safe_text(source.get("summary")) or _safe_text(source.get("content"))[:200],
-        "state": {
-            "emotion": 0.58,
-            "stress": 0.52,
-            "econ_security": 0.50,
-            "city_identity": 0.55,
-            "policy_sensitivity": 0.55,
-            "platform_dependence": 0.72,
-            "risk_preference": 0.45,
-            "voice_propensity": 0.66,
-            "mobility_intent": 0.50,
-        },
-    }
-
-def _normalize_imported_agent_payload(raw, source, override_name=None):
-    payload = _default_imported_agent_payload(source, override_name=override_name)
-    if not isinstance(raw, dict):
-        return payload
-
-    state_raw = raw.get("state", {})
-    if not isinstance(state_raw, dict):
-        state_raw = {}
-
-    for key in [
-        "name",
-        "gender",
-        "hukou",
-        "residence",
-        "job",
-        "personality",
-        "daily_life",
-        "values",
-        "education_income",
-        "social_network",
-        "source_summary",
-    ]:
-        payload[key] = _safe_text(raw.get(key), payload[key])
-    payload["name"] = _safe_text(override_name, payload["name"])
-    payload["age"] = max(16, min(80, _safe_int(raw.get("age"), payload["age"])))
-
-    for metric, default in payload["state"].items():
-        payload["state"][metric] = _clip_state_value(state_raw.get(metric), default)
-    return payload
+# Imported-agent payload defaults / normalisation moved to
+# ``gaworld.sim.agents_loader`` during the S3 refactor.
+from gaworld.sim.agents_loader import (  # noqa: E402
+    _default_imported_agent_payload,
+    _normalize_imported_agent_payload,
+)
 
 def _generate_imported_agent_seed(source, override_name=None):
     content = _safe_text(source.get("content"))
@@ -1785,27 +739,9 @@ emotion, stress, econ_security, city_identity, policy_sensitivity, platform_depe
     raw = _parse_agent_seed_payload(response)
     return _normalize_imported_agent_payload(raw, source, override_name=override_name)
 
-def _format_imported_profile_block(agent_id, payload):
-    state = payload["state"]
-    return (
-        f"\n## Profile {agent_id:02d}｜{payload['name']}\n"
-        f"**基础信息**：{payload['gender']}，{payload['age']}岁，{payload['hukou']}户籍，居住{payload['residence']}。\n\n"
-        f"**教育与收入背景**：{payload['education_income']}\n\n"
-        f"**职业与工作节奏**：{payload['job']}\n\n"
-        f"**性格与情绪特征**：{payload['personality']}\n\n"
-        f"**日常生活与生活习惯**：{payload['daily_life']}\n\n"
-        f"**社交网络情况**：{payload['social_network']}\n\n"
-        f"**价值观与公共事务态度**：{payload['values']}\n\n"
-        f"**研究增强变量初始化**：\n"
-        f"- policy_sensitivity：{state['policy_sensitivity']:.2f}\n"
-        f"- platform_dependence：{state['platform_dependence']:.2f}\n"
-        f"- risk_preference：{state['risk_preference']:.2f}\n"
-        f"- voice_propensity：{state['voice_propensity']:.2f}\n"
-        f"- mobility_intent：{state['mobility_intent']:.2f}\n\n"
-        f"**核心状态变量**：emotion {state['emotion']:.2f}｜stress {state['stress']:.2f}｜"
-        f"econ_security {state['econ_security']:.2f}｜city_identity {state['city_identity']:.2f}\n"
-        f"\n---\n"
-    )
+# Markdown profile formatter moved to ``gaworld.sim.agents_loader`` during
+# the S3 refactor.
+from gaworld.sim.agents_loader import _format_imported_profile_block  # noqa: E402
 
 def _append_imported_agent_records(agent_id, payload, source, csv_path=CSV_PATH, md_path=MD_PATH):
     df = pd.read_csv(csv_path)
@@ -1960,140 +896,15 @@ def load_city_map_text(map_path):
 def _all_locations(city_map):
     return city_all_locations(city_map)
 
-def _pick_first_available(candidates, location_set):
-    for c in candidates:
-        if c in location_set:
-            return c
-    return None
-
-def _infer_workplace(agent, city_map, home_node=None):
-    """Infer the agent's workplace using category-based spatial matching.
-
-    Uses the agent's job profile to determine workplace categories, then
-    finds the nearest matching node from the city map.  Falls back to the
-    legacy hardcoded lookup when the map-based search yields nothing.
-    """
-    location_set = set(_all_locations(city_map))
-    job_str = agent.get("job", "")
-    categories = job_to_workplace_categories(job_str)
-
-    # Also check profile blob for Chinese keywords → categories
-    profile_blob = " ".join([job_str, agent.get("personality", ""),
-                             agent.get("daily_life", ""), agent.get("values", "")])
-    if any(k in profile_blob for k in ["学生", "硕士", "博士", "学校", "上课", "老师", "教师", "教育"]):
-        categories = list(dict.fromkeys(["education"] + categories))
-    if any(k in profile_blob for k in ["医院", "医生", "护士", "医疗", "诊所"]):
-        categories = list(dict.fromkeys(["medical"] + categories))
-    if any(k in profile_blob for k in ["警察", "公安", "消防"]):
-        categories = list(dict.fromkeys(["government"] + categories))
-
-    if not categories:
-        categories = ["commerce", "industry"]
-
-    # Search from home or a central location
-    origin = home_node or "Central Block"
-    candidates = resolve_best_location(city_map, origin, categories, top_k=3,
-                                       max_radius_km=20.0)
-    if candidates:
-        # Pick the closest one that is in the location set
-        for node_id, _dist in candidates:
-            if node_id in location_set:
-                return node_id
-        # If slug mismatch, still return the first candidate
-        return candidates[0][0]
-
-    # Fallback: legacy hardcoded names
-    return _pick_first_available(
-        ["C-01 (Village Center)", "Riverside Night Market", "Market St"],
-        location_set
-    )
-
-def _infer_home(agent, city_map):
-    """Infer the agent's home using category-based spatial matching.
-
-    Picks a residential node, preferring those near the city centre.
-    Falls back to legacy hardcoded names then random selection.
-    """
-    location_set = set(_all_locations(city_map))
-    residential = resolve_best_location(city_map, "Central Block",
-                                        ["residential"], top_k=10,
-                                        max_radius_km=30.0)
-    if residential:
-        # Introduce mild randomness so not all agents live in the same block
-        pool = residential[:min(5, len(residential))]
-        node_id, _ = random.choice(pool)
-        if node_id in location_set:
-            return node_id
-        return residential[0][0]
-
-    # Fallback
-    candidates = ["Central Block", "North Block", "South Block"]
-    home = _pick_first_available(candidates, location_set)
-    if home:
-        return home
-    return random.choice(list(location_set)) if location_set else "Home"
-
-def assign_agent_locations(agent, city_map):
-    home = _infer_home(agent, city_map)
-    workplace = _infer_workplace(agent, city_map, home_node=home) or home
-    return {
-        "home": home,
-        "workplace": workplace,
-        "current": home,
-        "destination": home,
-        "in_transit": False,
-        "transport_mode": "",
-        "travel_minutes": 0,
-        "travel_progress": 1.0,
-        "travel_route": [home],
-        "travel_cost": 0.0,
-        "rush_hour": False,
-        "arrival_time": "",
-        # Commute memory: tracks frequent places and preferred transport modes
-        "frequent_places": {},      # {location_id: visit_count}
-        "preferred_modes": {},      # {mode: use_count}
-        "commute_route": {          # primary commute (home <-> work)
-            "mode": "",
-            "distance_km": 0.0,
-            "avg_minutes": 0,
-            "trip_count": 0,
-        },
-        "daily_travel_cost": 0.0,   # accumulated cost for the current day
-    }
-
-
-def _update_commute_memory(agent, destination, mode, travel_cost):
-    """Update the agent's commute memory after a completed trip."""
-    locs = agent.get("locations", {})
-
-    # Update frequent places
-    freq = locs.setdefault("frequent_places", {})
-    freq[destination] = freq.get(destination, 0) + 1
-
-    # Update preferred modes
-    modes = locs.setdefault("preferred_modes", {})
-    if mode:
-        modes[mode] = modes.get(mode, 0) + 1
-
-    # Update daily travel cost
-    locs["daily_travel_cost"] = locs.get("daily_travel_cost", 0.0) + travel_cost
-
-    # Update commute route stats if this is a home<->work trip
-    home = locs.get("home", "")
-    work = locs.get("workplace", "")
-    current = locs.get("current", "")
-    is_commute = ((current == home and destination == work) or
-                  (current == work and destination == home))
-    if is_commute and mode:
-        cr = locs.setdefault("commute_route", {})
-        prev_count = cr.get("trip_count", 0)
-        prev_avg = cr.get("avg_minutes", 0)
-        new_mins = locs.get("travel_minutes", 0)
-        cr["mode"] = mode
-        cr["distance_km"] = locs.get("travel_distance_km", 0.0)
-        cr["avg_minutes"] = round(
-            (prev_avg * prev_count + new_mins) / (prev_count + 1), 1)
-        cr["trip_count"] = prev_count + 1
+# Location inference, agent-location assignment, and commute memory
+# moved to gaworld.sim._location during the S3 refactor.
+from gaworld.sim._location import (  # noqa: E402
+    _infer_home,
+    _infer_workplace,
+    _pick_first_available,
+    _update_commute_memory,
+    assign_agent_locations,
+)
 
 def init_agent_locations(agent, city_map):
     cached_locations = load_agent_locations(agent["id"]) if STATEFUL else {}
@@ -2330,347 +1141,27 @@ def _timeline_step_minutes(timeline, index):
     return max(1, TIME_STEP_MINUTES or 30)
 
 
-def _update_transit_progress(agent, current_minutes):
-    locations = agent.get("locations", {})
-    if not locations.get("in_transit"):
-        return False
-    arrival_time = locations.get("arrival_time", "")
-    arrival_minutes = _time_str_to_minutes(arrival_time)
-    travel_minutes = max(1, int(locations.get("travel_minutes", 1) or 1))
-    start_minutes = _time_str_to_minutes(locations.get("depart_time", ""))
-    if start_minutes is None:
-        start_minutes = current_minutes
-
-    def _complete_transit():
-        locations["in_transit"] = False
-        dest = locations.get("destination", locations.get("current", ""))
-        locations["current"] = dest
-        locations["travel_progress"] = 1.0
-        _update_commute_memory(
-            agent, dest,
-            locations.get("transport_mode", ""),
-            float(locations.get("travel_cost", 0.0) or 0.0))
-
-    if arrival_minutes is None:
-        _complete_transit()
-        return True
-    elapsed = current_minutes - start_minutes
-    if elapsed < 0:
-        elapsed += 24 * 60
-    if current_minutes == arrival_minutes or elapsed >= travel_minutes:
-        _complete_transit()
-        return True
-    locations["travel_progress"] = max(0.0, min(0.99, elapsed / float(travel_minutes)))
-    return False
-
-
-def move_agent(agent, desired_location, activity, time_str, step_minutes, city_map):
-    locations = agent.setdefault("locations", {})
-    current_minutes = _time_str_to_minutes(time_str)
-    if current_minutes is None:
-        current_minutes = 0
-    just_arrived = _update_transit_progress(agent, current_minutes)
-    if locations.get("in_transit"):
-        return {
-            "display_location": f"Transit to {locations.get('destination', '')}",
-            "resolved_location": locations.get("current", locations.get("home", "Home")),
-            "target_location": locations.get("destination", locations.get("current", locations.get("home", "Home"))),
-            "travel": {
-                "mode": locations.get("transport_mode", ""),
-                "distance_km": float(locations.get("travel_distance_km", 0.0) or 0.0),
-                "minutes": int(locations.get("travel_minutes", 0) or 0),
-                "progress": float(locations.get("travel_progress", 0.0) or 0.0),
-                "route": locations.get("travel_route", []),
-                "status": "in_transit",
-            },
-            "just_arrived": just_arrived,
-        }
-
-    origin = locations.get("current", locations.get("home", "Home"))
-    target = desired_location or origin
-    if target == origin:
-        locations["destination"] = target
-        locations["travel_progress"] = 1.0
-        locations["transport_mode"] = ""
-        locations["travel_minutes"] = 0
-        locations["travel_distance_km"] = 0.0
-        locations["travel_route"] = [origin]
-        locations["arrival_time"] = time_str
-        locations["depart_time"] = time_str
-        return {
-            "display_location": origin,
-            "resolved_location": origin,
-            "target_location": target,
-            "travel": {
-                "mode": "",
-                "distance_km": 0.0,
-                "minutes": 0,
-                "progress": 1.0,
-                "route": [origin],
-                "status": "stationary",
-            },
-            "just_arrived": False,
-        }
-
-    # Pass time_str for rush-hour detection; weather from environment if available
-    _weather = agent.get("_env_weather", None)
-    travel = build_travel_plan(agent, city_map, origin, target, activity=activity,
-                               time_str=time_str, weather=_weather)
-    travel_minutes = max(1, int(travel.get("travel_minutes", 1) or 1))
-    arrival_minutes = (current_minutes + travel_minutes) % (24 * 60)
-    arrival_time = _minutes_to_time_str(arrival_minutes)
-    travel_cost = float(travel.get("travel_cost", 0.0) or 0.0)
-    is_rush = travel.get("rush_hour", False)
-    locations["destination"] = target
-    locations["transport_mode"] = travel.get("mode", "")
-    locations["travel_minutes"] = travel_minutes
-    locations["travel_distance_km"] = float(travel.get("distance_km", 0.0) or 0.0)
-    locations["travel_cost"] = travel_cost
-    locations["rush_hour"] = is_rush
-    locations["travel_route"] = travel.get("route", [origin, target])
-    locations["depart_time"] = time_str
-    locations["arrival_time"] = arrival_time
-
-    if travel_minutes <= max(1, int(step_minutes or 1)):
-        locations["current"] = target
-        locations["in_transit"] = False
-        locations["travel_progress"] = 1.0
-        _update_commute_memory(agent, target, travel.get("mode", ""), travel_cost)
-        return {
-            "display_location": target,
-            "resolved_location": target,
-            "target_location": target,
-            "travel": {
-                "mode": travel.get("mode", ""),
-                "distance_km": float(travel.get("distance_km", 0.0) or 0.0),
-                "minutes": travel_minutes,
-                "progress": 1.0,
-                "route": travel.get("route", [origin, target]),
-                "cost": travel_cost,
-                "rush_hour": is_rush,
-                "status": "arrived",
-            },
-            "just_arrived": True,
-        }
-
-    locations["in_transit"] = True
-    locations["travel_progress"] = max(0.05, min(0.95, float(step_minutes) / float(travel_minutes)))
-    return {
-        "display_location": f"Transit to {target}",
-        "resolved_location": origin,
-        "target_location": target,
-        "travel": {
-            "mode": travel.get("mode", ""),
-            "distance_km": float(travel.get("distance_km", 0.0) or 0.0),
-            "minutes": travel_minutes,
-            "progress": float(locations["travel_progress"]),
-            "route": travel.get("route", [origin, target]),
-            "cost": travel_cost,
-            "rush_hour": is_rush,
-            "status": "departed",
-        },
-        "just_arrived": False,
-    }
+# Transit progress + main movement dispatcher moved to
+# gaworld.sim._location during the S3 refactor.
+from gaworld.sim._location import _update_transit_progress, move_agent  # noqa: E402
 
 # =========================================================
 # Schedule & Action
 # =========================================================
-def _extract_json_array_block(text):
-    block_match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.S)
-    if block_match:
-        return block_match.group(1)
-    inline_match = re.search(r"\[.*\]", text, re.S)
-    return inline_match.group(0) if inline_match else ""
-
-def _parse_schedule(text):
-    json_blob = _extract_json_array_block(text)
-    if not json_blob:
-        return []
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(raw, list):
-        return []
-    schedule = []
-    for item in raw:
-        if isinstance(item, (list, tuple)) and len(item) == 2:
-            time_str, activity = item
-        elif isinstance(item, dict) and "time" in item and "activity" in item:
-            time_str, activity = item["time"], item["activity"]
-        else:
-            continue
-        time_str = str(time_str).strip()
-        activity = str(activity).strip()
-        if re.match(r"^\d{2}:\d{2}$", time_str) and activity:
-            schedule.append((time_str, activity))
-    if not schedule:
-        return []
-    seen = set()
-    cleaned = []
-    for time_str, activity in schedule:
-        if time_str in seen:
-            continue
-        seen.add(time_str)
-        cleaned.append((time_str, activity))
-    return cleaned
-
-def _heuristic_schedule(agent):
-    profile_blob = " ".join([
-        agent.get("job", ""),
-        agent.get("personality", ""),
-        agent.get("daily_life", ""),
-        agent.get("values", "")
-    ])
-
-    is_student = any(k in profile_blob for k in ["学生", "硕士", "博士", "课题组"])
-    is_retired = any(k in profile_blob for k in ["退休", "无业", "待业", "失业", "家庭主妇", "家庭主夫"])
-    late_schedule = any(k in profile_blob for k in ["夜间活跃", "晚睡", "作息偏晚"])
-
-    if is_retired:
-        base = [
-            ("07:30", "晨练"),
-            ("08:30", "吃早饭"),
-            ("10:00", "买菜"),
-            ("11:30", "午饭"),
-            ("13:00", "午休"),
-            ("16:00", "散步"),
-            ("18:00", "晚饭"),
-            ("20:00", "个人时间"),
-            ("22:30", "睡前"),
-        ]
-        return base
-
-    if is_student:
-        base = [
-            ("09:30", "吃早饭"),
-            ("10:00", "上午学习"),
-            ("12:00", "午饭"),
-            ("14:00", "下午学习"),
-            ("18:00", "下课"),
-            ("20:30", "个人时间"),
-            ("00:30", "睡前"),
-        ]
-        return base
-
-    if late_schedule:
-        base = [
-            ("09:30", "吃早饭"),
-            ("10:30", "通勤"),
-            ("11:00", "上午工作"),
-            ("12:30", "午饭"),
-            ("14:30", "下午工作"),
-        ]
-        base += [("19:30", "加班" if "加班" in agent["work_style"] else "下班")]
-        base += [("22:00", "个人时间"), ("01:00", "睡前")]
-        return base
-
-    base = [
-        ("08:00", "吃早饭"),
-        ("09:00", "通勤"),
-        ("10:00", "上午工作"),
-        ("12:00", "午饭"),
-        ("14:00", "下午工作"),
-    ]
-    base += [("18:30", "加班" if "加班" in agent["work_style"] else "下班")]
-    base += [("21:00", "个人时间"), ("23:30", "睡前")]
-    return base
-
-def _schedule_profile_flags(agent):
-    profile_blob = " ".join([
-        agent.get("job", ""),
-        agent.get("personality", ""),
-        agent.get("daily_life", ""),
-        agent.get("values", ""),
-        agent.get("work_style", ""),
-    ])
-    is_student = any(k in profile_blob for k in ["学生", "硕士", "博士", "课题组", "上课", "学习"])
-    is_retired = any(k in profile_blob for k in ["退休", "无业", "待业", "失业", "家庭主妇", "家庭主夫", "已退休"])
-    late_schedule = any(k in profile_blob for k in ["夜间活跃", "晚睡", "作息偏晚"])
-    overtime = "加班" in agent.get("work_style", "")
-    return is_student, is_retired, late_schedule, overtime
-
-def ensure_sleep_in_schedule(agent, schedule):
-    if any(is_sleep_activity(activity) for _, activity in schedule):
-        return schedule
-    is_student, is_retired, late_schedule, _ = _schedule_profile_flags(agent)
-    if is_retired:
-        sleep_time = "22:30"
-    elif is_student:
-        sleep_time = "00:30"
-    elif late_schedule:
-        sleep_time = "01:00"
-    else:
-        sleep_time = "23:30"
-
-    used_times = {t for t, _ in schedule}
-    sleep_minutes = _time_str_to_minutes(sleep_time)
-    if sleep_minutes is None:
-        sleep_minutes = 23 * 60 + 30
-    max_minutes = max((_time_str_to_minutes(t) for t in used_times if _time_str_to_minutes(t) is not None), default=None)
-    if max_minutes is not None and max_minutes >= sleep_minutes:
-        sleep_minutes = min(max_minutes + 60, 23 * 60 + 59)
-    candidate = _minutes_to_time_str(sleep_minutes)
-    if candidate in used_times:
-        for _ in range(48):
-            sleep_minutes = (sleep_minutes + 30) % (24 * 60)
-            candidate = _minutes_to_time_str(sleep_minutes)
-            if candidate not in used_times:
-                break
-
-    schedule = list(schedule) + [(candidate, "睡前")]
-    schedule.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
-    return schedule
-
-def _schedule_times(schedule):
-    return [t for t, _ in schedule]
-
-def _is_strictly_increasing_times(schedule):
-    minutes = []
-    for t, _ in schedule:
-        m = _time_str_to_minutes(t)
-        if m is None:
-            return False
-        minutes.append(m)
-    return all(a < b for a, b in zip(minutes, minutes[1:]))
-
-def _round_to_anchor(minutes, anchor_step=30):
-    step = max(1, int(anchor_step))
-    return int(round(minutes / step) * step)
-
-def _align_daily_planning_start_time(schedule, anchor_step=30, max_delay=10, min_gap=20):
-    if not schedule:
-        return []
-    minute_points = [_time_str_to_minutes(t) for t, _ in schedule]
-    if any(m is None for m in minute_points):
-        return list(schedule)
-
-    start_idx = 0
-    for idx, (_, activity) in enumerate(schedule):
-        if not is_sleep_activity(activity):
-            start_idx = idx
-            break
-
-    anchor = _round_to_anchor(minute_points[start_idx], anchor_step=anchor_step)
-    target = min(23 * 60 + 59, anchor + random.randint(0, max(0, int(max_delay))))
-
-    lower_bound = 0
-    if start_idx > 0:
-        lower_bound = minute_points[start_idx - 1] + max(1, int(min_gap))
-    upper_bound = 23 * 60 + 59
-    if start_idx + 1 < len(minute_points):
-        upper_bound = minute_points[start_idx + 1] - max(1, int(min_gap))
-
-    if upper_bound < lower_bound:
-        return list(schedule)
-    minute_points[start_idx] = max(lower_bound, min(target, upper_bound))
-    return [(_minutes_to_time_str(m), act) for m, (_, act) in zip(minute_points, schedule)]
-
-def _has_workday_signature(schedule):
-    if not schedule:
-        return False
-    keywords = ["通勤", "工作", "上班", "加班", "会议", "办公", "出差", "上课", "实验", "课题"]
-    return any(any(k in str(activity) for k in keywords) for _, activity in schedule)
+# Schedule parsing / heuristic / sleep / timing helpers moved to
+# gaworld.sim._schedule during the S3 refactor.
+from gaworld.sim._schedule import (  # noqa: E402
+    _align_daily_planning_start_time,
+    _extract_json_array_block,
+    _has_workday_signature,
+    _heuristic_schedule,
+    _is_strictly_increasing_times,
+    _parse_schedule,
+    _round_to_anchor,
+    _schedule_profile_flags,
+    _schedule_times,
+    ensure_sleep_in_schedule,
+)
 
 def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, day=None):
     if not schedule:
@@ -2749,44 +1240,16 @@ def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, da
     )
     return aligned if changed else list(schedule)
 
-def _external_rag_hint(agent, query, max_items=EXTERNAL_RAG_TOP_K):
-    hits = retrieve_relevant_memories(
-        agent,
-        query,
-        max_items=max_items,
-        entry_types=["external_info"],
-    )
-    if hits:
-        return _format_memory_hint(hits, max_chars=240)
-    fallback = []
-    if isinstance(agent, dict):
-        for item in reversed(agent.get("memory", [])):
-            text = str(item).strip()
-            if "[额外信息" not in text:
-                continue
-            fallback.append({"type": "external_info", "text": text})
-            if len(fallback) >= max_items:
-                break
-    return _format_memory_hint(list(reversed(fallback)), max_chars=240)
-
-def _agent_has_external_rag(agent):
-    if not isinstance(agent, dict):
-        return False
-    for item in agent.get("memory", []):
-        text = str(item).strip()
-        if text.startswith("[额外信息"):
-            return True
-    return False
+# External-RAG hint helpers moved to gaworld.sim._rag during the S3 refactor.
+from gaworld.sim._rag import (  # noqa: E402
+    EXTERNAL_RAG_TOP_K,
+    _agent_has_external_rag,
+    _external_rag_hint,
+)
 
 
-def _compact_text(text, max_chars=120):
-    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
-    if len(cleaned) <= max_chars:
-        return cleaned
-    clipped = cleaned[:max_chars]
-    if " " in clipped:
-        clipped = clipped.rsplit(" ", 1)[0]
-    return clipped.rstrip("，,；;。.") + "..."
+# _compact_text moved to gaworld.sim._schedule during the S3 refactor.
+from gaworld.sim._schedule import _compact_text  # noqa: E402
 
 
 def _parse_structured_json(text, allowed_fields):
@@ -2808,741 +1271,93 @@ def _parse_structured_json(text, allowed_fields):
     return parsed
 
 
-def _fallback_plan_struct(raw_text=""):
-    text = _compact_text(raw_text, max_chars=80) or "先按当前情况稳住节奏。"
-    return {
-        "goal": "先把当前时段过稳",
-        "constraint": "时间和状态都有限",
-        "urge": "也想顺着当下感觉稍微省点力",
-        "plan": text,
-        "expected_outcome": "希望不把后面的安排弄得更乱",
-    }
-
-
-def _fallback_reflection_struct(raw_text=""):
-    text = _compact_text(raw_text, max_chars=80) or "这一步暂时就这样。"
-    return {
-        "result": text,
-        "feeling": "情绪有一点波动",
-        "lesson": "下次还是要更早判断状态和代价",
-        "next_bias": "接下来会更偏向省力或稳妥的做法",
-    }
-
-
-def format_plan_text(plan):
-    if not isinstance(plan, dict):
-        return _compact_text(plan, max_chars=120)
-    return "；".join(
-        part
-        for part in [
-            f"目标：{plan.get('goal', '').strip()}".strip("："),
-            f"顾虑：{plan.get('constraint', '').strip()}".strip("："),
-            f"冲动：{plan.get('urge', '').strip()}".strip("："),
-            f"打算：{plan.get('plan', '').strip()}".strip("："),
-            f"预期：{plan.get('expected_outcome', '').strip()}".strip("："),
-        ]
-        if part and not part.endswith("：")
-    )
-
-
-def format_reflection_text(reflection):
-    if not isinstance(reflection, dict):
-        return _compact_text(reflection, max_chars=120)
-    return "；".join(
-        part
-        for part in [
-            f"结果：{reflection.get('result', '').strip()}".strip("："),
-            f"感受：{reflection.get('feeling', '').strip()}".strip("："),
-            f"教训：{reflection.get('lesson', '').strip()}".strip("："),
-            f"后续倾向：{reflection.get('next_bias', '').strip()}".strip("："),
-        ]
-        if part and not part.endswith("：")
-    )
-
-
-def _activity_commitment_level(activity):
-    text = str(activity or "")
-    if any(k in text for k in ["工作", "上班", "会议", "开会", "上课", "学习", "实验", "看病", "医院", "诊所", "面试", "报告"]):
-        return "high"
-    if any(k in text for k in ["购物", "买菜", "社交", "聚会", "拜访", "办事", "沟通", "会面", "约见", "联系"]):
-        return "medium"
-    return "low"
-
-
-def _commitment_weight(level):
-    behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
-    weights = behavior_cfg.get("commitment_weights", {}) if isinstance(behavior_cfg, dict) else {}
-    default_map = {"high": 1.2, "medium": 0.6, "low": 0.2}
-    return float(weights.get(level, default_map.get(level, 0.2)))
-
-
-def _state_recall_labels(agent):
-    state = agent.get("state", {}) if isinstance(agent, dict) else {}
-    labels = []
-    if float(state.get("self_control", 0.6)) < 0.4:
-        labels.append("low_self_control")
-    if float(state.get("fatigue_debt", 0.2)) > 0.6:
-        labels.append("high_fatigue")
-    if float(state.get("time_pressure", 0.25)) > 0.6:
-        labels.append("high_time_pressure")
-    if float(state.get("hunger", 0.25)) > 0.65:
-        labels.append("high_hunger")
-    if float(state.get("energy", 0.75)) < 0.35:
-        labels.append("low_energy")
-    return labels
-
-
-def _build_recall_context_labels(agent, activity="", time_str="", location="", commitment_level=""):
-    labels = list(_state_recall_labels(agent))
-    if activity:
-        labels.append(f"activity {activity}")
-    if time_str and location and activity:
-        labels.append(f"context {build_context_key(time_str, location, activity)}")
-    if commitment_level:
-        labels.append(f"{commitment_level}_commitment")
-    return labels
-
-
-def _action_style_tags(action_text):
-    text = str(action_text or "")
-    tags = set()
-    if any(k in text for k in ["推进", "完成", "整理", "处理", "准备", "学习", "规划", "落实", "回复", "确认"]):
-        tags.add("progress")
-    if any(k in text for k in ["继续", "维持", "例行", "按原计划", "照常", "看看进度", "简单处理"]):
-        tags.add("maintain")
-    if any(k in text for k in ["拖延", "刷手机", "摸鱼", "发呆", "放空", "晚点再说", "逃避", "躺平"]):
-        tags.add("avoidant")
-    if any(k in text for k in ["聊天", "联系", "沟通", "拜访", "会面", "回消息", "确认安排", "聚会"]):
-        tags.add("social")
-    if any(k in text for k in ["休息", "放松", "回家", "睡", "午休", "吃饭", "散步"]):
-        tags.add("restorative")
-    if any(k in text for k in ["先", "立刻", "马上", "顺手", "简单", "快速"]):
-        tags.add("quick")
-    return tags
-
-
-def _behavioral_action_fallbacks(activity):
-    text = str(activity or "")
-    if any(k in text for k in ["工作", "学习", "会议", "上课", "实验"]):
-        return {
-            "progress": "推进最重要的一项任务",
-            "maintain": "按原计划继续处理例行事项",
-            "avoidant": "拖一会儿再开始，先刷手机分心",
-            "social": "联系相关的人确认进度和分工",
-        }
-    if any(k in text for k in ["买菜", "购物", "办事"]):
-        return {
-            "progress": "尽快把最需要买的东西先办完",
-            "maintain": "按清单照常处理手头事务",
-            "avoidant": "先随便逛一会儿拖时间",
-            "social": "发消息问熟人有没有顺路需求",
-        }
-    return {
-        "progress": "先把眼前这件事往前推进一点",
-        "maintain": "按原节奏继续当前安排",
-        "avoidant": "先拖一会儿再说，顺手刷会儿手机",
-        "social": "联系一下相关的人确认接下来的安排",
-    }
-
-
-def _ensure_behavioral_action_balance(activity, actions):
-    cleaned = []
-    seen = set()
-    for action in actions or []:
-        text = str(action).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        cleaned.append(text)
-    fallbacks = _behavioral_action_fallbacks(activity)
-    for category in ("progress", "maintain", "avoidant", "social"):
-        if not any(category in _action_style_tags(action) for action in cleaned):
-            fallback = fallbacks.get(category, "")
-            if fallback and fallback not in seen:
-                cleaned.append(fallback)
-                seen.add(fallback)
-    return cleaned
-
-
-def _social_relationship_snapshot(agent):
-    relationships = agent.get("relationships", {}) if isinstance(agent, dict) else {}
-    partner_ids = list(agent.get("_recent_social_partners", []) or [])
-    selected = []
-    for pid in partner_ids:
-        item = relationships.get(str(pid), {})
-        if isinstance(item, dict):
-            selected.append(item)
-    if not selected:
-        for item in relationships.values():
-            if isinstance(item, dict):
-                selected.append(item)
-            if len(selected) >= 3:
-                break
-    if not selected:
-        return {"obligation": 0.5, "friction": 0.5, "support": 0.5}
-    return {
-        "obligation": float(np.mean([float(item.get("obligation", 0.5)) for item in selected])),
-        "friction": float(np.mean([float(item.get("friction", 0.5)) for item in selected])),
-        "support": float(np.mean([float(item.get("closeness", 0.5)) for item in selected])),
-    }
-
-
-def _current_emotion_text(agent):
-    state = agent.get("state", {}) if isinstance(agent, dict) else {}
-    emotion = float(state.get("emotion", 0.5))
-    stress = float(state.get("stress", 0.5))
-    if emotion >= 0.7:
-        mood = "明显偏积极"
-    elif emotion <= 0.35:
-        mood = "明显偏低落"
-    else:
-        mood = "中性偏波动"
-    if stress >= 0.72:
-        pressure = "压力偏高"
-    elif stress <= 0.35:
-        pressure = "压力较低"
-    else:
-        pressure = "压力中等"
-    return f"当前情绪：{mood}（emotion={emotion:.2f}）；当前压力：{pressure}（stress={stress:.2f}）"
-
-
-def _is_meaningful_text(text):
-    cleaned = str(text or "").strip()
-    if not cleaned:
-        return False
-    return cleaned not in {"无", "无特殊变化", "今天几乎没有与熟人互动。"}
-
-
-def _activity_matches_keywords(activity, keywords):
-    text = str(activity or "")
-    return any(keyword in text for keyword in keywords)
-
-
-def _is_location_time_relevant(activity, time_str="", location=""):
-    if _activity_matches_keywords(
-        activity,
-        [
-            "通勤", "前往", "移动", "会面", "拜访", "上班", "工作", "上课", "学习",
-            "买菜", "购物", "吃饭", "早餐", "午饭", "晚饭", "散步", "运动", "看病",
-            "医院", "诊所", "睡前", "休息",
-        ],
-    ):
-        return True
-    if is_sleep_activity(str(activity or "")):
-        return True
-    return bool(str(time_str).strip() and str(location).strip())
-
-
-def _is_social_context_relevant(agent, activity, social_context):
-    if not _is_meaningful_text(social_context):
-        return False
-    if _activity_matches_keywords(
-        activity,
-        ["社交", "联系", "沟通", "拜访", "会面", "聚会", "聊天", "会议", "组会", "讨论", "协作", "家人", "朋友"],
-    ):
-        return True
-    snapshot = _social_relationship_snapshot(agent)
-    state = agent.get("state", {}) if isinstance(agent, dict) else {}
-    if snapshot["obligation"] > 0.65 or snapshot["friction"] > 0.65:
-        return True
-    if float(state.get("social_need", 0.4)) > 0.65:
-        return True
-    return False
-
-
-def _is_physical_environment_relevant(activity, env_context, env_events):
-    if not _is_meaningful_text(env_context) and not env_events:
-        return False
-    combined = " ".join(
-        [str(env_context or "")] + [str(ev.get("description", ev.get("name", ""))) for ev in (env_events or [])]
-    )
-    physical_keywords = ["雨", "雪", "风", "高温", "降温", "寒潮", "拥堵", "封路", "施工", "停电", "噪音", "天气", "路况"]
-    activity_keywords = ["通勤", "前往", "移动", "散步", "运动", "买菜", "购物", "拜访", "会面", "看病"]
-    return any(keyword in combined for keyword in physical_keywords) and _activity_matches_keywords(activity, activity_keywords)
-
-
-def _is_social_environment_relevant(activity, env_events, policy_desc):
-    combined = " ".join(
-        [str(policy_desc or "")] + [str(ev.get("description", ev.get("name", ""))) for ev in (env_events or [])]
-    )
-    if not _is_meaningful_text(combined):
-        return False
-    social_keywords = ["政策", "工资", "就业", "监管", "物价", "裁员", "舆论", "抗议", "社区", "学校", "医院", "平台"]
-    activity_keywords = ["工作", "上班", "学习", "上课", "买菜", "购物", "社交", "联系", "沟通", "社区", "看病"]
-    return any(keyword in combined for keyword in social_keywords) and _activity_matches_keywords(activity, activity_keywords)
-
-
-def _summarize_environment_refs(env_context, env_events, policy_desc):
-    physical = []
-    social = []
-    for ev in env_events or []:
-        desc = str(ev.get("description", ev.get("name", ""))).strip()
-        if not desc:
-            continue
-        ev_type = str(ev.get("type", "")).strip().lower()
-        if ev_type in {"natural", "weather"} or any(k in desc for k in ["雨", "雪", "风", "高温", "拥堵", "封路", "施工", "停电"]):
-            physical.append(desc)
-        else:
-            social.append(desc)
-    if _is_meaningful_text(env_context) and not physical and not social:
-        physical.append(str(env_context).strip())
-    if _is_meaningful_text(policy_desc):
-        social.append(str(policy_desc).strip())
-    return {
-        "physical": "；".join(dict.fromkeys(physical)),
-        "social": "；".join(dict.fromkeys(social)),
-    }
-
-
-def _build_decision_reference_bundle(
-    agent,
-    activity,
-    memory_hint="",
-    recollection="",
-    time_str="",
-    location="",
-    env_context="",
-    env_events=None,
-    policy_desc="",
-    social_context="",
-):
-    env_summary = _summarize_environment_refs(env_context, env_events or [], policy_desc)
-    refs = {
-        "emotion_text": _current_emotion_text(agent),
-        "memory_hint": memory_hint or "暂无重要经验",
-        "recollection": recollection or "无明显回忆",
-        "physical_env_relevant": _is_physical_environment_relevant(activity, env_context, env_events or []),
-        "social_env_relevant": _is_social_environment_relevant(activity, env_events or [], policy_desc),
-        "location_time_relevant": _is_location_time_relevant(activity, time_str=time_str, location=location),
-        "social_network_relevant": _is_social_context_relevant(agent, activity, social_context),
-        "physical_env_text": env_summary.get("physical", ""),
-        "social_env_text": env_summary.get("social", ""),
-        "location_time_text": (
-            f"当前地点：{location or '未知'}；当前时间：{time_str or '未知'}"
-            if _is_location_time_relevant(activity, time_str=time_str, location=location)
-            else ""
-        ),
-        "social_network_text": social_context if _is_social_context_relevant(agent, activity, social_context) else "",
-    }
-    return refs
-
-
-def _same_activity_habit_entry(agent, activity):
-    habits = agent.get("habits", {}) if isinstance(agent, dict) else {}
-    if not isinstance(habits, dict):
-        return {}
-    counts = defaultdict(int)
-    strength_total = 0.0
-    strength_count = 0
-    for key, item in habits.items():
-        if not str(key).endswith(f"|{activity}"):
-            continue
-        if not isinstance(item, dict):
-            continue
-        for action, count in item.get("action_counts", {}).items():
-            try:
-                counts[str(action)] += int(count)
-            except (TypeError, ValueError):
-                continue
-        strength_total += float(item.get("strength", 0.0))
-        strength_count += 1
-    if not counts:
-        return {}
-    preferred_action = max(counts.items(), key=lambda x: x[1])[0]
-    avg_strength = strength_total / max(1, strength_count)
-    return {
-        "preferred_action": preferred_action,
-        "strength": avg_strength,
-    }
-
-
-def _clip01(value):
-    return float(np.clip(float(value), 0.0, 1.0))
-
-
-def _join_query_parts(*parts):
-    chunks = []
-    for part in parts:
-        if part is None:
-            continue
-        if isinstance(part, (list, tuple, set)):
-            chunks.extend(str(x).strip() for x in part if str(x).strip())
-        else:
-            text = str(part).strip()
-            if text:
-                chunks.append(text)
-    return " ".join(chunks)
-
-
-def _memory_recall_top_k(agent, stage):
-    base = max(1, int(RECALL_CONFIG.get("base_top_k", 2)))
-    stage_top = max(base, int(RECALL_CONFIG.get(f"{stage}_top_k", base)))
-    max_top = max(stage_top, int(RECALL_CONFIG.get("max_top_k", 5)))
-    state = agent.get("state", {}) if isinstance(agent, dict) else {}
-    stress = abs(float(state.get("stress", 0.5)) - 0.5)
-    emotion = abs(float(state.get("emotion", 0.5)) - 0.5)
-    hunger = abs(float(state.get("hunger", 0.5)) - 0.5)
-    social_need = abs(float(state.get("social_need", 0.5)) - 0.5)
-    fatigue = abs(float(state.get("fatigue_debt", 0.2)) - 0.5)
-    self_control = abs(float(state.get("self_control", 0.6)) - 0.5)
-    time_pressure = abs(float(state.get("time_pressure", 0.25)) - 0.5)
-    bonus = 0
-    if max(stress, emotion, hunger, social_need, fatigue, self_control, time_pressure) >= 0.22:
-        bonus += 1
-    if stage == "interview":
-        bonus += 1
-    return max(1, min(stage_top + bonus, max_top))
-
-
-def _infer_recall_valence(hits):
-    if not hits:
-        return 0.0
-    score = 0.0
-    for item in hits[:3]:
-        text = str(item.get("text", "") if isinstance(item, dict) else item)
-        score += sum(1 for hint in POSITIVE_RECALL_HINTS if hint in text)
-        score -= sum(1 for hint in NEGATIVE_RECALL_HINTS if hint in text)
-    return float(np.clip(score / 4.0, -1.0, 1.0))
-
-
-def _apply_recall_effect(agent, valence, stage, top_score=0.0):
-    if not isinstance(agent, dict) or abs(float(valence)) < 0.01 or stage == "interview":
-        return {}
-    state = agent.setdefault("state", {})
-    if "emotion" not in state or "stress" not in state:
-        return {}
-    scale = float(RECALL_CONFIG.get("effect_scale", 0.015))
-    strength = scale * (1.0 + min(max(float(top_score), 0.0), 1.0))
-    emotion_delta = strength * float(valence)
-    stress_delta = -0.7 * strength * float(valence)
-    state["emotion"] = _clip01(float(state.get("emotion", 0.5)) + emotion_delta)
-    state["stress"] = _clip01(float(state.get("stress", 0.5)) + stress_delta)
-    return {
-        "emotion": round(emotion_delta, 4),
-        "stress": round(stress_delta, 4),
-    }
-
-
-def _format_recollection(stage, hits):
-    if not hits:
-        return ""
-    prefix = {
-        "planning": "这让你想起",
-        "action": "你临时想起",
-        "reflection": "你又联想到",
-        "interview": "这些问题让你回忆起",
-    }.get(stage, "你想起")
-    type_label = {
-        "episode": "一段经历",
-        "reflection": "之前的反思",
-        "meta_memory": "更高层的总结",
-        "memory": "过去的记忆",
-        "action": "某次做法",
-        "plan": "先前的打算",
-        "log": "一个生活片段",
-    }
-    items = []
-    for hit in hits[:2]:
-        if isinstance(hit, dict):
-            label = type_label.get(str(hit.get("type", "")), "一个片段")
-            text = _compact_text(hit.get("text", ""), max_chars=60)
-        else:
-            label = "一个片段"
-            text = _compact_text(hit, max_chars=60)
-        if text:
-            items.append(f"{label}：{text}")
-    if not items:
-        return ""
-    return f"{prefix}{'；'.join(items)}"
-
-
-def evoke_memory(agent, stage, *parts, entry_types=None, context_labels=None):
-    query = _join_query_parts(RECALL_STAGE_HINTS.get(stage, []), context_labels or [], parts)
-    hits = retrieve_relevant_memories(
-        agent,
-        query,
-        max_items=_memory_recall_top_k(agent, stage),
-        entry_types=entry_types or RECALL_STAGE_ENTRY_TYPES.get(stage),
-    )
-    hint = _format_memory_hint(hits, max_chars=max(120, int(RECALL_CONFIG.get("hint_chars", 240))))
-    top_score = float(hits[0].get("score", 0.0)) if hits and isinstance(hits[0], dict) else 0.0
-    min_score = float(RECALL_CONFIG.get("surface_min_score", 0.08))
-    recollection = ""
-    valence = 0.0
-    effect = {}
-    if hits and (stage == "interview" or top_score >= min_score):
-        recollection = _format_recollection(stage, hits)
-        valence = _infer_recall_valence(hits)
-        effect = _apply_recall_effect(agent, valence, stage, top_score=top_score)
-    return {
-        "query": query,
-        "hits": hits,
-        "hint": hint,
-        "recollection": recollection,
-        "valence": valence,
-        "effect": effect,
-        "top_score": top_score,
-    }
-
-
-def _append_memory_record(agent, text, entry_type="memory", day=None, time_str=None):
-    payload = str(text or "").strip()
-    if not payload or not isinstance(agent, dict):
-        return False
-    memory = agent.setdefault("memory", [])
-    if payload not in memory:
-        memory.append(payload)
-    save_agent_memory(agent)
-    vector_db_add_entry(agent["id"], entry_type, payload, sim_day=day, sim_time=time_str)
-    return True
-
-
-def _heuristic_memory_review(agent, selected):
-    tags = []
-    for ep in selected:
-        tags.extend(ep.get("tags", []))
-    drivers = [str(ep.get("decision_driver", "")).strip() for ep in selected if str(ep.get("decision_driver", "")).strip()]
-    activities = [str(ep.get("final_activity", "")).strip() for ep in selected if str(ep.get("final_activity", "")).strip()]
-    repeated = ""
-    if activities:
-        counts = defaultdict(int)
-        for activity in activities:
-            counts[activity] += 1
-        repeated, repeated_count = max(counts.items(), key=lambda x: x[1])
-        if repeated_count < 2:
-            repeated = ""
-    repeated_driver = ""
-    if drivers:
-        counts = defaultdict(int)
-        for driver in drivers:
-            counts[driver] += 1
-        repeated_driver, repeated_driver_count = max(counts.items(), key=lambda x: x[1])
-        if repeated_driver_count < 2:
-            repeated_driver = ""
-    if "failure" in tags or "conflict" in tags:
-        insight = "最近有些做法会反复带来压力，接下来最好更早调整。"
-    elif "success" in tags:
-        insight = "最近有效的做法值得继续保留。"
-    elif "health" in tags:
-        insight = "身体状态和恢复节奏正在明显影响你的判断。"
-    else:
-        insight = "这几段经历说明你的日常节奏正在慢慢塑造接下来的选择。"
-    if repeated_driver:
-        return f"回顾最近几段经历后，你意识到自己常常被“{repeated_driver}”推着走，{insight}"
-    if repeated:
-        return f"回顾最近几段经历后，你意识到自己总会被“{repeated}”牵引，{insight}"
-    return f"回顾最近几段经历后，你意识到{insight}"
-
-
-def maybe_review_memories(agent, day, time_str, recent_episode=None, llm_budget_ctx=None):
-    if not HUMAN_REALISM_ENABLED:
-        return ""
-    now = _time_str_to_minutes(time_str)
-    if now is None:
-        return ""
-    if agent.get("_memory_review_day") != day:
-        agent["_memory_review_day"] = day
-        agent["_memory_review_count"] = 0
-        agent["_last_memory_review_minute"] = -10**9
-    max_reviews = max(1, int(MEMORY_REVIEW_CONFIG.get("max_per_day", 3)))
-    if int(agent.get("_memory_review_count", 0)) >= max_reviews:
-        return ""
-    interval = max(60, int(MEMORY_REVIEW_CONFIG.get("interval_minutes", 240)))
-    last_minute = int(agent.get("_last_memory_review_minute", -10**9))
-    recent_salience = 0.0
-    if isinstance(recent_episode, dict):
-        recent_salience = float(recent_episode.get("salience", recent_episode.get("decayed_salience", 0.0)))
-    trigger_salience = float(MEMORY_REVIEW_CONFIG.get("trigger_salience", 0.72))
-    if now - last_minute < interval and recent_salience < trigger_salience:
-        return ""
-    top_k = max(1, int(MEMORY_REVIEW_CONFIG.get("top_k", 4)))
-    episodes = sorted(
-        agent.get("episodes", []),
-        key=lambda e: float(e.get("decayed_salience", e.get("salience", 0.0))),
-        reverse=True,
-    )
-    selected = []
-    for ep in episodes:
-        ep_day = int(ep.get("day", ep.get("created_at_day", 0)) or 0)
-        if ep_day < max(0, int(day) - 2):
-            continue
-        selected.append(ep)
-        if len(selected) >= top_k:
-            break
-    if not selected and isinstance(recent_episode, dict):
-        selected = [recent_episode]
-    if not selected:
-        return ""
-    summary_lines = [
-        f"{ep.get('time', '')} {ep.get('final_activity', '')} -> {ep.get('action', '')} / {ep.get('reflection', '')}"
-        for ep in selected
-    ]
-    summary = _heuristic_memory_review(agent, selected)
-    if isinstance(llm_budget_ctx, dict) and llm_budget_ctx.get("remaining", 0) > 0:
-        prompt = f"""
-你是城市模拟器中的“记忆复盘器”。
-请根据角色近期经历，写一句更高层次的自我认识，像人在回顾自己最近状态时形成的结论。
-角色：{agent.get('name', '')}
-近期经历：
-{json.dumps(summary_lines, ensure_ascii=False, indent=2)}
-
-要求：
-1) 只输出一句中文，不超过60字。
-2) 要体现模式、偏好、教训或状态变化，不要重复流水账。
-3) 不要输出其他文字。
-"""
-        llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
-        try:
-            response = call_llm(prompt, task="memory_review", agent_id=agent["id"]).strip()
-        except (requests.RequestException, ValueError, RuntimeError) as exc:
-            _LOG.warning("memory_review LLM call failed for agent %s: %s", agent.get("id"), exc)
-            response = ""
-        if response:
-            summary = _compact_text(response, max_chars=90)
-    review_text = f"[Day {day} {time_str} MemoryReview] {summary}"
-    _append_memory_record(agent, review_text, entry_type="meta_memory", day=day, time_str=time_str)
-    agent["_memory_review_count"] = int(agent.get("_memory_review_count", 0)) + 1
-    agent["_last_memory_review_minute"] = now
-    return review_text
-
-def _append_external_payload_to_agent(agent, payload):
-    if not payload or not isinstance(agent, dict):
-        return
-    memory = agent.setdefault("memory", [])
-    if payload not in memory:
-        memory.append(payload)
-
-def _heuristic_bootstrap_external_items(agent, max_items=3, max_chars=280):
-    if not isinstance(agent, dict):
-        return []
-    state = agent.get("state", {})
-    items = []
-    living = str(agent.get("living") or agent.get("residence") or agent.get("residence", "")).strip()
-    job = str(agent.get("job", "")).strip()
-    personality = str(agent.get("personality", "")).strip()
-    daily_life = str(agent.get("daily_life", "")).strip()
-    values = str(agent.get("values", "")).strip()
-    if living:
-        items.append(f"长期生活在{living}一带，熟悉周边通勤路径、生活服务与大致消费水平。")
-    if job:
-        items.append(f"对“{job}”相关的工作节奏、收入波动和行业机会有持续关注，会据此调整自己的日常安排。")
-    if daily_life:
-        items.append(f"平时的生活习惯是：{_sanitize_extra_text(daily_life, max_chars=max_chars)}")
-    stress = float(state.get("stress", 0.5))
-    econ_security = float(state.get("econ_security", 0.5))
-    if stress >= 0.6 or econ_security <= 0.45:
-        items.append("最近会更留意收入稳定性、生活成本和能否节省开支。")
-    else:
-        items.append("通常会平衡工作、休息和消费，不会完全被短期经济波动牵着走。")
-    if personality:
-        items.append(f"熟人对其的稳定印象通常是：{_sanitize_extra_text(personality, max_chars=max_chars)}")
-    if values:
-        items.append(f"在公共事务和人生选择上，长期倾向于：{_sanitize_extra_text(values, max_chars=max_chars)}")
-    cleaned = []
-    seen = set()
-    for item in items:
-        text = _sanitize_extra_text(item, max_chars=max_chars)
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        cleaned.append(text)
-        if len(cleaned) >= max(1, int(max_items)):
-            break
-    return cleaned
-
-def _parse_bootstrap_external_items(text, max_items=3):
-    blob = _extract_json_array_block(text)
-    if not blob:
-        return []
-    try:
-        raw = json.loads(blob)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(raw, list):
-        return []
-    parsed = []
-    for item in raw:
-        if isinstance(item, str):
-            cleaned = _sanitize_extra_text(item, max_chars=280)
-        elif isinstance(item, dict):
-            cleaned = ""
-            for key in ("text", "memory", "knowledge", "content"):
-                value = item.get(key)
-                if isinstance(value, str) and value.strip():
-                    cleaned = _sanitize_extra_text(value, max_chars=280)
-                    break
-        else:
-            cleaned = _sanitize_extra_text(str(item), max_chars=280)
-        if cleaned:
-            parsed.append(cleaned)
-        if len(parsed) >= max(1, int(max_items)):
-            break
-    return parsed
-
-def _llm_bootstrap_external_items(agent, max_items=3, max_chars=280):
-    profile_text = "\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"年龄：{agent.get('age', '')}",
-        f"居住情况：{agent.get('living', agent.get('residence', ''))}",
-        f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
-        f"日常生活与习惯：{agent.get('daily_life', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
-    prompt = f"""
-你是城市模拟器的初始化器。请为一个智能体生成 {max_items} 条“可放入 RAG 的背景记忆/知识”。
-
-角色资料：
-{profile_text}
-
-要求：
-1) 内容应当是“合理、模糊但有帮助”的长期背景信息，可被后续计划/访谈/决策引用。
-2) 不要写极端具体、不可验证的重大事件；更像长期经验、偏好、熟悉领域、持续关注主题。
-3) 每条 20-80 字，中文。
-4) 仅输出 JSON 数组，每项是字符串，不能输出其他文字。
-"""
-    response = call_llm(prompt, task="external_rag_bootstrap", agent_id=agent["id"])
-    items = _parse_bootstrap_external_items(response, max_items=max_items)
-    if items:
-        return [_sanitize_extra_text(item, max_chars=max_chars) for item in items]
-    return _heuristic_bootstrap_external_items(agent, max_items=max_items, max_chars=max_chars)
-
-def _summarize_bootstrap_web_item(agent, title, content, url, max_chars=280):
-    profile_text = "\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
-    prompt = f"""
-你是城市模拟器的初始化器。请把下面一条外部信息转写成适合放入角色 RAG 的“长期背景知识”。
-
-角色资料：
-{profile_text}
-
-标题：{title or "N/A"}
-链接：{url}
-内容摘要：
-{content}
-
-要求：
-1) 输出 1 句中文，20-80 字。
-2) 要体现“这条信息为什么会长期影响/被该角色持续关注”。
-3) 不要出现“根据新闻”“网页显示”等措辞。
-4) 只输出这一句。
-"""
-    response = call_llm(prompt, task="external_rag_bootstrap", agent_id=agent["id"]).strip()
-    cleaned = _sanitize_extra_text(response, max_chars=max_chars)
-    if cleaned:
-        return cleaned
-    title_text = _sanitize_extra_text(title, max_chars=80)
-    excerpt = _sanitize_extra_text(content, max_chars=max_chars)
-    if title_text:
-        return f"持续关注“{title_text}”这类信息，因为它可能影响自己的工作机会、生活成本或公共环境判断。 {excerpt}"
-    return excerpt
+# Fallback plan/reflection structs, plan/reflection text formatters, and
+# the activity-commitment-level classifier moved to gaworld.sim._schedule
+# during the S3 refactor.
+from gaworld.sim._schedule import (  # noqa: E402
+    _activity_commitment_level,
+    _fallback_plan_struct,
+    _fallback_reflection_struct,
+    format_plan_text,
+    format_reflection_text,
+)
+
+
+# --------------------------------------------------------------------
+# Decision-time memory recall + behavioural context — extracted to
+# ``gaworld.sim._memory_recall``.  28 helpers: ``evoke_memory``,
+# ``maybe_review_memories``, ``_build_decision_reference_bundle``, plus
+# the 23 predicates / formatters / helpers they depend on.  Three
+# constants (``RECALL_STAGE_HINTS``, ``RECALL_STAGE_ENTRY_TYPES``,
+# ``POSITIVE_RECALL_HINTS``, ``NEGATIVE_RECALL_HINTS``) also moved.
+#
+# Re-exported because the legacy ``RECALL_STAGE_HINTS`` etc. constants
+# at L612–L646 of this file are now dead — but ``choose_action``,
+# ``planning``, ``reflection``, ``interview_agent``, ``infer_event_effect``,
+# and ``_apply_life_event_state_effects`` all call these helpers as
+# bare names.  Tests do ``patch.object(sim, "evoke_memory", ...)`` so
+# the binding must live in this module's globals.
+#
+# This is the first cut of the RUN_SIMULATION extraction plan — see
+# ``docs/RUN_SIMULATION_EXTRACTION_PLAN.md`` for the prerequisite
+# ordering.
+# --------------------------------------------------------------------
+from gaworld.sim._memory_recall import (  # noqa: E402, F401
+    NEGATIVE_RECALL_HINTS,
+    POSITIVE_RECALL_HINTS,
+    RECALL_STAGE_ENTRY_TYPES,
+    RECALL_STAGE_HINTS,
+    _activity_matches_keywords,
+    _apply_recall_effect,
+    _behavioral_action_fallbacks,
+    _build_decision_reference_bundle,
+    _build_recall_context_labels,
+    _clip01,
+    _commitment_weight,
+    _current_emotion_text,
+    _ensure_behavioral_action_balance,
+    _format_recollection,
+    _heuristic_memory_review,
+    _infer_recall_valence,
+    _is_location_time_relevant,
+    _is_meaningful_text,
+    _is_physical_environment_relevant,
+    _is_social_context_relevant,
+    _is_social_environment_relevant,
+    _join_query_parts,
+    _memory_recall_top_k,
+    _same_activity_habit_entry,
+    _social_relationship_snapshot,
+    _summarize_environment_refs,
+    evoke_memory,
+    maybe_review_memories,
+)
+
+# --------------------------------------------------------------------
+# RAG bootstrap helpers — extracted to ``gaworld.sim._rag``.
+# Re-exported because tests do
+#   patch.object(sim, "_llm_bootstrap_external_items", ...)
+#   patch.object(sim, "_summarize_bootstrap_web_item", ...)
+# and the orchestrator ``_bootstrap_agent_external_rag`` (below) calls
+# these as bare names — bare-name lookup resolves in sim's globals,
+# which is where the re-export binds them, and where patch.object
+# replaces them.  Orchestrator stays here.
+# --------------------------------------------------------------------
+from gaworld.sim._rag import (  # noqa: E402
+    _append_external_payload_to_agent,
+    _heuristic_bootstrap_external_items,
+    _parse_bootstrap_external_items,
+    _llm_bootstrap_external_items,
+    _summarize_bootstrap_web_item,
+)
 
 def _bootstrap_agent_external_rag(agent, news_cache=None, news_sources=None):
-    bootstrap_cfg = EXTERNAL_RAG_CONFIG.get("bootstrap", {})
+    # Read from CONFIG at call time (not the module-load snapshot
+    # EXTERNAL_RAG_CONFIG): test fixtures replace CONFIG["external_rag"]
+    # wholesale before each run, so the snapshot misses their patches —
+    # the simulator used to silently still fire the network-heavy
+    # bootstrap during the e2e smoke run. (Phase 3 perf fix.)
+    bootstrap_cfg = CONFIG.get("external_rag", {}).get("bootstrap", {})
     if not isinstance(bootstrap_cfg, dict) or not bootstrap_cfg.get("enabled", False):
         return []
     # Prefer the standalone seed generator for unified bootstrap behavior.
@@ -3639,125 +1454,21 @@ def _bootstrap_agent_external_rag(agent, news_cache=None, news_sources=None):
             inserted.append(payload)
     return inserted
 
-def _jitter_schedule_times(base_schedule, max_shift=45, min_gap=20):
-    if not base_schedule:
-        return []
-    base_minutes = [_time_str_to_minutes(t) for t, _ in base_schedule]
-    if any(m is None for m in base_minutes):
-        return list(base_schedule)
-    adjusted_minutes = []
-    prev = None
-    for m in base_minutes:
-        shift = random.randint(-max_shift, max_shift)
-        target = m + shift
-        if prev is None:
-            target = max(0, target)
-        else:
-            target = max(prev + min_gap, target)
-        target = min(target, 23 * 60 + 59)
-        adjusted_minutes.append(target)
-        prev = target
-    adjusted = [(_minutes_to_time_str(m), act) for m, (_, act) in zip(adjusted_minutes, base_schedule)]
-    return adjusted
-
-def normalize_schedule_to_base(base_schedule, candidate_schedule):
-    if not base_schedule:
-        return candidate_schedule
-    if not candidate_schedule:
-        return base_schedule
-    base_times = [t for t, _ in base_schedule]
-    candidate_by_time = {t: a for t, a in candidate_schedule}
-    normalized = []
-    for t, base_act in base_schedule:
-        act = candidate_by_time.get(t, base_act)
-        normalized.append((t, act))
-    return normalized
-
-def _dedupe_schedule_items(schedule):
-    seen_times = set()
-    seen_pairs = set()
-    cleaned = []
-    for time_str, activity in schedule or []:
-        time_str = str(time_str).strip()
-        activity = str(activity).strip()
-        if not activity or _time_str_to_minutes(time_str) is None:
-            continue
-        pair = (time_str, activity)
-        if time_str in seen_times or pair in seen_pairs:
-            continue
-        seen_times.add(time_str)
-        seen_pairs.add(pair)
-        cleaned.append(pair)
-    return cleaned
-
-def _enforce_schedule_min_gap(schedule, min_gap=15):
-    if not schedule:
-        return []
-    sorted_schedule = sorted(schedule, key=lambda x: _time_str_to_minutes(x[0]) or 0)
-    kept = []
-    prev_minutes = None
-    for time_str, activity in sorted_schedule:
-        minutes = _time_str_to_minutes(time_str)
-        if minutes is None:
-            continue
-        if prev_minutes is not None and minutes - prev_minutes < max(1, int(min_gap)):
-            continue
-        kept.append((time_str, activity))
-        prev_minutes = minutes
-    return kept
-
-def _has_enough_schedule_anchors(base_schedule, candidate_schedule, max_shift_minutes):
-    if not base_schedule or not candidate_schedule:
-        return False
-    if max_shift_minutes <= 0:
-        return True
-    base_minutes = [
-        _time_str_to_minutes(t)
-        for t, activity in base_schedule
-        if _time_str_to_minutes(t) is not None and not is_sleep_activity(activity)
-    ]
-    candidate_minutes = [
-        _time_str_to_minutes(t)
-        for t, _ in candidate_schedule
-        if _time_str_to_minutes(t) is not None
-    ]
-    if not base_minutes or not candidate_minutes:
-        return True
-    close_count = 0
-    for base_minute in base_minutes:
-        if any(abs(candidate_minute - base_minute) <= max_shift_minutes for candidate_minute in candidate_minutes):
-            close_count += 1
-    required = min(len(base_minutes), max(2, int(round(len(base_minutes) * 0.45))))
-    return close_count >= required
-
-def normalize_flexible_schedule(base_schedule, candidate_schedule):
-    if not candidate_schedule or not base_schedule:
-        return None
-    cleaned = _dedupe_schedule_items(candidate_schedule)
-    if not cleaned:
-        return None
-    if not DAILY_PLAN_FLEX_ENABLED:
-        if len(cleaned) != len(base_schedule):
-            return None
-        sorted_candidate = sorted(cleaned, key=lambda x: _time_str_to_minutes(x[0]) or 0)
-        if not _is_strictly_increasing_times(sorted_candidate):
-            return None
-        return sorted_candidate
-
-    cleaned = _enforce_schedule_min_gap(cleaned, min_gap=DAILY_PLAN_MIN_GAP_MINUTES)
-    if not _is_strictly_increasing_times(cleaned):
-        return None
-    if not DAILY_PLAN_ALLOW_INSERTIONS and len(cleaned) != len(base_schedule):
-        return None
-    if len(cleaned) < DAILY_PLAN_MIN_ITEMS or len(cleaned) > DAILY_PLAN_MAX_ITEMS:
-        return None
-    if not _has_enough_schedule_anchors(
-        base_schedule,
-        cleaned,
-        max_shift_minutes=DAILY_PLAN_MAX_SHIFT_MINUTES,
-    ):
-        return None
-    return cleaned
+# --------------------------------------------------------------------
+# Schedule normalisation helpers — extracted to ``gaworld.sim._schedule``.
+# Re-exported because nothing outside the sim module references them; this
+# keeps the in-file callers (``generate_schedule``, ``generate_daily_routine``,
+# etc.) working unchanged. New code should import from
+# ``gaworld.sim._schedule`` directly.
+# --------------------------------------------------------------------
+from gaworld.sim._schedule import (  # noqa: E402
+    _jitter_schedule_times,
+    normalize_schedule_to_base,
+    _dedupe_schedule_items,
+    _enforce_schedule_min_gap,
+    _has_enough_schedule_anchors,
+    normalize_flexible_schedule,
+)
 
 # ---------------------------------------------------------------------------
 # Daily-routine context aggregators
@@ -3774,241 +1485,20 @@ def normalize_flexible_schedule(base_schedule, candidate_schedule):
 # ---------------------------------------------------------------------------
 
 
-def _band_label(value, low, high, low_text, mid_text, high_text):
-    """Categorize a scalar in [0, 1] into a 3-tier human-readable label."""
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return mid_text
-    if v <= low:
-        return low_text
-    if v >= high:
-        return high_text
-    return mid_text
-
-
-def _state_brief_for_prompt(agent):
-    """Return a short Chinese paragraph summarising the agent's current state.
-
-    Reads ``agent['state']`` — emotion, stress, energy, hunger,
-    fatigue_debt, time_pressure, self_control, social_need.  Each value is
-    bucketed into a coarse band so the prompt language is robust to small
-    numeric jitter.
-    """
-    state = agent.get("state", {}) if isinstance(agent, dict) else {}
-
-    def _get(key, default):
-        try:
-            return float(state.get(key, default))
-        except (TypeError, ValueError):
-            return float(default)
-
-    emotion = _get("emotion", 0.5)
-    stress = _get("stress", 0.5)
-    energy = _get("energy", 0.6)
-    hunger = _get("hunger", 0.3)
-    fatigue = _get("fatigue_debt", 0.3)
-    time_pressure = _get("time_pressure", 0.3)
-    self_control = _get("self_control", 0.6)
-    social_need = _get("social_need", 0.5)
-
-    lines = [
-        f"- 情绪{_band_label(emotion, 0.4, 0.65, '偏低落', '中性', '偏积极')}"
-        f"（emotion={emotion:.2f}），"
-        f"压力{_band_label(stress, 0.4, 0.65, '较低', '中等', '偏高')}"
-        f"（stress={stress:.2f}）",
-        f"- 体力{_band_label(energy, 0.35, 0.7, '不足', '一般', '充沛')}"
-        f"（energy={energy:.2f}），"
-        f"饥饿{_band_label(hunger, 0.3, 0.65, '轻微', '一般', '明显')}"
-        f"（hunger={hunger:.2f}）",
-        f"- 疲劳{_band_label(fatigue, 0.35, 0.65, '尚可', '一般', '较重')}"
-        f"（fatigue_debt={fatigue:.2f}），"
-        f"时间紧迫感{_band_label(time_pressure, 0.35, 0.65, '较低', '中等', '偏高')}"
-        f"（time_pressure={time_pressure:.2f}）",
-        f"- 自控{_band_label(self_control, 0.4, 0.65, '偏弱', '一般', '偏强')}"
-        f"（self_control={self_control:.2f}），"
-        f"社交需求{_band_label(social_need, 0.4, 0.65, '较低', '中等', '偏高')}"
-        f"（social_need={social_need:.2f}）",
-    ]
-    return "当前身心状态：\n" + "\n".join(lines)
-
-
-def _yesterday_recap_for_prompt(agent, day, top_k=3):
-    """Surface 2-3 salient events from the previous simulation day.
-
-    When ``day`` is None or the agent has no prior-day episodes, returns a
-    short fallback line so the prompt section never becomes ``"None"`` or
-    an empty bullet list.
-    """
-    if day is None:
-        return "昨日关键回顾：昨日为模拟首日，无可参考回顾。"
-    try:
-        prev_day = int(day) - 1
-    except (TypeError, ValueError):
-        return "昨日关键回顾：昨日为模拟首日，无可参考回顾。"
-    if prev_day < 1:
-        return "昨日关键回顾：昨日为模拟首日，无可参考回顾。"
-
-    episodes = agent.get("episodes", []) if isinstance(agent, dict) else []
-    prev_eps = [
-        ep for ep in episodes
-        if isinstance(ep, dict) and int(ep.get("day", 0) or 0) == prev_day
-    ]
-    if not prev_eps:
-        return f"昨日关键回顾（Day {prev_day}）：昨日没有显著事件，整体平稳。"
-
-    prev_eps.sort(
-        key=lambda e: float(e.get("decayed_salience", e.get("salience", 0.0)) or 0.0),
-        reverse=True,
-    )
-    selected = prev_eps[: max(1, int(top_k))]
-    lines = []
-    for ep in selected:
-        time_str = str(ep.get("time", "")).strip() or "??:??"
-        activity = str(ep.get("final_activity", "")).strip() or "—"
-        action = str(ep.get("action", "")).strip()
-        reflection = str(ep.get("reflection", "")).strip()
-        line = f"- {time_str} {activity}"
-        if action:
-            line += f" → {action}"
-        if reflection:
-            # Reflections can be long — trim to keep the prompt focused.
-            line += f"（{reflection[:40]}）"
-        lines.append(line)
-    return f"昨日关键回顾（Day {prev_day}）：\n" + "\n".join(lines)
-
-
-def _recent_life_events_for_prompt(agent, day, max_age_days=2):
-    """Return a section describing recent triggered life events.
-
-    Reads ``output/life_events/events.json`` via :func:`list_life_events`
-    (no extra state on the agent dict).  Filters to events that:
-      * have been consumed (``status == "consumed"``) — i.e. actually fired,
-      * triggered within the last ``max_age_days`` simulation days,
-      * either target this agent or are unscoped (``agent_ids`` empty).
-    """
-    if day is None:
-        return "近期突发事件：无。"
-    try:
-        current_day = int(day)
-    except (TypeError, ValueError):
-        return "近期突发事件：无。"
-
-    try:
-        all_events = list_life_events(include_consumed=True)
-    except (OSError, ValueError):
-        return "近期突发事件：无。"
-
-    agent_id = agent.get("id") if isinstance(agent, dict) else None
-    try:
-        agent_id_int = int(agent_id) if agent_id is not None else None
-    except (TypeError, ValueError):
-        agent_id_int = None
-
-    relevant = []
-    for ev in all_events:
-        if not isinstance(ev, dict):
-            continue
-        if ev.get("status") != "consumed":
-            continue
-        try:
-            triggered_day = int(ev.get("triggered_day", 0))
-        except (TypeError, ValueError):
-            continue
-        if triggered_day <= 0:
-            continue
-        if triggered_day > current_day or current_day - triggered_day > int(max_age_days):
-            continue
-        if agent_id_int is not None:
-            agent_ids = ev.get("agent_ids") or []
-            if agent_ids and agent_id_int not in [
-                int(x) for x in agent_ids if isinstance(x, (int, float, str)) and str(x).strip().lstrip("-").isdigit()
-            ]:
-                continue
-        relevant.append(ev)
-
-    if not relevant:
-        return "近期突发事件：无。"
-
-    relevant.sort(
-        key=lambda e: (int(e.get("triggered_day", 0)), str(e.get("triggered_time", ""))),
-        reverse=True,
-    )
-    lines = []
-    for ev in relevant[:3]:
-        title = str(ev.get("title") or "突发事件").strip()
-        desc = str(ev.get("description") or "").strip()
-        try:
-            severity = float(ev.get("severity", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            severity = 0.0
-        trig_day = int(ev.get("triggered_day", 0))
-        trig_time = str(ev.get("triggered_time", "")).strip()
-        lines.append(
-            f"- Day {trig_day} {trig_time} {title}（严重度 {severity:.2f}）：{desc[:80]}".rstrip()
-        )
-    return "近期突发事件（仍在影响今天）：\n" + "\n".join(lines)
-
-
-def _social_pulse_for_prompt(agent, day, agents_by_id=None, max_age_days=2, top_k=3):
-    """Pick the top relationships that had recent interactions.
-
-    Ranks by ``relationship_weight`` (already in human_realism), filtered to
-    ``last_interaction_day >= day - max_age_days``.  If ``agents_by_id`` is
-    provided, we resolve names for friendlier prompt text.
-    """
-    if day is None:
-        return "近期社交脉动：无。"
-    try:
-        current_day = int(day)
-    except (TypeError, ValueError):
-        return "近期社交脉动：无。"
-
-    relationships = agent.get("relationships", {}) if isinstance(agent, dict) else {}
-    if not isinstance(relationships, dict) or not relationships:
-        return "近期社交脉动：无。"
-
-    candidates = []
-    for raw_id, item in relationships.items():
-        if not isinstance(item, dict):
-            continue
-        try:
-            last_day = int(item.get("last_interaction_day", item.get("last_contact_day", 0)))
-        except (TypeError, ValueError):
-            continue
-        if current_day - last_day > int(max_age_days):
-            continue
-        try:
-            weight = float(relationship_weight(agent, raw_id))
-        except (TypeError, ValueError):
-            weight = 0.0
-        candidates.append((weight, raw_id, item, last_day))
-
-    if not candidates:
-        return "近期社交脉动：无。"
-
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    lines = []
-    for weight, raw_id, item, last_day in candidates[: max(1, int(top_k))]:
-        name = None
-        if isinstance(agents_by_id, dict):
-            peer = agents_by_id.get(raw_id) or agents_by_id.get(str(raw_id))
-            if peer is None:
-                try:
-                    peer = agents_by_id.get(int(raw_id))
-                except (TypeError, ValueError):
-                    peer = None
-            if isinstance(peer, dict):
-                name = peer.get("name")
-        label = name if name else f"邻居 #{raw_id}"
-        closeness = float(item.get("closeness", 0.5))
-        trust = float(item.get("trust", 0.5))
-        friction = float(item.get("friction", 0.5))
-        lines.append(
-            f"- {label}（亲密 {closeness:.2f}，信任 {trust:.2f}，"
-            f"摩擦 {friction:.2f}，最近互动 Day {last_day}）"
-        )
-    return "近期社交脉动：\n" + "\n".join(lines)
+# --------------------------------------------------------------------
+# Prompt-fragment builders — extracted to ``gaworld.sim._prompt``.
+# Re-exported here because tests at ``tests/test_daily_routine_context.py``
+# call them via direct attribute access on the sim module
+# (``sim._state_brief_for_prompt(...)`` etc.). New code should import
+# from ``gaworld.sim._prompt`` directly.
+# --------------------------------------------------------------------
+from gaworld.sim._prompt import (  # noqa: E402
+    _band_label,
+    _state_brief_for_prompt,
+    _yesterday_recap_for_prompt,
+    _recent_life_events_for_prompt,
+    _social_pulse_for_prompt,
+)
 
 
 def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
@@ -4169,30 +1659,12 @@ def generate_schedule(agent):
         return ensure_sleep_in_schedule(agent, schedule)
     return ensure_sleep_in_schedule(agent, _heuristic_schedule(agent))
 
-def _extract_json_block(text):
-    block_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
-    if block_match:
-        return block_match.group(1)
-    inline_match = re.search(r"\{.*\}", text, re.S)
-    return inline_match.group(0) if inline_match else ""
-
-def _parse_schedule_change(text):
-    json_blob = _extract_json_block(text)
-    if not json_blob:
-        return {}
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    change = raw.get("change")
-    if isinstance(change, str):
-        change = change.strip().lower() in ("true", "yes", "y", "1", "是", "需要", "改变", "变更")
-    change = bool(change)
-    activity = str(raw.get("activity", "")).strip()
-    reason = str(raw.get("reason", "")).strip()
-    return {"change": change, "activity": activity, "reason": reason}
+# --------------------------------------------------------------------
+# JSON block extractor and schedule-change parser — extracted to
+# ``gaworld.sim._schedule`` (siblings of the existing
+# ``_extract_json_array_block``).
+# --------------------------------------------------------------------
+from gaworld.sim._schedule import _extract_json_block, _parse_schedule_change  # noqa: E402
 
 def _routine_change_probability(agent, env_events, policy_desc):
     if not ROUTINE_CHANGE_ENABLED:
@@ -4581,565 +2053,37 @@ def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, 
         return scheduled_activity, parsed.get("reason", ""), False
     return activity, parsed.get("reason", ""), True
 
-def _parse_action_space(text, activities):
-    json_blob = _extract_json_block(text)
-    if not json_blob:
-        return {}
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    action_space = {}
-    for activity in activities:
-        acts = raw.get(activity, [])
-        if not isinstance(acts, list):
-            continue
-        cleaned = [str(a).strip() for a in acts if str(a).strip()]
-        if cleaned:
-            action_space[activity] = cleaned
-    return action_space
-
-def _parse_location_bias(text, activities):
-    json_blob = _extract_json_block(text)
-    if not json_blob:
-        return {}
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    bias_map = {}
-    for activity in activities:
-        item = raw.get(activity, {})
-        if not isinstance(item, dict):
-            continue
-        prefer = item.get("prefer", [])
-        avoid = item.get("avoid", [])
-        if not isinstance(prefer, list):
-            prefer = []
-        if not isinstance(avoid, list):
-            avoid = []
-        cleaned_prefer = [str(a).strip() for a in prefer if str(a).strip()]
-        cleaned_avoid = [str(a).strip() for a in avoid if str(a).strip()]
-        if cleaned_prefer or cleaned_avoid:
-            bias_map[activity] = {
-                "prefer": cleaned_prefer,
-                "avoid": cleaned_avoid,
-            }
-    return bias_map
-
-def _parse_policy_effect(text):
-    json_blob = _extract_json_block(text)
-    if not json_blob:
-        return {}
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    allowed = {
-        "emotion",
-        "stress",
-        "econ_security",
-        "city_identity",
-        "policy_sensitivity",
-        "platform_dependence",
-        "risk_preference",
-        "voice_propensity",
-        "mobility_intent",
-    }
-    effect = {}
-    for k in allowed:
-        if k in raw:
-            try:
-                effect[k] = float(raw[k])
-            except (TypeError, ValueError):
-                continue
-    return effect
-
-def _llm_generate_actions(agent, activities, seed_actions=None):
-    profile_text = "\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"年龄：{agent.get('age', '')}",
-        f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
-        f"日常生活与习惯：{agent.get('daily_life', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
-    memory_context = " ".join(activities)
-    memory_hits = retrieve_relevant_memories(agent, memory_context, max_items=VECTOR_DB_TOP_K)
-    memory_hint = _format_memory_hint(memory_hits)
-    seed_text = ""
-    if seed_actions:
-        seed_text = f"\n已有动作参考（可改写、扩展、去重）：\n{json.dumps(seed_actions, ensure_ascii=False, indent=2)}"
-    prompt = f"""
-你是城市生活模拟器的动作生成器。请基于角色资料，为每个活动生成具体动作。
-角色资料：
-{profile_text}
-活动列表：{", ".join(activities)}
-可参考的近期记忆：{memory_hint}
-要求：
-1) 每个活动给出 5-10 个动作，中文短语。
-2) 动作要符合角色职业、性格与生活习惯。
-3) 每个活动尽量同时覆盖：推进型、维持型、回避型、社交/协调型动作。
-4) 仅输出 JSON 对象，键为活动名，值为动作列表，不要输出其他文字。
-{seed_text}
-"""
-    response = call_llm(prompt, task="actions", agent_id=agent["id"])
-    action_space = _parse_action_space(response, activities)
-    missing = [a for a in activities if a not in action_space]
-    if missing:
-        retry_prompt = f"""
-请只为以下活动补全动作，仍然严格输出 JSON。
-角色资料：
-{profile_text}
-活动列表：{", ".join(missing)}
-每个活动 5-10 个动作，中文短语。
-"""
-        retry_response = call_llm(retry_prompt, task="actions", agent_id=agent["id"])
-        retry_actions = _parse_action_space(retry_response, missing)
-        for activity, acts in retry_actions.items():
-            action_space[activity] = acts
-    balanced = {}
-    for activity in activities:
-        balanced[activity] = _ensure_behavioral_action_balance(activity, action_space.get(activity, []))
-    return balanced
-
-def _llm_generate_location_bias(agent, location, city_map_text, action_space):
-    activities = list(action_space.keys())
-    if not activities:
-        return {}
-    profile_text = "\n".join([
-        f"姓名：{agent.get('name', '')}",
-        f"年龄：{agent.get('age', '')}",
-        f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
-        f"日常生活与习惯：{agent.get('daily_life', '')}",
-        f"价值观与公共事务态度：{agent.get('values', '')}",
-    ])
-    actions_text = json.dumps(action_space, ensure_ascii=False, indent=2)
-    prompt = f"""
-你是城市生活模拟器的“地点动作偏好”生成器。请基于角色资料、地点与城市地图，
-为每个活动在该地点给出“偏好动作/避免动作”。
-
-角色资料：
-{profile_text}
-
-地点：{location}
-
-城市地图（完整）：
-{city_map_text}
-
-活动与可选动作（仅可从下列动作中选择）：
-{actions_text}
-
-要求：
-1) 仅输出 JSON 对象，键为活动名，值为对象：{{"prefer":[...], "avoid":[...]}}。
-2) prefer/avoid 中的动作必须来自给定动作列表，使用完全一致的动作文本。
-3) 每个活动 0-5 个 prefer，0-5 个 avoid，允许为空数组。
-4) 不要输出其他文字。
-"""
-    response = call_llm(prompt, task="location_actions", agent_id=agent["id"])
-    return _parse_location_bias(response, activities)
-
-def get_location_action_bias(agent, location, city_map_text, action_space):
-    if not city_map_text:
-        return {}
-    bias_cache = agent.setdefault("location_action_bias", {})
-    cached = bias_cache.get(location)
-    if isinstance(cached, dict):
-        return cached
-    bias = _llm_generate_location_bias(agent, location, city_map_text, action_space)
-    bias_cache[location] = bias
-    save_agent_location_action_bias(agent["id"], bias_cache)
-    return bias
-
-def generate_actions(agent, schedule):
-    activities = sorted({activity for _, activity in schedule})
-    return _llm_generate_actions(agent, activities)
-
-def build_action_space_for_agent(agent, base_actions):
-    activities = list(base_actions.keys())
-    refined_actions = _llm_generate_actions(agent, activities, seed_actions=base_actions)
-    action_space = {k: list(v) for k, v in base_actions.items()}
-    for activity, acts in refined_actions.items():
-        action_space.setdefault(activity, [])
-        for act in acts:
-            if act not in action_space[activity]:
-                action_space[activity].append(act)
-    return action_space
-
-DEFAULT_ACTIONS = {
-    "工作": "继续处理手头工作",
-    "时间": "发呆",
-}
-
-SLEEP_KEYWORDS = ["睡前", "睡觉", "睡眠", "入睡", "就寝"]
-
-def is_sleep_activity(activity):
-    return any(k in activity for k in SLEEP_KEYWORDS)
-
-def fallback_action(activity):
-    for k, v in DEFAULT_ACTIONS.items():
-        if k in activity:
-            return v
-    return "继续当前活动"
-
-def ensure_action_space_for_activity(agent, action_space, activity):
-    if activity in action_space:
-        return False
-    generated = _llm_generate_actions(agent, [activity])
-    acts = generated.get(activity, [])
-    if not acts:
-        acts = [fallback_action(activity)]
-    action_space[activity] = acts
-    return True
-
-def choose_action(
-    agent,
-    activity,
-    action_space,
-    context=None,
-    location_bias=None,
-    location=None,
-    time_str=None,
-    recall_context=None,
-    decision_refs=None,
-    return_debug=False,
-):
-    if is_sleep_activity(activity):
-        result = "睡觉"
-        if return_debug:
-            return result, {
-                "decision_driver": "恢复需求",
-                "commitment_level": _activity_commitment_level(activity),
-                "scores": {result: {"weight": 1.0, "components": {}}},
-            }
-        return result
-    options = action_space.get(activity, [])
-
-    if not options:
-        result = fallback_action(activity)
-        if return_debug:
-            return result, {
-                "decision_driver": "动作空间缺省",
-                "commitment_level": _activity_commitment_level(activity),
-                "scores": {result: {"weight": 1.0, "components": {}}},
-            }
-        return result
-
-    weights = []
-    score_map = {}
-    s = agent["state"]
-    recent_actions = []
-    memory_hits = []
-    if STATEFUL:
-        recent_actions = load_recent_actions(agent["id"], max_items=6)
-    refs = decision_refs or {}
-    transient_thought = refs.get("transient_thought") if isinstance(refs.get("transient_thought"), dict) else {}
-    thought_intensity = float(transient_thought.get("intensity", 0.0) or 0.0)
-    thought_source = str(transient_thought.get("source", ""))
-    thought_kind = str(transient_thought.get("kind", ""))
-    thought_suggestion = str(transient_thought.get("activity_suggestion", "")).strip()
-    use_location_time = bool(refs.get("location_time_relevant", True))
-    default_social_relevant = _activity_matches_keywords(
-        activity,
-        ["社交", "联系", "沟通", "拜访", "会面", "聚会", "聊天", "会议", "组会", "讨论", "协作", "家人", "朋友"],
-    )
-    if not default_social_relevant:
-        snapshot = _social_relationship_snapshot(agent)
-        default_social_relevant = snapshot["obligation"] > 0.65 or snapshot["friction"] > 0.65
-    use_social_network = bool(refs.get("social_network_relevant", default_social_relevant))
-    if isinstance(recall_context, dict):
-        memory_hits = list(recall_context.get("hits", []) or [])
-    elif context or activity:
-        query = context if context else activity
-        memory_hits = evoke_memory(
-            agent,
-            "action",
-            activity,
-            query,
-            (location or "") if use_location_time else "",
-            (time_str or "") if use_location_time else "",
-            context_labels=_build_recall_context_labels(
-                agent,
-                activity=activity,
-                time_str=time_str if use_location_time else "",
-                location=location if use_location_time else "",
-                commitment_level=_activity_commitment_level(activity),
-            ),
-        ).get("hits", [])
-    bias = (location_bias or {}).get(activity, {})
-    prefer_set = set(bias.get("prefer", [])) if isinstance(bias, dict) and use_location_time else set()
-    avoid_set = set(bias.get("avoid", [])) if isinstance(bias, dict) and use_location_time else set()
-    habits = agent.get("habits", {}) if HUMAN_REALISM_ENABLED else {}
-    behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
-    inertia_weight = float(behavior_cfg.get("inertia_weight", 0.25))
-    decision_noise = float(behavior_cfg.get("decision_noise", 0.18))
-    avoidance_bonus_scale = float(behavior_cfg.get("avoidance_bonus_scale", 1.1))
-    need_weights = behavior_cfg.get("need_weights", {}) if isinstance(behavior_cfg, dict) else {}
-    energy_w = float(need_weights.get("energy", 0.45))
-    hunger_w = float(need_weights.get("hunger", 0.30))
-    social_w = float(need_weights.get("social_need", 0.25))
-    context_key = build_context_key(time_str or "", location or "", activity) if use_location_time else ""
-    if use_location_time:
-        habit_entry = habits.get(context_key, {}) if isinstance(habits, dict) else {}
-    else:
-        habit_entry = _same_activity_habit_entry(agent, activity)
-    preferred_habit_action = str(habit_entry.get("preferred_action", ""))
-    habit_strength = float(habit_entry.get("strength", 0.0))
-    energy = float(s.get("energy", 0.75))
-    hunger = float(s.get("hunger", 0.25))
-    social_need = float(s.get("social_need", 0.4))
-    fatigue = float(s.get("fatigue_debt", 0.20))
-    self_control = float(s.get("self_control", 0.60))
-    time_pressure = float(s.get("time_pressure", 0.25))
-    commitment_level = _activity_commitment_level(activity)
-    commitment_weight = _commitment_weight(commitment_level)
-    relation_snapshot = _social_relationship_snapshot(agent) if use_social_network else {
-        "obligation": 0.5,
-        "friction": 0.5,
-        "support": 0.5,
-    }
-    driver_labels = {
-        "stress_avoidance": "压力驱动",
-        "low_mood_avoidance": "低情绪回避",
-        "growth_drive": "成长动机",
-        "night_reflection": "夜间反思惯性",
-        "recent_repeat": "近期惯性",
-        "memory_recall": "记忆牵引",
-        "memory_penalty": "负面记忆提醒",
-        "memory_support": "正面记忆支撑",
-        "location_prefer": "地点偏好",
-        "location_avoid": "地点阻力",
-        "habit": "习惯惯性",
-        "activity_inertia": "延续当前节奏",
-        "action_inertia": "重复上一步做法",
-        "energy_need": "体力不足",
-        "hunger_need": "饥饿驱动",
-        "social_need": "社交需求",
-        "solitude_need": "想独处恢复",
-        "fatigue_pressure": "疲劳积累",
-        "commitment_guardrail": "现实承诺约束",
-        "commitment_slack": "低承诺时段更松",
-        "self_control_penalty": "低自控偏向省力",
-        "self_control_support": "自控尚可",
-        "time_pressure_bias": "时间压力",
-        "relation_pull": "关系牵引",
-        "relation_friction": "关系摩擦",
-        "external_trigger": "外界事件触发",
-        "social_trigger": "他人/消息触发",
-        "need_trigger": "身体需求插队",
-        "task_trigger": "任务压力触发",
-        "impulse_pull": "临时冲动",
-        "suggested_by_thought": "临时念头牵引",
-        "growth_interest": "兴趣恢复",
-        "growth_skill": "技能成长",
-        "growth_career": "职业成长牵引",
-    }
-    growth_profile = agent.get("growth_profile") if INTERESTS_ENABLED else {}
-    activity_growth_matches = match_growth_items(growth_profile, activity) if growth_profile else []
-
-    for act in options:
-        components = {}
-        styles = _action_style_tags(act)
-        avoidant = "avoidant" in styles
-        social = "social" in styles
-        progress = "progress" in styles
-        maintain = "maintain" in styles
-        restorative = "restorative" in styles
-        quick = "quick" in styles
-
-        if s["stress"] > 0.7 and avoidant:
-            components["stress_avoidance"] = 1.2 * avoidance_bonus_scale
-        if s["emotion"] < 0.4 and avoidant:
-            components["low_mood_avoidance"] = 1.0 * avoidance_bonus_scale
-        if s["econ_security"] > 0.6 and progress:
-            components["growth_drive"] = 0.6
-        if activity == "睡前" and "回顾" in act:
-            components["night_reflection"] = 1.0
-
-        growth_matches = match_growth_items(growth_profile, activity, act) if growth_profile else []
-        if growth_matches:
-            for item in growth_matches:
-                priority = float(item.get("priority", 0.5) or 0.5)
-                level = float(item.get("level", 0.2) or 0.2)
-                if item.get("kind") == "skill":
-                    base = 0.28 + priority * 0.55 + max(0.0, 0.45 - level) * 0.20
-                    if progress or maintain or quick:
-                        base += 0.18
-                    if float(s.get("econ_security", 0.5)) < 0.5 or item.get("career_link"):
-                        components["growth_career"] = components.get("growth_career", 0.0) + 0.20 * priority
-                    components["growth_skill"] = components.get("growth_skill", 0.0) + base
-                else:
-                    base = 0.20 + priority * 0.45
-                    if restorative or social or avoidant:
-                        base += 0.16
-                    if float(s.get("stress", 0.5)) > 0.60 or float(s.get("fatigue_debt", 0.2)) > 0.55:
-                        base += 0.12
-                    components["growth_interest"] = components.get("growth_interest", 0.0) + base
-        elif activity_growth_matches and any(k in act for k in ["练习", "学习", "继续", "整理", "完成", "阅读"]):
-            components["growth_skill"] = components.get("growth_skill", 0.0) + 0.20
-
-        if act in recent_actions:
-            components["recent_repeat"] = 0.4
-        components["memory_recall"] = _memory_action_bias(act, memory_hits)
-        for hit in memory_hits[:4]:
-            if not isinstance(hit, dict):
-                continue
-            text = str(hit.get("text", ""))
-            if act not in text:
-                continue
-            if any(hint in text for hint in NEGATIVE_RECALL_HINTS):
-                components["memory_penalty"] = components.get("memory_penalty", 0.0) - 0.85
-            if any(hint in text for hint in POSITIVE_RECALL_HINTS):
-                components["memory_support"] = components.get("memory_support", 0.0) + 0.35
-
-        if act in prefer_set:
-            components["location_prefer"] = 1.0
-        if act in avoid_set:
-            components["location_avoid"] = -0.6
-
-        if transient_thought:
-            act_blob = f"{act} {thought_suggestion}"
-            if thought_suggestion and (thought_suggestion in act or act in thought_suggestion):
-                components["suggested_by_thought"] = 0.85 * thought_intensity
-            if thought_source in {"external_event", "policy"}:
-                if quick or progress or maintain or any(k in act_blob for k in ["查看", "调整", "确认", "避开", "改线", "通知", "消息"]):
-                    components["external_trigger"] = 0.65 * thought_intensity
-            if thought_source == "social" and (social or any(k in act_blob for k in ["回复", "联系", "消息", "沟通", "确认"])):
-                components["social_trigger"] = 0.75 * thought_intensity
-            if thought_source == "task" and (quick or progress or maintain or any(k in act_blob for k in ["待办", "处理", "确认", "完成"])):
-                components["task_trigger"] = 0.70 * thought_intensity
-            if thought_kind == "hunger" and any(k in act_blob for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]):
-                components["need_trigger"] = 0.80 * thought_intensity
-            if thought_kind == "recovery" and (restorative or any(k in act_blob for k in ["休息", "放松", "缓", "散步", "咖啡"])):
-                components["need_trigger"] = 0.70 * thought_intensity
-            if thought_source == "impulse" and (avoidant or quick or restorative or social):
-                components["impulse_pull"] = 0.65 * thought_intensity
-
-        if HUMAN_REALISM_ENABLED:
-            if act == preferred_habit_action:
-                components["habit"] = habit_strength * 0.9
-            if agent.get("last_activity") == activity:
-                components["activity_inertia"] = inertia_weight
-            if agent.get("last_action") == act:
-                components["action_inertia"] = inertia_weight * 0.6
-
-            if energy < 0.35 and restorative:
-                components["energy_need"] = (0.35 - energy) * 2.4 * energy_w
-            if hunger > 0.65 and any(k in act for k in ["吃", "买菜", "做饭", "餐", "饭"]):
-                components["hunger_need"] = (hunger - 0.65) * 2.4 * hunger_w
-            if social_need > 0.65 and social:
-                components["social_need"] = (social_need - 0.65) * 2.4 * social_w
-            if social_need < 0.25 and any(k in act for k in ["独处", "安静", "放空", "回家"]):
-                components["solitude_need"] = (0.25 - social_need) * 2.0 * social_w
-            if fatigue > 0.60 and (avoidant or restorative):
-                components["fatigue_pressure"] = (fatigue - 0.60) * 2.6 * avoidance_bonus_scale
-
-            if commitment_level == "high":
-                if progress or maintain:
-                    components["commitment_guardrail"] = commitment_weight * 0.75
-                elif avoidant:
-                    components["commitment_guardrail"] = -commitment_weight * 0.9
-            elif commitment_level == "medium":
-                if progress or social:
-                    components["commitment_guardrail"] = commitment_weight * 0.55
-                elif avoidant:
-                    components["commitment_guardrail"] = -commitment_weight * 0.35
-            else:
-                if avoidant or restorative:
-                    components["commitment_slack"] = commitment_weight * 0.55
-
-            if self_control < 0.40 and avoidant:
-                components["self_control_penalty"] = (0.40 - self_control) * 2.8
-            elif self_control > 0.70 and progress:
-                components["self_control_support"] = (self_control - 0.70) * 1.6
-
-            if time_pressure > 0.60:
-                if quick or progress or maintain:
-                    components["time_pressure_bias"] = (time_pressure - 0.60) * 2.0
-                elif social and not quick:
-                    components["time_pressure_bias"] = -(time_pressure - 0.60) * 1.2
-
-            if social:
-                relation_pull = (
-                    (relation_snapshot["obligation"] - 0.5) * 1.8
-                    + (relation_snapshot["support"] - 0.5) * 0.9
-                    - max(0.0, relation_snapshot["friction"] - 0.5) * 1.5
-                )
-                components["relation_pull"] = relation_pull
-            if relation_snapshot["friction"] > 0.65 and any(k in act for k in ["见面", "拜访", "聚会"]):
-                components["relation_friction"] = -(relation_snapshot["friction"] - 0.65) * 1.8
-
-        total_weight = 1.0 + sum(components.values())
-        if HUMAN_REALISM_ENABLED and decision_noise > 0:
-            total_weight *= random.uniform(max(0.5, 1.0 - decision_noise), 1.0 + decision_noise)
-        total_weight = max(total_weight, 0.01)
-        weights.append(total_weight)
-        score_map[act] = {
-            "weight": round(total_weight, 4),
-            "components": {k: round(v, 4) for k, v in components.items() if abs(v) > 0.0001},
-            "styles": sorted(styles),
-        }
-    impulse_choice = False
-    if transient_thought and SPONTANEITY_ENABLED:
-        random_action_chance = SPONTANEITY_RANDOM_ACTION_CHANCE + thought_intensity * 0.12
-        if thought_source == "impulse":
-            random_action_chance += 0.08
-        if random.random() < min(0.40, random_action_chance):
-            impulse_pool = []
-            for option in options:
-                option_styles = _action_style_tags(option)
-                if thought_source == "impulse" and option_styles & {"avoidant", "quick", "restorative", "social"}:
-                    impulse_pool.append(option)
-                elif thought_source == "social" and "social" in option_styles:
-                    impulse_pool.append(option)
-                elif thought_kind == "recovery" and "restorative" in option_styles:
-                    impulse_pool.append(option)
-                elif thought_kind == "hunger" and any(k in option for k in ["吃", "餐", "饭", "菜", "外卖", "食堂"]):
-                    impulse_pool.append(option)
-                elif thought_source in {"external_event", "policy", "task"} and option_styles & {"quick", "progress", "maintain"}:
-                    impulse_pool.append(option)
-            choice = random.choice(impulse_pool or options)
-            impulse_choice = True
-        else:
-            choice = random.choices(options, weights=weights, k=1)[0]
-    else:
-        choice = random.choices(options, weights=weights, k=1)[0]
-    if not return_debug:
-        return choice
-    chosen = score_map.get(choice, {})
-    components = chosen.get("components", {})
-    if impulse_choice:
-        if thought_source == "impulse":
-            driver = "临时冲动"
-        elif thought_source in {"external_event", "policy"}:
-            driver = "外界事件触发"
-        elif thought_source == "social":
-            driver = "他人/消息触发"
-        else:
-            driver = "临时念头"
-    elif components:
-        best_key, best_value = max(
-            components.items(),
-            key=lambda item: (item[1] > 0, abs(item[1])),
-        )
-        if best_value > 0:
-            driver = driver_labels.get(best_key, "多重因素")
-        else:
-            driver = f"{driver_labels.get(best_key, '约束因素')}压住了其他选择"
-    else:
-        driver = "惯性延续"
-    return choice, {
-        "decision_driver": driver,
-        "commitment_level": commitment_level,
-        "scores": score_map,
-    }
+# --------------------------------------------------------------------
+# Action choice + action-space generation — extracted to
+# ``gaworld.sim._action`` in run-split-2.  12 names total: 3 pure JSON
+# parsers, 5 LLM-call helpers (``_llm_generate_actions``,
+# ``_llm_generate_location_bias``, ``get_location_action_bias``,
+# ``generate_actions``, ``build_action_space_for_agent``), the
+# 340-line ``choose_action`` weighted picker, plus
+# ``fallback_action``, ``ensure_action_space_for_activity``, and
+# ``DEFAULT_ACTIONS``.
+#
+# Re-exported because tests do ``sim.choose_action(...)`` and other
+# in-file callers (``planning``, ``reflection``, ``run_simulation``,
+# ``maybe_adjust_activity``) reference these as bare names.  All
+# CONFIG knobs are now read at call time inside ``_action.py``.
+# --------------------------------------------------------------------
+from gaworld.sim._action import (  # noqa: E402, F401
+    DEFAULT_ACTIONS,
+    _llm_generate_actions,
+    _llm_generate_location_bias,
+    _parse_action_space,
+    _parse_location_bias,
+    _parse_policy_effect,
+    build_action_space_for_agent,
+    choose_action,
+    ensure_action_space_for_activity,
+    fallback_action,
+    generate_actions,
+    get_location_action_bias,
+)
+# is_sleep_activity kept for in-file callers at L1238 and L3355 (now-shifted).
+from gaworld.sim._schedule import is_sleep_activity  # noqa: E402, F401
 
 # =========================================================
 # Policy effect inference
@@ -5176,54 +2120,9 @@ def infer_event_effect(agent, event_desc, event_type="event"):
 # =========================================================
 # A. 认知模块（使用社交网络）
 # =========================================================
-def get_social_context(agent, agents_by_id):
-    neighbors = agent["social_neighbors"]
-    agent["_recent_social_partners"] = []
-    if not neighbors:
-        return "今天几乎没有与熟人互动。"
-    k = min(3, len(neighbors))
-    if HUMAN_REALISM_ENABLED:
-        sampled = []
-        pool = list(neighbors)
-        for _ in range(k):
-            weights = [max(0.01, relationship_weight(agent, n)) for n in pool]
-            pick = random.choices(pool, weights=weights, k=1)[0]
-            sampled.append(pick)
-            pool = [n for n in pool if n != pick]
-            if not pool:
-                break
-    else:
-        sampled = random.sample(neighbors, k)
-    agent["_recent_social_partners"] = sampled
-    fragments = []
-    relationships = agent.get("relationships", {})
-    for neighbor_id in sampled:
-        name = agents_by_id.get(neighbor_id, {}).get("name", str(neighbor_id))
-        rel = relationships.get(str(neighbor_id), {}) if isinstance(relationships, dict) else {}
-        closeness = float(rel.get("closeness", 0.5))
-        obligation = float(rel.get("obligation", 0.5))
-        friction = float(rel.get("friction", 0.5))
-        if friction > 0.62:
-            fragments.append(f"{name}最近让你有些顾虑，想到对方时会有一点摩擦感")
-        elif obligation > 0.65:
-            fragments.append(f"{name}最近可能等你回应或配合，这会带来一点责任压力")
-        elif closeness > 0.65:
-            fragments.append(f"{name}会给你支持感，你更容易想到和对方保持联系")
-        else:
-            fragments.append(f"{name}的近况会偶尔分散你的注意力")
-    return "；".join(fragments) if fragments else "今天几乎没有与熟人互动。"
-
-def perception(agent, time_str, social_context, env_context, policy_event):
-    prompt = f"""
-你是{agent['name']}。
-现在是 {time_str}。
-你感知到的社交环境是：{social_context}
-自然与社会环境：{env_context if env_context else "无特殊变化"}
-政策环境：{policy_event if policy_event else "无特殊变化"}
-
-请描述你此刻对环境、他人和制度的感知。（1-2句）
-"""
-    return call_llm(prompt, task="perception", agent_id=agent["id"])
+# get_social_context + perception moved to gaworld.sim._cognition during
+# the S3 refactor (unblocked once human_realism + llm_providers migrated).
+from gaworld.sim._cognition import get_social_context, perception  # noqa: E402
 
 def planning(agent, perception_text, recall_context=None, decision_refs=None):
     if not isinstance(recall_context, dict):
@@ -5328,32 +2227,9 @@ def reflection(agent, outcome, recall_context=None):
     )
     return parsed or _fallback_reflection_struct(response)
 
-def _parse_interview(text, questions):
-    json_blob = _extract_json_array_block(text)
-    if not json_blob:
-        return []
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(raw, list):
-        return []
-    parsed = []
-    for i, item in enumerate(raw):
-        if isinstance(item, (list, tuple)) and len(item) == 2:
-            q, a = item
-        elif isinstance(item, dict):
-            q = item.get("question")
-            a = item.get("answer")
-        else:
-            continue
-        q = str(q).strip() if q else ""
-        a = str(a).strip() if a else ""
-        if not q:
-            q = questions[i] if i < len(questions) else ""
-        if q and a:
-            parsed.append({"question": q, "answer": a})
-    return parsed
+# _parse_interview moved to gaworld.sim._schedule (joins _parse_schedule
+# as another LLM-JSON list parser) during the S3 refactor.
+from gaworld.sim._schedule import _parse_interview  # noqa: E402
 
 def interview_agent(agent, questions, context=None, max_questions=6):
     if not questions:
@@ -5398,22 +2274,8 @@ def interview_agent(agent, questions, context=None, max_questions=6):
 # =========================================================
 # 社会影响（情绪扩散）
 # =========================================================
-def social_influence(agent, agents_by_id):
-    neighbors = agent["social_neighbors"]
-    if not neighbors:
-        return
-    if HUMAN_REALISM_ENABLED:
-        weights = [max(0.01, relationship_weight(agent, n)) for n in neighbors]
-        total = sum(weights)
-        if total <= 0:
-            avg_emotion = sum(agents_by_id[n]["state"]["emotion"] for n in neighbors) / len(neighbors)
-        else:
-            avg_emotion = sum(
-                agents_by_id[n]["state"]["emotion"] * w for n, w in zip(neighbors, weights)
-            ) / total
-    else:
-        avg_emotion = sum(agents_by_id[n]["state"]["emotion"] for n in neighbors) / len(neighbors)
-    agent["state"]["emotion"] += 0.1 * (avg_emotion - agent["state"]["emotion"])
+# social_influence moved to gaworld.sim._cognition during the S3 refactor.
+from gaworld.sim._cognition import social_influence  # noqa: E402
 
 # =========================================================
 # 状态更新
@@ -5545,125 +2407,16 @@ def update_state(agent):
 # =========================================================
 # B. 长期记忆
 # =========================================================
-def daily_summary(agent, logs, day=None):
-    prompt = f"""
-你是{agent['name']}。
-这是你今天经历的关键片段：
-{logs}
-
-请总结今天最重要的一条经验或感受。
-"""
-    memory = call_llm(prompt, task="summary", agent_id=agent["id"])
-    _append_memory_record(agent, memory, entry_type="memory", day=day, time_str="end_of_day")
-    return memory
-
-
-def _daily_diary_path(agent_id, day, output_dir=None):
-    base_dir = output_dir or DIARY_OUTPUT_DIR
-    return os.path.join(base_dir, f"agent_{int(agent_id)}", f"day_{int(day):03d}.md")
-
-
-def _top_day_episode_lines(agent, day, max_items=4):
-    episodes = [
-        ep for ep in agent.get("episodes", [])
-        if int(ep.get("day", ep.get("created_at_day", 0)) or 0) == int(day)
-    ]
-    episodes = sorted(
-        episodes,
-        key=lambda e: float(e.get("decayed_salience", e.get("salience", 0.0))),
-        reverse=True,
-    )[:max(1, int(max_items))]
-    lines = []
-    for ep in episodes:
-        piece = (
-            f"{ep.get('time', '')}，{ep.get('final_activity', '')}，做了{ep.get('action', '')}。"
-            f" 当时觉得：{ep.get('reflection', '')}"
-        ).strip()
-        lines.append(_compact_text(piece, max_chars=140))
-    return lines
-
-
-def _fallback_daily_diary(agent, day, day_context=None, day_memory="", consolidation_text="", intentions=None):
-    diary_date = ""
-    if isinstance(day_context, dict):
-        diary_date = " ".join(
-            str(day_context.get(key, "")).strip()
-            for key in ("sim_date", "weekday_zh", "day_type_zh")
-            if str(day_context.get(key, "")).strip()
-        ).strip()
-    episode_lines = _top_day_episode_lines(agent, day, max_items=3)
-    major = "今天整体比较平稳。" if not episode_lines else "；".join(episode_lines)
-    feelings = _compact_text(consolidation_text or day_memory or "今天的起伏让我更清楚自己在意什么。", max_chars=120)
-    plan_text = intention_text(intentions or agent.get("intentions", {}))
-    return (
-        f"# {agent.get('name', 'Agent')} 的 Day {int(day)} 日记\n\n"
-        f"{diary_date}\n\n"
-        "## 今天主要发生的事情\n"
-        f"{major}\n\n"
-        "## 今天的感想\n"
-        f"{feelings}\n\n"
-        "## 明天的计划\n"
-        f"{plan_text}\n"
-    )
-
-
-def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", consolidation_text="", intentions=None):
-    episode_lines = _top_day_episode_lines(agent, day, max_items=4)
-    intent_hint = intention_text(intentions or agent.get("intentions", {}))
-    diary_date = ""
-    if isinstance(day_context, dict):
-        diary_date = " ".join(
-            str(day_context.get(key, "")).strip()
-            for key in ("sim_date", "weekday_zh", "day_type_zh")
-            if str(day_context.get(key, "")).strip()
-        ).strip()
-    log_excerpt = _compact_text(logs, max_chars=1600)
-    prompt = f"""
-你是{agent.get('name', '某位居民')}，请以第一人称写一篇日记。
-
-日期：Day {int(day)} {diary_date}
-今天的重要经历：
-{json.dumps(episode_lines, ensure_ascii=False, indent=2)}
-
-今天的详细日志摘录：
-{log_excerpt}
-
-今天形成的长期记忆：{day_memory}
-今天的经验整合：{consolidation_text}
-明天的行为意图：{intent_hint}
-
-要求：
-1) 输出 markdown。
-2) 必须包含且只包含这三个二级标题：`## 今天主要发生的事情`、`## 今天的感想`、`## 明天的计划`。
-3) 语气像这个 agent 自己写的日记，聚焦今天最重要的几件事、真实感受、以及明天的打算。
-4) 不要写成流水账，也不要输出 JSON。
-"""
-    try:
-        response = call_llm(prompt, task="daily_diary", agent_id=agent["id"]).strip()
-    except (requests.RequestException, ValueError, RuntimeError) as exc:
-        _LOG.warning("daily_diary LLM call failed for agent %s: %s", agent.get("id"), exc)
-        response = ""
-    if not response or "## 今天主要发生的事情" not in response or "## 今天的感想" not in response or "## 明天的计划" not in response:
-        return _fallback_daily_diary(
-            agent,
-            day,
-            day_context=day_context,
-            day_memory=day_memory,
-            consolidation_text=consolidation_text,
-            intentions=intentions,
-        )
-    title = f"# {agent.get('name', 'Agent')} 的 Day {int(day)} 日记"
-    if not response.lstrip().startswith("#"):
-        response = f"{title}\n\n{response}"
-    return response
-
-
-def save_daily_diary(agent, day, diary_text, output_dir=None):
-    path = _daily_diary_path(agent["id"], day, output_dir=output_dir)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(str(diary_text or "").strip() + "\n")
-    return path
+# Daily summary + daily diary chain (the entire ``# B. 长期记忆`` banner)
+# moved to gaworld.sim._diary during the S3 refactor.
+from gaworld.sim._diary import (  # noqa: E402
+    _daily_diary_path,
+    _fallback_daily_diary,
+    _top_day_episode_lines,
+    daily_summary,
+    generate_daily_diary,
+    save_daily_diary,
+)
 
 # =========================================================
 # C. 主循环
@@ -5745,13 +2498,28 @@ def _enforce_memory_model_compat(sim_state):
         )
 
 def run_simulation():
+    # ====================================================================
+    # PHASE BANNERS — added in S3/round 4 as navigation aids for a future
+    # extraction of this orchestrator.  Each banner marks the start of a
+    # cohesive chunk; once the helpers each phase depends on have been
+    # migrated out of this file, lifting each phase into
+    # ``gaworld/sim/runner_<phase>.py`` becomes mechanical.  See
+    # ``docs/REFACTOR_PLAN.md`` for the deferred-extraction rationale.
+    # ====================================================================
+    # ----- PHASE 1: Initialise (seed, load data, build agents, restore state, growth bootstrap) -----
     if RANDOM_SEED is not None:
         try:
             seed = int(RANDOM_SEED)
             random.seed(seed)
             np.random.seed(seed)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            # Seed config is invalid — keep going unseeded, but tell the user
+            # so they don't expect reproducibility.
+            _LOG.warning(
+                "RANDOM_SEED=%r is not a valid int (%s); running unseeded.",
+                RANDOM_SEED,
+                exc,
+            )
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
     city_map_text = load_city_map_text(MAP_PATH)
@@ -5876,7 +2644,7 @@ def run_simulation():
         if seeded:
             print(f"🧱 {agent['name']} 初始化 RAG 条目：{len(seeded)}")
 
-    # === 构建社交网络 ===
+    # ----- PHASE 2: Build social network + initialise per-agent edges and weights -----
     social_net = build_social_network(agents)
     for a in agents:
         a["social_neighbors"] = social_net[a["id"]]
@@ -5912,7 +2680,11 @@ def run_simulation():
                     current_day=start_day,
                 )
             except Exception as exc:  # noqa: BLE001 - never block sim init
-                print(f"⚠️  {a.get('name', a.get('id'))} 场外社交档案初始化失败：{exc}")
+                _LOG.warning(
+                    "off-screen social roster bootstrap failed for %s: %s",
+                    a.get("name", a.get("id")),
+                    exc,
+                )
 
     for a in agents:
         if not a.get("locations"):
@@ -6001,7 +2773,9 @@ def run_simulation():
         extension_state=extension_state,
     )
 
+    # ----- PHASE 3: DAY LOOP — runs once per simulated day -----
     for day in range(start_day, start_day + SIM_DAYS):
+        # ----- PHASE 3a: Per-day setup (real-work tick, day context, schedule/routine generation, action space) -----
         if real_work_runtime is not None:
             real_work_runtime.tick_day(day)
         day_context = _resolve_day_context(
@@ -6177,6 +2951,7 @@ def run_simulation():
             extension_state=extension_state,
         )
 
+        # ----- PHASE 3b: STEP LOOP — the megaloop, runs once per timeline tick (default 10-30 min steps) -----
         for time_index, time_str in enumerate(timeline):
             step_minutes = _timeline_step_minutes(timeline, time_index)
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
@@ -7003,6 +3778,7 @@ def run_simulation():
             if SIMULATE_REALTIME and sleep_step > 0:
                 time.sleep(sleep_step)
 
+        # ----- PHASE 3c: Day-end consolidation (memory review, daily summary, diary, episode persist) -----
         for agent in agents:
             day_consolidation_text = ""
             if HUMAN_REALISM_ENABLED:
@@ -7120,12 +3896,6 @@ def _parse_question_list(value):
     if isinstance(value, list):
         return [str(v).strip() for v in value if str(v).strip()]
     return [v.strip() for v in str(value).splitlines() if v.strip()]
-
-def _sanitize_extra_text(text, max_chars=2000):
-    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
-    if len(cleaned) > max_chars:
-        cleaned = cleaned[:max_chars]
-    return cleaned
 
 def _sanitize_timestamp_text(timestamp):
     if timestamp is None:

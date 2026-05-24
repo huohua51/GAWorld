@@ -62,24 +62,36 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 
 ## 项目结构
 
-- `generative_city_sim.py`：主仿真器和 CLI 入口
-- `config.py`：运行配置
-- `llm_providers.py`：模型 provider 封装和路由逻辑
-- `environment.py`：环境事件系统
-- `intervention_policy.py`：轻量推荐、曝光控制、立场和风险指标
-- `human_realism.py`：真实感增强、习惯、意图、记忆整合
+运行时代码已迁移到 `gaworld/` 包下。原本 11 个顶层模块现在是
+`sys.modules` 别名指向新位置 —— `from memory_store import X` 仍可工作，
+但新代码请使用 `from gaworld.memory.store import X` 这种规范路径。
+
+- `generative_city_sim.py`：主仿真器 + CLI 入口（正在逐步拆分）
+- `config.py`：CONFIG 兼容 shim，重新导出 `gaworld.settings.CONFIG`
+- `gaworld/settings/`：分层配置片段（LLM、运行时、行为、经济、环境、集成、覆盖项）
+- `gaworld/core/`：类型化 `Agent` dataclass 适配层和并发 `parallel_map` 执行器
+- `gaworld/llm/providers.py`：provider 封装（Ollama / OpenAI 兼容 / Anthropic 兼容）和 `LLM_ROUTER` 分派器
+- `gaworld/memory/store.py`：智能体记忆、向量库、日程/动作/位置缓存、日志持久化
+- `gaworld/world/city_map.py`：图结构、路线、出行成本、天气/高峰时段效应、基于类别的空间查询
+- `gaworld/env/system.py`：内置 `EnvironmentSystem`（天气、事件、干预 feed）和 `RemoteEnvironmentClient`
+- `gaworld/cognition/realism.py`：真实感辅助 —— 意图、习惯、关系更新/权重、记忆整合
+- `gaworld/behavior/dynamic.py`：动态行为系统（InterruptEngine、SpontaneityEngine、社交链、环境事件连锁反应）
+- `gaworld/social/network.py`：schema 迁移、离线 ghost、role 感知衰减、Dunbar 分层
+- `gaworld/economy/finance.py`：个人财务 + 宏观周期（个税、社保、恩格尔系数消费、投资、冲击事件）
+- `gaworld/policy/intervention.py`：PolicySim 风格的推荐 / 曝光干预指标、立场、风险
+- `gaworld/events/life.py`：生活事件调度（生日、生病、换工作、离线 ghost 事件队列）
+- `gaworld/distributed/comm.py`：多机 relay 客户端
 - `gaworld/interests.py`：兴趣爱好与技能成长画像推导、持久化、匹配和进度更新
-- `economy_module.py`：真实个人经济模块（个税、社保、恩格尔系数消费、投资、宏观周期）
-- `dynamic_behavior.py`：动态行为系统（即兴行为、社交链、需求中断、环境响应、日程插入）
-- `memory_store.py`：记忆持久化和向量库辅助
-- `city_map_system.py`：地图图结构、路线、出行和 tile map
-- `simulation_visualizer.py`：地图回放 trace 输出
-- `gaworld/apps/dashboard_server.py`：本地 dashboard 后端
+- `gaworld/work/`：real-work 任务系统（runtime、worker pool、queue、market、router、adapters）
+- `gaworld/apps/`：本地服务器（dashboard、外部环境、分布式 relay）
+- `gaworld/io/`：HTTP guard（含重试/退避）和 HTML 抽取
+- `gaworld/sim/`：从主仿真器拆分出来的子模块 —— `_utils`、`agents_loader`、`_schedule`、`_location`、`_cognition`、`_rag`、`_diary`（随着主文件继续瘦身会有更多）
+- `simulation_visualizer.py`、`avatar_generator.py`、`generate_agent_rag_seed.py`、`analyze_wellbeing.py`：独立 CLI 工具（不被运行时 import）
 - `data/hangzhou_agents_state_init.csv`：智能体初始状态
 - `data/hangzhou_profiles_with_names.md`：智能体画像
 - `data/citymap.md`：城市地图数据
 - `scripts/`：启动脚本和开发工具
-- `docs/`：教程、集成说明和设计文档
+- `docs/`：教程、集成说明、设计文档、重构记录（`REFACTOR_PLAN.md`、`REFACTOR_BASELINE.md`、`PROJECT_STRUCTURE.md`）
 - `site/dashboard/`：dashboard 前端
 - `site/simviz/`：轨迹回放页面
 - `output/`：生成结果

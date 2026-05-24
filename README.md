@@ -65,24 +65,38 @@ Across days, the simulator accumulates:
 
 ## Project Structure
 
-- `generative_city_sim.py`: main simulator and CLI entrypoint
-- `config.py`: runtime configuration
-- `llm_providers.py`: provider wrappers and task routing
-- `environment.py`: environment event system
-- `intervention_policy.py`: lightweight recommendation, exposure control, stance, and risk metrics
-- `human_realism.py`: realism helpers, intentions, habits, memory consolidation
-- `gaworld/interests.py`: interest and skill-growth profile derivation, persistence, matching, and progress updates
-- `economy_module.py`: realistic personal finance layer (tax, social insurance, Engel spending, investment, macro cycles)
-- `dynamic_behavior.py`: dynamic behavior system (spontaneous urges, social chains, need interrupts, environment responses, schedule insertion)
-- `memory_store.py`: memory persistence and vector DB helpers
-- `city_map_system.py`: graph, routes, travel, and tile map generation
-- `simulation_visualizer.py`: trace writer for playback
-- `gaworld/apps/dashboard_server.py`: local dashboard backend
+Runtime code lives under the `gaworld/` package. Eleven legacy
+top-level modules are now thin `sys.modules` aliases pointing at their
+canonical home — `from memory_store import X` keeps working unchanged
+but `from gaworld.memory.store import X` is the preferred path for new
+code.
+
+- `generative_city_sim.py`: main simulator + CLI entrypoint (being progressively split)
+- `config.py`: CONFIG compat shim — re-exports `gaworld.settings.CONFIG`
+- `gaworld/settings/`: layered config fragments (LLM, runtime, behavior, economy, environment, integrations, overrides)
+- `gaworld/core/`: typed `Agent` dataclass adapter and concurrent `parallel_map` runner
+- `gaworld/llm/providers.py`: provider wrappers (Ollama / OpenAI-compatible / Anthropic-compatible) and the `LLM_ROUTER` dispatcher
+- `gaworld/memory/store.py`: agent memory, vector DB, schedule/action/location caches, log persistence
+- `gaworld/world/city_map.py`: graph, routes, transport costs, weather/rush-hour effects, category-based spatial queries
+- `gaworld/env/system.py`: in-sim `EnvironmentSystem` (weather, events, intervention feed) and `RemoteEnvironmentClient`
+- `gaworld/cognition/realism.py`: realism helpers — intentions, habits, relationship update/weight, memory consolidation
+- `gaworld/behavior/dynamic.py`: dynamic behavior system (InterruptEngine, SpontaneityEngine, social chains, environment-event cascades)
+- `gaworld/social/network.py`: schema migration, off-screen ghosts, role-aware decay, Dunbar tiers
+- `gaworld/economy/finance.py`: personal finance + macro cycles (tax, social insurance, Engel spending, investment, shock events)
+- `gaworld/policy/intervention.py`: PolicySim-style recommendation / exposure intervention metrics, stance, risk
+- `gaworld/events/life.py`: scheduled life events (birthday, illness, job change, off-screen ghost-event queue)
+- `gaworld/distributed/comm.py`: multi-machine relay client
+- `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, progress updates
+- `gaworld/work/`: real-work task system (runtime, worker pool, queue, market, router, adapters)
+- `gaworld/apps/`: local servers (dashboard, external-environment, distributed-comm)
+- `gaworld/io/`: HTTP guard with retry/backoff and HTML extraction
+- `gaworld/sim/`: extracted simulator sub-modules — `_utils`, `agents_loader`, `_schedule`, `_location`, `_cognition`, `_rag`, `_diary` (more slices coming as the legacy file shrinks)
+- `simulation_visualizer.py`, `avatar_generator.py`, `generate_agent_rag_seed.py`, `analyze_wellbeing.py`: standalone CLI tools (not imported by the runtime)
 - `data/hangzhou_agents_state_init.csv`: seed state values
 - `data/hangzhou_profiles_with_names.md`: agent profiles
 - `data/citymap.md`: city map data
 - `scripts/`: launch and developer utilities
-- `docs/`: tutorials, integration notes, and design docs
+- `docs/`: tutorials, integration notes, design docs, refactor history (`REFACTOR_PLAN.md`, `REFACTOR_BASELINE.md`, `PROJECT_STRUCTURE.md`)
 - `site/dashboard/`: local dashboard frontend
 - `site/simviz/`: playback viewer
 - `output/`: generated artifacts
