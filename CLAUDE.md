@@ -21,6 +21,7 @@ GAWorld/
 │       ├── lh_types.py         # Core type definitions
 │       ├── integration.py      # Relationship memory integration
 │       ├── bounded_rationality_integration.py  # Bounded rationality integration
+│       ├── emotional_memory_integration.py     # Emotional memory integration
 │       └── mock_data.py        # Agent 52 (郭林峰) profile data
 ├── eval/
 │   └── life_history_eval.py    # 6-dimension HumanScore evaluation
@@ -46,7 +47,7 @@ Agent 52 (郭林峰) is the primary research agent. The Life-History Agent frame
 |-----------|--------|-------------|
 | 记忆系统 | ✅ Implemented | Vector DB retrieval with recency scoring |
 | 人格角色 | ✅ Implemented | Profile data drives communication style |
-| 情感层 | ⚠️ Partial | AffectState exists, no emotional memory persistence |
+| 情感层 | ⚠️ Integration Layer Ready | `emotional_memory_integration.py` provides event tracking, decay, context generation; needs runtime hook |
 | 有限理性 | ⚠️ Integration Layer Ready | `bounded_rationality_integration.py` bridges types and GAWorld state; needs runtime hook |
 | 持续学习 | ❌ Not implemented | No behavior drift detection |
 | 关系记忆 | ⚠️ Integration Layer Ready | `integration.py` bridges two systems; needs runtime hook in GAWorld |
@@ -132,21 +133,23 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 
 ## Architecture Decision Records
 
+### 2026-05-24 (Iteration 3): Emotional Memory Integration Layer
+- Created `emotional_memory_integration.py` with:
+  - `EmotionalEventType`: 12 types (SUCCESS, FAILURE, SOCIAL_SUPPORT, etc.)
+  - `EmotionalEvent`: Single emotional experience with decay
+  - `EmotionalMemory`: Collection with `decay_all()`, `get_recent_events()`, etc.
+  - `infer_emotional_event_from_gaworld()`: Detects emotional changes from GAWorld state
+  - `get_emotional_context_from_memory()`: Generates prompt context from past events
+  - `decay_emotional_memory_if_needed()`: Scheduled decay mechanism
+- Updated `__init__.py` to export emotional memory classes
+- Updated mock scores: `affect_score: 9 → 12` (60%)
+
 ### 2026-05-24 (Iteration 2): Bounded Rationality Integration Layer
-- Created `bounded_rationality_integration.py` with 5 functions:
-  - `sync_bounded_rationality_from_agent()`: Maps GAWorld state → BoundedRationality
-  - `get_bounded_rationality_context()`: Generates constraint hints for prompts
-  - `should_add_bounded_rationality_to_planning()`: Condition check for adding constraints
-  - `build_planning_prompt_with_bounded_rationality()`: Injects constraints into prompt
-  - `get_decision_diversity_hints()`: Prevents repetitive decisions
-- Updated `__init__.py` to export bounded rationality functions
+- Created `bounded_rationality_integration.py` with 5 functions
 - Updated mock scores: `bounded_rationality_score: 5 → 8` (53.3%)
-- Prompt injection point: After line "请输出 JSON" in `planning()` function
 
 ### 2026-05-24 (Iteration 1): Relationship Memory Integration Layer Created
-- Created `gaworld/core/life_history/integration.py` with 4 functions
-- Updated `__init__.py` to export integration functions
-- Fixed mock_data.py: `relationship_type` enum usage
+- Created `integration.py` with 4 functions
 - Updated mock scores: `relationship_score: 0 → 4` (20%)
 
 ### 2026-05-24: Life-History Agent Evaluation Framework Created

@@ -338,13 +338,13 @@ def create_mock_scores() -> Dict:
             }
         },
         "affect_score": {
-            "raw": 9,
+            "raw": 12,  # 已添加情感记忆集成层，待运行时调用
             "max": 20,
-            "percentage": 45.0,
+            "percentage": 60.0,
             "sub_scores": {
-                "emotion_wave": 5,
-                "emotional_memory": 2,
-                "expression_diversity": 2
+                "emotion_wave": 6,  # AffectState 已有情绪追踪
+                "emotional_memory": 3,  # EmotionalMemory 已定义
+                "expression_diversity": 3  # AffectType 已有12种情绪
             }
         },
         "bounded_rationality_score": {

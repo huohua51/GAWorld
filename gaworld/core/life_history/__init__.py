@@ -4,6 +4,7 @@
 集成层:
 - gaworld.core.life_history.integration: 关系记忆集成
 - gaworld.core.life_history.bounded_rationality_integration: 有限理性集成
+- gaworld.core.life_history.emotional_memory_integration: 情感记忆集成
 """
 
 from .lh_types import (
@@ -48,6 +49,15 @@ from .bounded_rationality_integration import (
     get_decision_diversity_hints,
 )
 
+from .emotional_memory_integration import (
+    EmotionalEventType,
+    EmotionalEvent,
+    EmotionalMemory,
+    infer_emotional_event_from_gaworld,
+    get_emotional_context_from_memory,
+    decay_emotional_memory_if_needed,
+)
+
 __all__ = [
     "AgentProfile",
     "Identity",
@@ -81,4 +91,11 @@ __all__ = [
     "should_add_bounded_rationality_to_planning",
     "build_planning_prompt_with_bounded_rationality",
     "get_decision_diversity_hints",
+    # emotional memory
+    "EmotionalEventType",
+    "EmotionalEvent",
+    "EmotionalMemory",
+    "infer_emotional_event_from_gaworld",
+    "get_emotional_context_from_memory",
+    "decay_emotional_memory_if_needed",
 ]
