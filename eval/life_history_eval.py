@@ -389,7 +389,9 @@ class LifeHistoryEvaluator:
 **加权得分**: {results['weighted_score']}/100
 **评级**: {results['grade']}
 
-## 二、Profile Context Diversity 验证（辅助指标，不计入总分）
+## 二、Profile / Behavior Diversity 验证（辅助指标，不计入总分）
+
+> 验证：同场景下，不同 profile 的 agent 产生不同行为倾向上下文
 
 """
 
