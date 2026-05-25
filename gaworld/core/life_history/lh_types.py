@@ -140,6 +140,7 @@ class AgentProfile:
         personality_text = agent.get("personality", "")
         job_text = agent.get("job", "")
         values_text = agent.get("values", "")
+        daily_life_text = agent.get("daily_life", "")
 
         # 启发式：从文本关键词推断人格特质（0.0-1.0）
         openness = _infer_trait(personality_text, ["好奇", "开放", "创意", "艺术"], 0.5)
@@ -151,6 +152,10 @@ class AgentProfile:
         result_orientation = _infer_trait(personality_text, ["结果导向", "效率", "成就"], 0.7)
         impulse_control = _infer_trait(personality_text, ["自律", "克制", "稳重"], 0.6)
 
+        # 从 daily_life 推断额外特质
+        social_autonomy = _infer_trait(daily_life_text, ["独自", "一个人", "独立", "自主", "自由职业", "在家"], 0.5)
+        stress_response = _infer_trait(daily_life_text, ["跑步", "运动", "健身", "冥想", "瑜伽", "倾诉", "散步"], 0.5, inverse=True)
+
         personality_traits = PersonalityTraits(
             openness=openness,
             conscientiousness=conscientiousness,
@@ -160,6 +165,8 @@ class AgentProfile:
             rationality=rationality,
             result_orientation=result_orientation,
             impulse_control=impulse_control,
+            social_autonomy=social_autonomy,
+            stress_response=stress_response,
         )
 
         # 从 values 文本提取优先级
@@ -177,10 +184,9 @@ class AgentProfile:
         )
 
         # 从 daily_life 推断沟通风格
-        daily_life_text = agent.get("daily_life", "")
-        formality = _infer_trait(job_text, ["研究", "学术", "医生", "律师", "教师"], 0.6, inverse=True)
+        formality = _infer_trait(job_text, ["研究", "学术", "医生", "律师", "教师"], 0.6)
         directness = _infer_trait(personality_text, ["直接", "果断", "干脆"], 0.65)
-        emotional_expr = _infer_trait(personality_text, ["感性", "情绪化", "表达"], 0.4, inverse=True)
+        emotional_expr = _infer_trait(personality_text, ["感性", "情绪化", "表达"], 0.4)
         humor = _infer_trait(personality_text, ["幽默", "风趣", "调侃"], 0.3)
 
         communication = CommunicationStyle(
@@ -192,7 +198,7 @@ class AgentProfile:
 
         # 生活史：从 job 和 personality 文本构建关键事件摘要
         life_history = LifeHistory(
-            self_narrative=f"{identity.name}，{identity.occupation}。{personality_text}",
+            self_narrative=f"{identity.name}，{identity.occupation}。{personality_text}。日常：{daily_life_text}" if daily_life_text else f"{identity.name}，{identity.occupation}。{personality_text}",
             narrative_patterns=[],
         )
 

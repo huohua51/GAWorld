@@ -142,6 +142,49 @@ class LifeHistoryEngine:
         """
         parts = []
 
+        # 0. Profile 人格摘要 - 身份、职业、核心人格倾向
+        if self.profile:
+            p = self.profile
+            traits = []
+            if p.personality.rationality >= 0.75:
+                traits.append("理性优先")
+            if p.personality.result_orientation >= 0.75:
+                traits.append("结果导向")
+            if p.personality.extraversion >= 0.65:
+                traits.append("外向活跃")
+            elif p.personality.extraversion <= 0.35:
+                traits.append("内敛沉稳")
+            if p.personality.openness >= 0.7:
+                traits.append("开放好奇")
+            if p.personality.impulse_control >= 0.7:
+                traits.append("自律克制")
+            if p.personality.stress_response >= 0.6:
+                traits.append("压力下易焦虑")
+            elif p.personality.stress_response <= 0.4:
+                traits.append("压力下沉稳")
+
+            comm_parts = []
+            if p.communication.formality_level >= 0.7:
+                comm_parts.append("正式")
+            elif p.communication.formality_level <= 0.4:
+                comm_parts.append("随意")
+            if p.communication.directness >= 0.75:
+                comm_parts.append("直接")
+            if p.communication.humor_usage >= 0.5:
+                comm_parts.append("幽默")
+            if p.communication.emotional_expressiveness >= 0.65:
+                comm_parts.append("情感外露")
+
+            profile_desc = f"你是{p.identity.name}，{p.identity.occupation}。"
+            if traits:
+                profile_desc += f"人格倾向：{'、'.join(traits)}。"
+            if comm_parts:
+                profile_desc += f"沟通风格：{'、'.join(comm_parts)}。"
+            if p.life_history.self_narrative:
+                profile_desc += f"自我认知：{p.life_history.self_narrative[:50]}"
+
+            parts.append(profile_desc)
+
         # 1. 关系上下文 - 使用持久化的 runtime_state
         if self.runtime_state.relationships:
             rel_ctx = build_relationship_context(self.runtime_state, self.other_agent_names, top_k=2)
