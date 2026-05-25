@@ -51,10 +51,38 @@ def _agent_has_external_rag(agent: Any) -> bool:
     return False
 
 
+def _augment_query_with_growth(agent: Any, query: str) -> str:
+    """Append the agent's top growth-focus terms to ``query``.
+
+    The augmented query biases vector retrieval toward memories that
+    overlap with the agent's current hobbies/skills — the D4 hook in
+    the RAG enhancement plan. Gated by the ``memory.growth_boost``
+    flag so it stays opt-out and a no-op when no growth profile
+    is attached.
+    """
+    if not isinstance(agent, dict):
+        return query
+    mem_cfg = CONFIG.get("memory", {}) or {}
+    if not mem_cfg.get("growth_boost", True):
+        return query
+    profile = agent.get("growth_profile")
+    if not profile:
+        return query
+    try:
+        from gaworld.interests import growth_focus
+    except Exception:  # pragma: no cover
+        return query
+    focus = growth_focus(profile, limit=2)
+    if not focus:
+        return query
+    return f"{query} {' '.join(focus)}".strip()
+
+
 def _external_rag_hint(agent: Any, query: str, max_items: int = EXTERNAL_RAG_TOP_K) -> str:
+    augmented = _augment_query_with_growth(agent, query)
     hits = retrieve_relevant_memories(
         agent,
-        query,
+        augmented,
         max_items=max_items,
         entry_types=["external_info"],
     )

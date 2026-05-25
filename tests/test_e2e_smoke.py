@@ -72,7 +72,7 @@ class TestRunSimulationSmoke(unittest.TestCase):
 
     def _patch_config(self) -> None:
         """Override CONFIG to keep the run short and deterministic."""
-        from config import CONFIG
+        from gaworld.settings import CONFIG
 
         # Snapshot keys we'll mutate so cleanup can restore them.
         originals: dict[str, object] = {}

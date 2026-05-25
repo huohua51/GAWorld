@@ -1,15 +1,16 @@
 import atexit
 import json
+import math
 import os
 import re
 import sqlite3
 import time
 import zlib
-from collections import deque
+from collections import OrderedDict, deque
 
 import numpy as np
 
-from config import CONFIG
+from gaworld.settings import CONFIG
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.memory.store")
@@ -96,7 +97,7 @@ def _warm_log_cache(agent_id):
     path = _log_path(cache_key)
     if os.path.exists(path):
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 for raw in f:
                     _ingest_log_line(entry, raw)
         except OSError as exc:
@@ -127,7 +128,7 @@ def load_agent_memory(agent_id):
     if not os.path.exists(path):
         return []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return []
@@ -145,7 +146,7 @@ def load_agent_schedule(agent_id):
     if not os.path.exists(path):
         return []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return []
@@ -180,7 +181,7 @@ def load_agent_actions(agent_id):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -204,7 +205,7 @@ def load_agent_locations(agent_id):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -222,7 +223,7 @@ def load_agent_location_action_bias(agent_id):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -256,7 +257,7 @@ def load_sim_state():
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -452,11 +453,50 @@ def _init_vector_db():
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_memory_entries_agent ON memory_entries(agent_id)"
     )
+    # Idempotent schema migration for RAG-enhancement fields. SQLite
+    # has no `ADD COLUMN IF NOT EXISTS`, so we probe via PRAGMA first.
+    # Each column has a safe default so legacy rows behave like the
+    # neutral middle of the new scoring space.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(memory_entries)")}
+    for col_name, col_decl in (
+        ("salience", "REAL DEFAULT 0.5"),
+        ("emotion", "REAL DEFAULT 0.0"),
+        ("recall_count", "INTEGER DEFAULT 0"),
+        ("last_recall_at", "REAL DEFAULT 0.0"),
+    ):
+        if col_name not in existing_cols:
+            conn.execute(f"ALTER TABLE memory_entries ADD COLUMN {col_name} {col_decl}")
     conn.commit()
     _VECTOR_DB_READY = True
 
 
-def _embed_text(text, dim=VECTOR_DB_DIM):
+# Process-local LRU for embeddings. Each entry is text-key → vec. We
+# keep this small so a long-running simulator doesn't keep every
+# memory's vector in RAM forever; the SQLite row is the durable copy.
+_EMBED_CACHE_MAX = 2048
+_EMBED_CACHE: "OrderedDict[tuple[str, str], list[float]]" = OrderedDict()
+
+
+def _embed_cache_get(provider: str, text: str) -> list[float] | None:
+    key = (provider, text)
+    vec = _EMBED_CACHE.get(key)
+    if vec is None:
+        return None
+    _EMBED_CACHE.move_to_end(key)
+    return vec
+
+
+def _embed_cache_put(provider: str, text: str, vec: list[float]) -> None:
+    if not vec:
+        return
+    key = (provider, text)
+    _EMBED_CACHE[key] = vec
+    _EMBED_CACHE.move_to_end(key)
+    while len(_EMBED_CACHE) > _EMBED_CACHE_MAX:
+        _EMBED_CACHE.popitem(last=False)
+
+
+def _hash_embed(text, dim=VECTOR_DB_DIM):
     # Hash tokens into a fixed-size vector for fast, dependency-free similarity.
     tokens = _extract_keywords(text)
     if not tokens:
@@ -471,12 +511,73 @@ def _embed_text(text, dim=VECTOR_DB_DIM):
     return vec.tolist()
 
 
-def vector_db_add_entry(agent_id, entry_type, text, sim_day=None, sim_time=None):
+def _embed_text(text, dim=VECTOR_DB_DIM):
+    """Embed ``text`` into a fixed-length list of floats.
+
+    Strategy:
+
+    * If ``vector_db_embedding_provider`` is ``"llm"`` and a provider
+      with an ``embed()`` method is configured, use it. Vectors are
+      cached in-process so the same text isn't re-embedded repeatedly.
+    * Fall back to the legacy CRC32 hash bag-of-words embedding so the
+      simulator stays usable when no embedding endpoint is reachable.
+
+    The returned vector is always L2-normalised so cosine similarity
+    reduces to a dot product.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return [0.0] * int(dim)
+
+    mode = str(CONFIG.get("vector_db_embedding_provider", "hash")).lower()
+    if mode == "llm":
+        cached = _embed_cache_get("llm", text)
+        if cached is not None:
+            return cached
+        try:
+            # Late import to avoid a circular dependency at module load
+            # (providers.py is constructed *after* config import).
+            from gaworld.llm import providers as _llm_providers
+            llm_vec = _llm_providers.embed_text(text, task="memory")
+        except Exception as exc:
+            _LOG.debug("LLM embed failed, falling back to hash: %s", exc)
+            llm_vec = None
+        if llm_vec:
+            norm = math.sqrt(sum(v * v for v in llm_vec))
+            if norm > 0:
+                llm_vec = [float(v) / norm for v in llm_vec]
+            _embed_cache_put("llm", text, llm_vec)
+            return llm_vec
+        # Fall through to hash on failure.
+
+    return _hash_embed(text, dim=dim)
+
+
+def vector_db_add_entry(
+    agent_id,
+    entry_type,
+    text,
+    sim_day=None,
+    sim_time=None,
+    *,
+    salience: float | None = None,
+    emotion: float | None = None,
+):
+    """Insert one memory row.
+
+    The original positional signature ``(agent_id, entry_type, text,
+    sim_day, sim_time)`` is preserved so existing callers across the
+    codebase keep working unchanged. New keyword-only parameters
+    ``salience`` and ``emotion`` let callers tag entries that matter
+    more (a strong emotional episode, a key bit of skill knowledge);
+    when omitted, the DB defaults (0.5 / 0.0) apply.
+    """
     cleaned = _sanitize_memory_text(text)
     if not cleaned:
         return
     _init_vector_db()
     embedding = _embed_text(cleaned)
+    salience_val = 0.5 if salience is None else max(0.0, min(1.0, float(salience)))
+    emotion_val = 0.0 if emotion is None else max(-1.0, min(1.0, float(emotion)))
     payload = (
         int(agent_id),
         str(entry_type),
@@ -485,14 +586,17 @@ def vector_db_add_entry(agent_id, entry_type, text, sim_day=None, sim_time=None)
         str(sim_time) if sim_time is not None else None,
         time.time(),
         json.dumps(embedding, ensure_ascii=False),
+        salience_val,
+        emotion_val,
     )
     conn = _vector_db_connect()
     with conn:
         conn.execute(
             """
             INSERT INTO memory_entries
-            (agent_id, entry_type, text, sim_day, sim_time, created_at, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (agent_id, entry_type, text, sim_day, sim_time, created_at,
+             embedding, salience, emotion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             payload,
         )
@@ -506,7 +610,28 @@ def vector_db_delete_agent(agent_id):
         conn.execute("DELETE FROM memory_entries WHERE agent_id = ?", (int(agent_id),))
 
 
+def _memory_scoring_config() -> dict:
+    return CONFIG.get("memory", {}) or {}
+
+
 def vector_db_search(agent_id, query, top_k=VECTOR_DB_TOP_K, entry_types=None):
+    """Retrieve top-k memories for ``query``.
+
+    Legacy mode (``memory.salience_weight = False``, default) keeps the
+    original pure cosine ranking so the rest of the simulator behaves
+    exactly as before.
+
+    Enhanced mode (``memory.salience_weight = True``) re-ranks hits by:
+
+        score = cos_sim
+              * (0.5 + 0.5 * salience)
+              * exp(-age_days / halflife)
+              * (1 + 0.1 * ln(1 + recall_count))
+
+    and bumps ``recall_count`` / ``last_recall_at`` for every returned
+    row. This is what produces "memories that get used become easier
+    to retrieve" — the cognitive feedback loop from the RAG plan (D1b).
+    """
     cleaned_query = _sanitize_memory_text(query, max_chars=800)
     if not cleaned_query:
         return []
@@ -522,35 +647,86 @@ def vector_db_search(agent_id, query, top_k=VECTOR_DB_TOP_K, entry_types=None):
         placeholders = ", ".join(["?"] * len(entry_types))
         filters += f" AND entry_type IN ({placeholders})"
         params.extend(entry_types)
-    sql = f"""
-        SELECT entry_type, text, sim_day, sim_time, embedding
-        FROM memory_entries
-        WHERE {filters}
-    """
+
+    mem_cfg = _memory_scoring_config()
+    weighted = bool(mem_cfg.get("salience_weight", False))
+    halflife_days = max(1.0, float(mem_cfg.get("decay_halflife_days", 14)))
+    now = time.time()
+
+    if weighted:
+        sql = f"""
+            SELECT id, entry_type, text, sim_day, sim_time, embedding,
+                   created_at, salience, recall_count
+            FROM memory_entries
+            WHERE {filters}
+        """
+    else:
+        sql = f"""
+            SELECT entry_type, text, sim_day, sim_time, embedding
+            FROM memory_entries
+            WHERE {filters}
+        """
     conn = _vector_db_connect()
     rows = conn.execute(sql, params).fetchall()
     scored = []
-    for entry_type, text, sim_day, sim_time, embedding_blob in rows:
+    for row in rows:
+        if weighted:
+            (row_id, entry_type, text, sim_day, sim_time, embedding_blob,
+             created_at, salience, recall_count) = row
+        else:
+            entry_type, text, sim_day, sim_time, embedding_blob = row
+            row_id = None
+            created_at = now
+            salience = 0.5
+            recall_count = 0
         try:
             vec = np.array(json.loads(embedding_blob), dtype=np.float32)
         except (TypeError, json.JSONDecodeError):
             continue
         if vec.shape != qvec.shape:
             continue
-        score = float(np.dot(qvec, vec))
-        if score <= 0:
+        cos_sim = float(np.dot(qvec, vec))
+        if cos_sim <= 0:
             continue
-        scored.append(
-            {
-                "score": score,
-                "type": entry_type,
-                "text": text,
-                "sim_day": sim_day,
-                "sim_time": sim_time,
-            }
-        )
+        if weighted:
+            age_days = max(0.0, (now - float(created_at or now)) / 86400.0)
+            decay = math.exp(-age_days / halflife_days)
+            salience_factor = 0.5 + 0.5 * max(0.0, min(1.0, float(salience or 0.5)))
+            recall_boost = 1.0 + 0.1 * math.log1p(max(0, int(recall_count or 0)))
+            score = cos_sim * salience_factor * decay * recall_boost
+        else:
+            score = cos_sim
+        hit = {
+            "score": score,
+            "type": entry_type,
+            "text": text,
+            "sim_day": sim_day,
+            "sim_time": sim_time,
+        }
+        if weighted:
+            hit["row_id"] = row_id
+        scored.append(hit)
     scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:max(1, int(top_k))]
+    top = scored[:max(1, int(top_k))]
+    if weighted and top:
+        ids_to_bump = [int(h["row_id"]) for h in top if h.get("row_id") is not None]
+        if ids_to_bump:
+            try:
+                placeholders = ", ".join(["?"] * len(ids_to_bump))
+                with conn:
+                    conn.execute(
+                        f"UPDATE memory_entries SET recall_count = recall_count + 1, "
+                        f"last_recall_at = ? WHERE id IN ({placeholders})",
+                        [now, *ids_to_bump],
+                    )
+            except sqlite3.Error as exc:
+                # Recall bookkeeping is best-effort — never break a
+                # planning call because the bump failed.
+                _LOG.debug("recall bookkeeping update failed: %s", exc)
+    # Strip the internal row_id before handing back to callers.
+    for h in top:
+        h.pop("row_id", None)
+    return top
 
 
 def vector_db_count_entries(agent_id):
@@ -577,12 +753,64 @@ def seed_vector_db_from_memory(agent):
         vector_db_add_entry(agent["id"], "memory", mem)
 
 
+def _growth_boost_hits(agent, hits):
+    """Re-rank ``hits`` to prefer memories tied to the agent's growth items.
+
+    Only active when ``memory.growth_boost`` is on (default ON). Late-imports
+    ``gaworld.interests`` so the memory store stays import-light, and is a
+    no-op when the agent has no ``growth_profile`` attached — i.e. the
+    rest of the simulator still works for runs where the growth bootstrap
+    wasn't invoked.
+    """
+    if not isinstance(agent, dict) or not hits:
+        return hits
+    mem_cfg = CONFIG.get("memory", {}) or {}
+    if not mem_cfg.get("growth_boost", True):
+        return hits
+    profile = agent.get("growth_profile")
+    if not profile:
+        return hits
+    try:
+        from gaworld.interests import GrowthProfile, match_growth_items
+    except Exception:  # pragma: no cover - keep store import-safe
+        return hits
+    gp = profile if isinstance(profile, GrowthProfile) else GrowthProfile.from_dict(profile)
+    if not gp.items:
+        return hits
+    strength = max(0.0, float(mem_cfg.get("growth_boost_strength", 0.15)))
+    if strength <= 0:
+        return hits
+    boosted = []
+    for hit in hits:
+        text = hit.get("text") or ""
+        matches = match_growth_items(gp, text)
+        if matches:
+            # Boost by the strongest matching item's priority. We look
+            # priorities back up from the canonical profile so this
+            # works whether `match_growth_items` returned dicts or not.
+            top_priority = 0.0
+            for m in matches:
+                name = str(m.get("name", "")).strip()
+                for item in gp.items:
+                    if item.name == name and item.priority > top_priority:
+                        top_priority = item.priority
+            multiplier = 1.0 + strength * top_priority
+            new_hit = dict(hit)
+            new_hit["score"] = float(hit.get("score", 0.0)) * multiplier
+            new_hit["growth_match"] = sorted({str(m.get("name", "")) for m in matches if m.get("name")})
+            boosted.append(new_hit)
+        else:
+            boosted.append(hit)
+    boosted.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    return boosted
+
+
 def retrieve_relevant_memories(agent, query, max_items=VECTOR_DB_TOP_K, entry_types=None):
     # Prefer vector DB; fall back to keyword scan of JSON memory when DB is empty.
     agent_id = agent["id"] if isinstance(agent, dict) else int(agent)
     hits = vector_db_search(agent_id, query, top_k=max_items, entry_types=entry_types)
     if hits:
-        return hits
+        return _growth_boost_hits(agent, hits)
     if isinstance(agent, dict):
         fallback = relevant_memory(agent, context=query, max_items=max_items)
         return [{"type": "memory", "text": t, "score": 0.0} for t in fallback]

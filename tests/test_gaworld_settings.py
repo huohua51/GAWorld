@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from config import CONFIG as LEGACY_CONFIG
+from gaworld.settings import CONFIG as LEGACY_CONFIG
 from gaworld.settings import CONFIG as SETTINGS_CONFIG
 from gaworld.settings import build_default_config
 from gaworld.settings.overrides import deep_update

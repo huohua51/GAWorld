@@ -1,9 +1,17 @@
+"""Simulation frame recording and visualizer.
+
+Canonical home: :mod:`gaworld.apps.visualizer`.
+Legacy callers should use the ``simulation_visualizer`` shim at the project root.
+"""
+
+from __future__ import annotations
+
 import json
 import os
 from datetime import UTC, datetime
 
-from avatar_generator import ensure_agent_avatar
-from city_map_system import project_to_tile
+from gaworld.io.avatar import ensure_agent_avatar
+from gaworld.world.city_map import project_to_tile
 
 
 def _utc_timestamp():

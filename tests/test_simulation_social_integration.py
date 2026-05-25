@@ -13,9 +13,9 @@ import random
 import tempfile
 import unittest
 
-import human_realism
-import life_events
-import social_network as sn
+from gaworld.cognition import realism as human_realism
+from gaworld.events import life as life_events
+from gaworld.social import network as sn
 
 
 class TestIntegration(unittest.TestCase):

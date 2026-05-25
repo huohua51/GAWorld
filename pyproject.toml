@@ -40,29 +40,15 @@ dev = [
 gaworld = "generative_city_sim:_main"
 
 [tool.setuptools]
-# We are still mid-migration: keep the legacy flat layout discoverable, and
-# ship the new gaworld/ subpackage too.
+# All logic lives in gaworld/. The only root-level module is the CLI entry point.
+# Legacy shims have been moved to legacy/ and are no longer distributed.
 py-modules = [
-    "config",
-    "city_map_system",
-    "custom_hooks",
-    "distributed_comm",
-    "economy_module",
-    "environment",
-    "experience_store",
-    "extensibility",
-    "generative_city_sim",
-    "human_realism",
-    "intervention_policy",
-    "life_events",
-    "llm_providers",
-    "memory_store",
-    "simulation_visualizer",
+    "generative_city_sim",   # CLI entry point
 ]
 
 [tool.setuptools.packages.find]
 include = ["gaworld*"]
-exclude = ["backup*", "tests*", "output*", "tmp*", "video*", "site*"]
+exclude = ["backup*", "legacy*", "tests*", "output*", "tmp*", "video*", "site*"]
 
 # ----------------------------------------------------------------------
 # Tooling
@@ -73,6 +59,7 @@ target-version = "py311"
 line-length = 110
 exclude = [
     "backup",
+    "legacy",
     "output",
     "tmp",
     "video",
@@ -105,6 +92,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011", "SIM117"]
 "backup/*" = ["F", "E", "W", "B", "I", "UP", "SIM", "RUF"]
+"legacy/*" = ["F", "E", "W", "B", "I", "UP", "SIM", "RUF"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -116,6 +104,7 @@ target-version = ["py311"]
 extend-exclude = '''
 /(
     backup
+  | legacy
   | output
   | tmp
   | video
@@ -133,13 +122,13 @@ no_implicit_optional = true
 strict_optional = true
 exclude = [
     "backup/",
+    "legacy/",
     "output/",
     "tmp/",
     "video/",
     "site/",
 ]
-# We enable strict typing only on the new gaworld/ tree first;
-# legacy modules keep the looser default.
+# Strict typing enabled for the gaworld/ package.
 [[tool.mypy.overrides]]
 module = "gaworld.*"
 disallow_untyped_defs = true

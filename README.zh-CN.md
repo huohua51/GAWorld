@@ -62,36 +62,51 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 
 ## 项目结构
 
-运行时代码已迁移到 `gaworld/` 包下。原本 11 个顶层模块现在是
-`sys.modules` 别名指向新位置 —— `from memory_store import X` 仍可工作，
-但新代码请使用 `from gaworld.memory.store import X` 这种规范路径。
+```
+GAWorld/
+├── gaworld/                       # 核心包（所有功能的唯一正式实现）
+│   ├── apps/                      # 应用服务：dashboard、visualizer、relay 服务器
+│   ├── behavior/dynamic.py        # 动态行为（中断、自发行为、社交链）
+│   ├── cognition/realism.py       # 真实感：意图、习惯、关系权重、记忆整合
+│   ├── core/                      # Agent dataclass 适配层 + 并发执行器
+│   ├── distributed/comm.py        # 多机 relay 客户端
+│   ├── economy/finance.py         # 个人财务 + 宏观经济周期
+│   ├── env/system.py              # 环境系统（天气、事件、干预 feed）
+│   ├── events/life.py             # 生命事件调度
+│   ├── io/                        # HTTP guard、头像生成、HTML 抽取
+│   ├── llm/providers.py           # LLM 提供商封装与路由
+│   ├── memory/                    # 记忆系统（store、experience、consolidation、decay）
+│   ├── policy/intervention.py     # 干预指标与推荐
+│   ├── settings/                  # 分层配置（LLM、运行时、行为、经济、环境）
+│   ├── sim/                       # 仿真子模块（schedule、location、cognition、rag…）
+│   ├── social/network.py          # 社交网络（衰减、Dunbar 分层、ghost 事件）
+│   ├── work/                      # 工作任务系统（queue、market、router、adapters）
+│   ├── world/city_map.py          # 城市地图（图结构、路线、出行成本、空间查询）
+│   ├── hooks.py                   # 生命周期钩子（HookBus）
+│   ├── interests.py               # 兴趣与成长画像
+│   └── logging_setup.py           # 日志配置
+├── generative_city_sim.py         # CLI 入口（run / reset / interview）
+├── legacy/                        # 旧版 flat 模块（已弃用，不参与构建）
+│   └── README.md                  # 旧模块 → 新位置对照表
+├── data/                          # 数据资产（agents CSV、profiles MD、citymap MD）
+├── scripts/                       # 辅助脚本（generate_citymap 等）
+├── tests/                         # 测试套件（pytest，全部使用 gaworld.* import）
+├── docs/                          # 设计文档、重构记录
+└── output/                        # 生成产物（日志、记忆、图表，不纳入版本控制）
+```
 
-- `generative_city_sim.py`：主仿真器 + CLI 入口（正在逐步拆分）
-- `config.py`：CONFIG 兼容 shim，重新导出 `gaworld.settings.CONFIG`
-- `gaworld/settings/`：分层配置片段（LLM、运行时、行为、经济、环境、集成、覆盖项）
-- `gaworld/core/`：类型化 `Agent` dataclass 适配层和并发 `parallel_map` 执行器
-- `gaworld/llm/providers.py`：provider 封装（Ollama / OpenAI 兼容 / Anthropic 兼容）和 `LLM_ROUTER` 分派器
-- `gaworld/memory/store.py`：智能体记忆、向量库、日程/动作/位置缓存、日志持久化
-- `gaworld/world/city_map.py`：图结构、路线、出行成本、天气/高峰时段效应、基于类别的空间查询
-- `gaworld/env/system.py`：内置 `EnvironmentSystem`（天气、事件、干预 feed）和 `RemoteEnvironmentClient`
-- `gaworld/cognition/realism.py`：真实感辅助 —— 意图、习惯、关系更新/权重、记忆整合
-- `gaworld/behavior/dynamic.py`：动态行为系统（InterruptEngine、SpontaneityEngine、社交链、环境事件连锁反应）
-- `gaworld/social/network.py`：schema 迁移、离线 ghost、role 感知衰减、Dunbar 分层
-- `gaworld/economy/finance.py`：个人财务 + 宏观周期（个税、社保、恩格尔系数消费、投资、冲击事件）
-- `gaworld/policy/intervention.py`：PolicySim 风格的推荐 / 曝光干预指标、立场、风险
-- `gaworld/events/life.py`：生活事件调度（生日、生病、换工作、离线 ghost 事件队列）
-- `gaworld/distributed/comm.py`：多机 relay 客户端
-- `gaworld/interests.py`：兴趣爱好与技能成长画像推导、持久化、匹配和进度更新
-- `gaworld/work/`：real-work 任务系统（runtime、worker pool、queue、market、router、adapters）
-- `gaworld/apps/`：本地服务器（dashboard、外部环境、分布式 relay）
-- `gaworld/io/`：HTTP guard（含重试/退避）和 HTML 抽取
-- `gaworld/sim/`：从主仿真器拆分出来的子模块 —— `_utils`、`agents_loader`、`_schedule`、`_location`、`_cognition`、`_rag`、`_diary`（随着主文件继续瘦身会有更多）
-- `simulation_visualizer.py`、`avatar_generator.py`、`generate_agent_rag_seed.py`、`analyze_wellbeing.py`：独立 CLI 工具（不被运行时 import）
-- `data/hangzhou_agents_state_init.csv`：智能体初始状态
-- `data/hangzhou_profiles_with_names.md`：智能体画像
-- `data/citymap.md`：城市地图数据
-- `scripts/`：启动脚本和开发工具
-- `docs/`：教程、集成说明、设计文档、重构记录（`REFACTOR_PLAN.md`、`REFACTOR_BASELINE.md`、`PROJECT_STRUCTURE.md`）
+**开发规则：新代码只写进 `gaworld/` 包，不添加新的根目录模块。**
+
+主要子包说明：
+
+- `gaworld/settings/`：分层配置片段（LLM、运行时、行为、经济、环境、覆盖项）
+- `gaworld/core/`：类型化 `Agent` dataclass + 并发 `parallel_map` 执行器
+- `gaworld/llm/providers.py`：Ollama / OpenAI 兼容 / Anthropic 兼容路由
+- `gaworld/memory/`：向量库、记忆持久化、巩固与衰减
+- `gaworld/world/city_map.py`：图结构、路线、出行成本、天气/高峰效应
+- `gaworld/sim/`：从主仿真器拆分出来的子模块（持续细化中）
+- `gaworld/work/`：real-work 任务系统（runtime、worker pool、queue、market）
+- `gaworld/apps/`：dashboard、外部环境服务器、分布式 relay
 - `site/dashboard/`：dashboard 前端
 - `site/simviz/`：轨迹回放页面
 - `output/`：生成结果

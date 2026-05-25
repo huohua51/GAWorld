@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-import social_network as sn
+from gaworld.social import network as sn
 
 
 class TestEnsureSchema(unittest.TestCase):
@@ -67,14 +67,14 @@ class TestBackwardsCompatibleWeight(unittest.TestCase):
     """``human_realism.relationship_weight`` should keep working on legacy records."""
 
     def test_legacy_record_uses_old_formula(self):
-        import human_realism
+        from gaworld.cognition import realism as human_realism
         agent = {"relationships": {"5": {"closeness": 0.9, "trust": 0.9, "obligation": 0.5, "friction": 0.0}}}
         # No "role" field → falls through to legacy branch.
         w = human_realism.relationship_weight(agent, 5)
         self.assertGreater(w, 0.5)
 
     def test_new_record_delegates_to_role_aware(self):
-        import human_realism
+        from gaworld.cognition import realism as human_realism
         agent = {"relationships": {"5": {
             "closeness": 0.7, "trust": 0.7, "obligation": 0.5, "friction": 0.0,
             "role": "mother", "kind": "ghost",

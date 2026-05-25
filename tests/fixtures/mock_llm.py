@@ -1,4 +1,4 @@
-"""Deterministic mock for :func:`llm_providers.call_llm`.
+"""Deterministic mock for :func:`gaworld.llm.providers.call_llm`.
 
 Why this exists
 ---------------
@@ -294,19 +294,19 @@ class MockLLM:
 
 @contextlib.contextmanager
 def install(mock: MockLLM | None = None) -> Iterator[MockLLM]:
-    """Patch ``llm_providers.call_llm`` and ``generative_city_sim.call_llm``.
+    """Patch ``gaworld.llm.providers.call_llm`` and ``generative_city_sim.call_llm``.
 
     The simulator imports ``call_llm`` into its own module namespace,
     so we have to patch both bindings to make the substitution
     universal.
     """
-    import llm_providers
+    from gaworld.llm import providers as llm_providers
 
     real_mock = mock if mock is not None else MockLLM()
     original_router = llm_providers.call_llm
     llm_providers.call_llm = real_mock  # type: ignore[assignment]
 
-    # Patch the legacy module binding too if it has been imported.
+    # Patch the simulator module binding too if it has been imported.
     legacy = None
     try:
         import generative_city_sim as legacy_mod  # noqa: F401

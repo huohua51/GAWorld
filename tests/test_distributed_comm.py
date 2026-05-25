@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from distributed_comm import format_inbox_context
+from gaworld.distributed.comm import format_inbox_context
 from gaworld.apps.distributed_comm_server import DistributedRelayBackend
 
 

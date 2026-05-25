@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from config import CONFIG
+from gaworld.settings import CONFIG
 
 
 def _memory_path(memory_dir, agent_id):

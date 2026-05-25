@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from llm_providers import LLMRouter
+from gaworld.llm.providers import LLMRouter
 
 
 class _StubProvider:

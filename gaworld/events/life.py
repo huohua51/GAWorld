@@ -5,7 +5,7 @@ import time
 import uuid
 from contextlib import contextmanager
 
-from config import CONFIG
+from gaworld.settings import CONFIG
 
 
 DEFAULT_LIFE_EVENT_CONFIG = {

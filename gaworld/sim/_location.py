@@ -25,7 +25,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from city_map_system import (
+from gaworld.world.city_map import (
     all_locations as city_all_locations,
     job_to_workplace_categories,
     resolve_best_location,

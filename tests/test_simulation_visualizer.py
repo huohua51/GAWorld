@@ -3,8 +3,8 @@ import os
 import tempfile
 import unittest
 
-from city_map_system import load_city_map
-from simulation_visualizer import SimulationVisualizer, build_agent_step_payload, build_map_layout
+from gaworld.world.city_map import load_city_map
+from gaworld.apps.visualizer import SimulationVisualizer, build_agent_step_payload, build_map_layout
 
 
 class TestSimulationVisualizer(unittest.TestCase):

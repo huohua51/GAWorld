@@ -6,7 +6,7 @@ import json
 import random
 import unittest
 
-import social_network as sn
+from gaworld.social import network as sn
 
 
 def _seeded_agent():

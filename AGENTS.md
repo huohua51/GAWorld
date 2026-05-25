@@ -1,13 +1,40 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Core simulator: `generative_city_sim.py` (CLI entrypoint, agent loop, LLM routing, scheduling, actions, logging, plots).
-- Configuration: `config.py` (LLM providers, routing, simulation params, data paths, events).
-- Environment events: `environment.py`.
-- Data assets: `data/hangzhou_agents_state_init.csv`, `data/hangzhou_profiles_with_names.md`, `data/citymap.md`.
-- Map generator: `scripts/generate_citymap.py` (build a new `data/citymap.md` from a text description).
-- Outputs: `output/` (logs, memory, plots, CSVs). Treat as generated artifacts.
-- Backups: `backup/` (historical scripts; not part of active runtime).
+
+```
+GAWorld/
+├── gaworld/                  # 核心包（所有功能的正式实现）
+│   ├── apps/                 # 服务器与可视化（dashboard, visualizer, …）
+│   ├── behavior/             # 动态行为模块（dynamic.py）
+│   ├── cognition/            # 人类真实感模块（realism.py）
+│   ├── core/                 # Agent 基础与并发执行（agent.py, runner.py）
+│   ├── distributed/          # 分布式通信（comm.py）
+│   ├── economy/              # 经济模块（finance.py）
+│   ├── env/                  # 环境系统（system.py）
+│   ├── events/               # 生命事件（life.py）
+│   ├── io/                   # IO 工具（avatar.py, http_guard.py, web_scrape.py）
+│   ├── llm/                  # LLM 提供商（providers.py）
+│   ├── memory/               # 记忆系统（store, experience, consolidation, decay, …）
+│   ├── policy/               # 干预策略（intervention.py）
+│   ├── settings/             # 配置（CONFIG, defaults, overrides）
+│   ├── sim/                  # 仿真逻辑（_action, _cognition, _location, …）
+│   ├── social/               # 社交网络（network.py）
+│   ├── work/                 # 工作模块（router, queue, market, adapters）
+│   ├── world/                # 城市地图（city_map.py）
+│   ├── hooks.py              # 生命周期钩子（HookBus）
+│   ├── interests.py          # 兴趣与成长档案
+│   └── logging_setup.py      # 日志配置
+├── generative_city_sim.py    # CLI 入口（run / reset / interview）
+├── legacy/                   # 旧版 flat 模块（已弃用，不参与构建）
+├── scripts/                  # 辅助脚本（generate_citymap, …）
+├── tests/                    # 测试套件（pytest）
+├── data/                     # 数据资产（agents CSV, profiles MD, citymap MD）
+└── output/                   # 生成产物（日志、记忆、图表）
+```
+
+**规则：新代码只写进 `gaworld/` 包，不添加新的根目录模块。**
+旧 flat 模块的正式位置见 `legacy/README.md`。
 
 ## Build, Test, and Development Commands
 - Install deps: `pip install -r requirements.txt`
@@ -29,7 +56,8 @@ There is no build step beyond installing Python dependencies.
   - `ruff check .` and `ruff format --check .` (rules pinned to `E`/`F`/`W`/`I`/`UP`/`B`/`C4`/`SIM`/`PIE`/`RUF`).
   - `black .` (line length 110).
   - `mypy gaworld` (strict typing on the new `gaworld/` tree, advisory elsewhere).
-- New cross-cutting code lives under `gaworld/` (see `CHANGELOG.md` for the migration map).
+- All new code goes into `gaworld/` sub-packages. No new root-level modules.
+- Import from `gaworld.*` directly; the `legacy/` shims are deprecated and excluded from the build.
 
 ## Testing Guidelines
 - Tests live under `tests/` and use `pytest` discovery (`test_*.py`).
@@ -49,32 +77,15 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-05-24 7:29pm GMT+2
+# [GAWorld] recent context, 2026-05-25 6:58am GMT+2
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (11,709t read) | 2,844,292t work | 100% savings
+Stats: 50 obs (12,479t read) | 2,882,786t work | 100% savings
 
-### May 16, 2026
-471 6:01a 🔵 Config fix successful - 5 agents now running
-473 6:32a 🟣 Academic paper written on misinformation spread research
 ### May 18, 2026
-493 8:24p 🔵 Treatment B Experiment Data Validated
-494 " 🔵 Agent 4 Information Isolation Pattern Confirmed
-495 " 🔵 Agent 2 Stance Score Time-Series Drift
-496 8:25p 🔵 Experiment Framework Available for Polarization and Emotion Contagion Studies
-498 " 🔵 Unified Experiment Runner Framework with 9 Registered Experiments
-502 " 🔴 Experiment Directory Creation Bug Confirmed - Still Unfixed
-500 8:26p 🔴 Experiment Runner Directory Creation Bug in exp_polarization.py
-504 " 🔴 Edit Attempt Shows userModified:false - Fix Not Applied
-505 " 🔴 Fix Not Applied - All Experiment Scripts Have Same Bug
-520 8:36p 🟣 Second Experiment and NeurIPS Paper Writing
-521 " 🟣 Polarization Experiments Launched in Parallel
-524 " 🟣 New Experiment Session Started
-525 8:41p 🟣 exp_polarization Experiment Running
-527 " 🟣 Second experiment in progress with NIPS paper output
 529 8:51p ⚖️ Second experiment with NeurIPS paper output
 531 8:52p 🟣 Second Experiment Running with NIPS Paper Generation
 526 " ✅ Polarization Experiment Metrics Updating
@@ -106,29 +117,39 @@ Stats: 50 obs (11,709t read) | 2,844,292t work | 100% savings
 554 7:36p 🔵 Simulation runs full 24-hour day cycles per simulation day
 555 7:41p 🔵 50-day simulation process has stopped
 556 7:52p ⚖️ User chose 3-day simulation test to verify base simulator functionality
-S161 Found generative_city_sim.py entry point is `_main` not `main` - import test failed (May 19 at 8:03 PM)
-S162 Found key insight: simulation works when called directly but not via subprocess (May 19 at 8:08 PM)
-S163 1-day simulation with 2 agents is running but only produces initialization data (May 19 at 8:08 PM)
-S164 Simulation is running but slow due to LLM calls - proposing switch to exp_polarization (May 19 at 8:10 PM)
-S165 Simulation running in background (PID 69881) - also checking exp_polarization data availability (May 19 at 8:12 PM)
 557 8:13p ⚖️ User chose to run 3-day simulation in background with nohup
-S167 Examining exp_polarization intervention metrics data in detail (May 19 at 8:13 PM)
 558 8:14p 🟣 Multi-agent research team launched with exp_polarization data
-S168 多智能体研究团队完成exp_polarization实验并撰写论文 (May 19 at 8:14 PM)
-S166 Multi-agent research team launched with exp_polarization data - two background tasks running (May 19 at 8:14 PM)
-S170 多智能体研究团队完成exp_polarization实验，后台exp_macro_economy仿真运行中 (May 19 at 8:15 PM)
 559 8:16p 🔵 多智能体研究团队完成exp_polarization实验
 560 " 🔵 exp_macro_economy后台仿真正在运行
 ### May 20, 2026
-S169 多智能体研究团队完成exp_polarization实验并撰写论文 (May 20 at 4:25 AM)
-**Investigated**: 探索了GAWorld平台上的exp_polarization实验数据，研究多样性干预对在线极化的影响。
+S180 Multi-agent research team for GAWorld Experiment 4 (exp_network_evolution) (May 20 at 4:25 AM)
+### May 24, 2026
+S181 Multi-agent research team for GAWorld Experiment 4 (exp_network_evolution) (May 24 at 8:14 PM)
+S184 Multi-agent research team completing GAWorld Experiment 4 (exp_network_evolution) - network evolution analysis (May 24 at 8:15 PM)
+S185 Multi-agent research team completing GAWorld Experiment 4 (exp_network_evolution) - network evolution analysis with 4 agents (May 24 at 8:16 PM)
+S182 Multi-agent research pipeline for GAWorld exp_network_evolution - Paper Writer completed outline, Data Analyst analyzing results (May 24 at 8:16 PM)
+S183 GAWorld multi-agent research pipeline: Paper Writer outline done, Data Analyst analyzing network metrics (May 24 at 8:16 PM)
+S186 Multi-agent research team for GAWorld exp_network_evolution - verifying experiment output files (May 24 at 8:16 PM)
+S187 构建多智能体研究小组完成实验4的网络演化分析 (May 24 at 8:16 PM)
+602 8:17p 🟣 Multi-agent research team architecture for experiment 4
+603 8:18p 🔵 agent_5_schedule.json file missing from natural_evolution experiment
+604 8:20p 🔵 exp_network_evolution.py and generative_city_sim.py running concurrently
+605 8:25p 🔵 natural_evolution experiment actively writing agent memory files
+607 " 🟣 Multi-agent research team framework for experiment 4
+606 " 🔵 exp_network_evolution.py running with active agent log updates
+608 8:37p 🔵 Multi-agent experiment 4 execution in progress
+612 " 🔵 Network analysis completed for natural_evolution experiment
+613 " 🔵 Log parsing bug: [InitLocation] lines contain empty home/work fields
+### May 25, 2026
+611 3:49a 🔴 日志解析修复成功
+S188 多智能体研究小组完成实验4初步网络分析 (May 25 at 3:49 AM)
+616 3:57a 🔵 Simulation process still running at PID 30636
+617 4:00a 🔵 Simulation DID run Day 1 with actual interactions—earlier analysis missed them
+618 4:01a 🔵 Simulation stalled at Day 1 despite process still running
+620 " 🟣 Paper draft written for network_evolution experiment
+621 " 🟣 Chinese academic paper expansion requested at ~8000 characters
+S189 多智能体研究小组完成exp_network_evolution实验（网络演化+同质性分析） (May 25 at 4:01 AM)
+622 " 🟣 Chinese academic paper completed at ~8500 characters
 
-**Learned**: 1) 多样性干预可能适得其反：干预组极化(1.514)高于控制组(1.462)+3.6%；2) Agent 4完全隔离：20%智能体零立场、零跨观点曝光；3) 方差降低≠极化减少。
-
-**Completed**: 1) superpower技能安装完成；2) 4角色多智能体团队(Experimenter/Data Analyst/Paper Writer/Paper Reviewer)；3) exp_polarization数据验证；4) polarization_paper.md(234行)生成；5) shared_state.json更新为approved状态。
-
-**Next Steps**: 3天仿真实验(PID 69881)在后台继续运行。
-
-
-Access 2844k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 2883k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

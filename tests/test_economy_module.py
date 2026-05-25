@@ -6,7 +6,7 @@ import csv
 import json
 from unittest.mock import patch
 
-import economy_module as eco
+from gaworld.economy import finance as eco
 
 
 def _build_agent(agent_id=1, job="软件工程师", age=30, risk_preference=0.6):
@@ -212,7 +212,7 @@ class TestShockEvents(unittest.TestCase):
                 "accounts": {"checking": 50000}}
         macro = {"enabled": True, "phase": "trough"}
         # Force layoff
-        with patch("economy_module.random.random", return_value=0.0):
+        with patch("gaworld.economy.finance.random.random", return_value=0.0):
             events = eco._check_daily_shocks(agent, econ, cfg, macro)
         layoffs = [e for e in events if e["type"] == "layoff"]
         self.assertTrue(len(layoffs) > 0)
@@ -227,7 +227,7 @@ class TestShockEvents(unittest.TestCase):
                 "accounts": {"checking": 50000}}
         macro = {"enabled": False}
         # Force medical emergency
-        with patch("economy_module.random.random", return_value=0.0):
+        with patch("gaworld.economy.finance.random.random", return_value=0.0):
             events = eco._check_daily_shocks(agent, econ, cfg, macro)
         medical = [e for e in events if e["type"] == "medical_emergency"]
         self.assertTrue(len(medical) > 0)
@@ -314,7 +314,7 @@ class TestEconomyModule(unittest.TestCase):
             "actions": {1: {"工作": ["处理任务"]}},
             "extension_state": ctx["extension_state"],
         }
-        with patch("economy_module.random.random", return_value=0.0):
+        with patch("gaworld.economy.finance.random.random", return_value=0.0):
             eco.on_agent_pre_step(pre_ctx)
         self.assertEqual("工作", step["activity"])
         self.assertTrue(step.get("economy_forced_income", False))

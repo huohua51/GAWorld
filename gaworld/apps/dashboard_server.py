@@ -11,8 +11,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from config import CONFIG
-from life_events import add_life_event, list_life_event_templates, list_life_events
+from gaworld.settings import CONFIG
+from gaworld.events.life import add_life_event, list_life_event_templates, list_life_events
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.dashboard")

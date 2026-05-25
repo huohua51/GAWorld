@@ -1,7 +1,15 @@
+"""Episode, habit, intention and relationship persistence for agents.
+
+Canonical home: :mod:`gaworld.memory.experience`.
+Legacy callers should use the ``experience_store`` shim at the project root.
+"""
+
+from __future__ import annotations
+
 import json
 import os
 
-from config import CONFIG
+from gaworld.settings import CONFIG
 
 
 def _memory_dir(cfg=None):

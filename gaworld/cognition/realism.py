@@ -6,7 +6,7 @@ import requests
 
 from gaworld.interests import format_growth_context, growth_focus
 from gaworld.logging_setup import get_logger
-from llm_providers import call_llm
+from gaworld.llm.providers import call_llm
 
 _LOG = get_logger("gaworld.realism")
 
@@ -555,7 +555,7 @@ def relationship_weight(agent, neighbor_id):
     if isinstance(item, dict) and item.get("role"):
         # Defer to the role-aware weight when the schema is populated.
         try:
-            from social_network import role_aware_weight
+            from gaworld.social.network import role_aware_weight
         except ImportError:  # pragma: no cover - fallback only if module missing
             role_aware_weight = None  # type: ignore[assignment]
         if role_aware_weight is not None:

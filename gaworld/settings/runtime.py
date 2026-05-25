@@ -36,6 +36,14 @@ def simulation_settings() -> dict[str, Any]:
                 "prefer_cached_news": True,
                 "max_chars_per_item": 280,
             },
+            # Runtime absorption: at each sim-day boundary, pull a small
+            # number of fresh external snippets aimed at the agent's
+            # current growth focus / values. Default OFF; opt in with
+            # `external_rag.runtime_absorb=true`. Wired by
+            # gaworld/memory/ingest.py and the day-tick hook in
+            # generative_city_sim.py.
+            "runtime_absorb": False,
+            "daily_quota_per_agent": 1,
         },
         # Simulation background (time/city/societal status prompt)
         "background": "2025年冬季，中国·杭州。经济发展中等偏稳，青年就业压力上升，生活成本偏高；社会秩序稳定但政策与舆论压力较高。",
@@ -66,6 +74,41 @@ def simulation_settings() -> dict[str, Any]:
         "vector_db_dim": 256,
         "vector_db_top_k": 3,
         "vector_db_max_chars": 2000,
+        # Embedding source for `_embed_text`:
+        #   "hash" — CRC32 hashed bag-of-words (default; zero-dep, weak).
+        #   "llm"  — Call provider's /embeddings endpoint with hash
+        #            fallback. Set up via llm.embedding_* settings below.
+        "vector_db_embedding_provider": "hash",
+        # Memory model knobs. All default to behavior-preserving values so
+        # the existing test suite is not affected unless flags flip ON.
+        "memory": {
+            # Recall-time scoring: weight cos_sim by salience and apply
+            # exponential decay on age in days. When False, scoring stays
+            # at pure cos_sim (legacy behavior).
+            "salience_weight": True,
+            "decay_halflife_days": 14,
+            # Multiply hit score by (1 + growth_boost_strength * priority)
+            # when the hit text matches a GrowthItem template/name. Light
+            # touch, default ON because it can only re-rank existing hits.
+            "growth_boost": True,
+            "growth_boost_strength": 0.15,
+            # Periodic consolidation: every N sim-days, summarize recent
+            # episodic entries into one or more `semantic` memories.
+            "consolidation": {
+                "enabled": True,
+                "every_days": 3,
+                "lookback_days": 3,
+                "max_outputs": 3,
+            },
+            # Periodic decay/forgetting: drop low-salience entries that
+            # haven't been recalled in a long time.
+            "decay": {
+                "enabled": True,
+                "every_days": 7,
+                "min_age_days": 30,
+                "salience_floor": 0.20,
+            },
+        },
         # Policy events (description only; effect inferred by LLM)
         "policy_events": [
             {

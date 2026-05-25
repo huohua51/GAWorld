@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from html import unescape
 
-from config import CONFIG
+from gaworld.settings import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
 from gaworld.interests import (
     bootstrap_growth_profiles,
@@ -40,7 +40,7 @@ from gaworld.sim._utils import (  # noqa: E402
     _clean_reflection,
 )
 
-from city_map_system import (
+from gaworld.world.city_map import (
     all_locations as city_all_locations,
     distance_between as city_distance_between,
     load_city_map as load_structured_city_map,
@@ -56,26 +56,26 @@ from city_map_system import (
     calc_transport_cost,
     is_rush_hour,
 )
-from distributed_comm import (
+from gaworld.distributed.comm import (
     DistributedRelayClient,
     extract_sender_agent_ids,
     format_inbox_context,
 )
-from dynamic_behavior import (
+from gaworld.behavior.dynamic import (
     dynamic_transient_thought,
     evaluate_step_dynamics,
     insert_activity_into_schedule as dynamic_insert_activity,
 )
-from extensibility import HookBus
-from environment import EnvironmentSystem, RemoteEnvironmentClient
-from llm_providers import call_llm
+from gaworld.hooks import HookBus
+from gaworld.env.system import EnvironmentSystem, RemoteEnvironmentClient
+from gaworld.llm.providers import call_llm
 from gaworld.work.runtime import RealWorkRuntime
 from gaworld.work.ingest import summarise_for_outcome as _rw_summarise
-from simulation_visualizer import (
+from gaworld.apps.visualizer import (
     SimulationVisualizer,
     build_agent_step_payload,
 )
-from experience_store import (
+from gaworld.memory.experience import (
     append_agent_episode,
     load_agent_episodes,
     load_agent_habits,
@@ -86,7 +86,7 @@ from experience_store import (
     save_agent_intentions,
     save_agent_relationships,
 )
-from human_realism import (
+from gaworld.cognition.realism import (
     build_context_key,
     build_daily_intentions,
     compute_episode_salience,
@@ -99,14 +99,14 @@ from human_realism import (
     update_habits_from_episode,
     update_needs,
 )
-from social_network import (
+from gaworld.social.network import (
     bootstrap_social_roster,
     decay_relationships,
     enforce_dunbar,
     generate_ghost_event,
     migrate_relationships,
 )
-from life_events import (
+from gaworld.events.life import (
     add_life_event as _add_life_event,
     life_events_for_agent,
     list_life_events,
@@ -158,20 +158,20 @@ def _maybe_inject_ghost_event(agent, day, time_str):
             exc,
         )
         return None
-from intervention_policy import (
+from gaworld.policy.intervention import (
     INTERVENTION_METRICS,
     append_intervention_metrics,
     build_intervention_feed,
     initialize_agent_intervention_state,
     update_agent_intervention_metrics,
 )
-from life_events import (
+from gaworld.events.life import (
     drain_due_life_events,
     format_life_event,
     life_event_dir,
     life_events_for_agent,
 )
-from memory_store import (
+from gaworld.memory.store import (
     append_agent_log,
     load_agent_actions,
     load_agent_locations,
@@ -195,6 +195,7 @@ from memory_store import (
     _format_memory_hint,
     _memory_action_bias,
 )
+from gaworld.memory.lifecycle import run_daily_memory_lifecycle  # noqa: E402
 
 # =========================================================
 # Utils
@@ -2410,6 +2411,7 @@ def update_state(agent):
 # Daily summary + daily diary chain (the entire ``# B. 长期记忆`` banner)
 # moved to gaworld.sim._diary during the S3 refactor.
 from gaworld.sim._diary import (  # noqa: E402
+    _append_memory_record,
     _daily_diary_path,
     _fallback_daily_diary,
     _top_day_episode_lines,
@@ -3842,6 +3844,22 @@ def run_simulation():
             daily_logs[agent["id"]] += diary_log
             append_agent_log(agent, diary_log)
             print(f"📓 {agent['name']} 的日记已写入：{diary_path}")
+        # RAG enhancement day-tick: consolidation / decay / runtime
+        # absorption. Each step is independently flag-gated, so with
+        # default config this loop just checks three flags per agent
+        # and returns. ``web_fetch_fn=None`` means runtime absorption
+        # is skipped — the user can wire a search adapter later.
+        for agent in agents:
+            try:
+                run_daily_memory_lifecycle(
+                    agent,
+                    day=day,
+                    time_str="end_of_day",
+                    llm=call_llm,
+                    web_fetch_fn=None,
+                )
+            except Exception as _lifecycle_exc:  # noqa: BLE001
+                print(f"⚠️ memory lifecycle hook failed for {agent.get('name')}: {_lifecycle_exc}")
         hook_bus.emit(
             "on_day_end",
             day=day,

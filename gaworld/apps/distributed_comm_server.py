@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from config import CONFIG
+from gaworld.settings import CONFIG
 
 
 def _to_int(value, default=0):

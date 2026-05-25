@@ -237,7 +237,7 @@ def load_simulation_config() -> SimulationConfig:
     Lazily imports :mod:`config` so this module is import-safe in unit
     tests that stub the legacy module.
     """
-    from config import CONFIG  # local import to avoid circular dependency
+    from gaworld.settings import CONFIG  # local import to avoid circular dependency
 
     return from_legacy(CONFIG)
 

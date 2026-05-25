@@ -8,9 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from config import CONFIG
-from environment import EnvironmentSystem
-from llm_providers import call_llm
+from gaworld.settings import CONFIG
+from gaworld.env.system import EnvironmentSystem
+from gaworld.llm.providers import call_llm
 
 
 def _to_int(value, default=0):

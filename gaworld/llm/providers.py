@@ -2,11 +2,12 @@ import json
 import os
 import time
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import requests
 
-from config import CONFIG
+from gaworld.settings import CONFIG
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.llm")
@@ -35,7 +36,7 @@ def _retrying(call: Callable[[], Any], *, attempts: int = 3, backoff: float = 1.
     for attempt in range(1, max(1, attempts) + 1):
         try:
             return call()
-        except Exception as exc:  # noqa: BLE001 — provider may raise anything
+        except Exception as exc:
             last_exc = exc
             if attempt >= attempts or not _is_retryable(exc):
                 raise
@@ -210,6 +211,41 @@ class OpenAIProvider:
         if self.stream:
             return _retrying(_do_streaming, provider=f"openai:{self.model}", task="")
         return _retrying(_do_blocking, provider=f"openai:{self.model}", task="")
+
+    def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
+        """Call OpenAI-compatible /embeddings endpoint.
+
+        ``model`` overrides ``self.model`` for the call (the chat model
+        is rarely an embeddings model). Returns a list of float vectors
+        aligned with ``texts``. Raises on transport errors so the caller
+        can fall back to the hash embedding.
+        """
+        if not texts:
+            return []
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model or self.model,
+            "input": list(texts),
+        }
+
+        def _do() -> list[list[float]]:
+            r = requests.post(
+                f"{self.base_url}/embeddings",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+            data = r.json()
+            items = data.get("data") or []
+            # OpenAI returns items in index order; sort defensively.
+            items = sorted(items, key=lambda x: x.get("index", 0))
+            return [list(map(float, item.get("embedding", []))) for item in items]
+
+        return _retrying(_do, provider=f"openai:{payload['model']}", task="embed")
 
 
 class AnthropicProvider:
@@ -455,7 +491,7 @@ class LLMRouter:
                     prompt_chars, len(result or ""), elapsed_ms,
                 )
                 return result
-            except Exception as exc:  # noqa: BLE001 — log, then continue or re-raise
+            except Exception as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 log.warning(
                     "llm.call err id=%s provider=%s fallback_index=%d task=%s agent=%s "
@@ -495,3 +531,56 @@ def call_llm(prompt, task=None, agent_id=None):
     * raises the original :class:`requests` exception on hard failure.
     """
     return LLM_ROUTER.call(prompt, task=task, agent_id=agent_id)
+
+
+# ---------------------------------------------------------------------
+# Embedding helper (D2 of the RAG enhancement plan)
+# ---------------------------------------------------------------------
+#
+# The memory store calls :func:`embed_text` to turn a piece of text into
+# a vector. It expects ``list[float] | None``; ``None`` means "fall
+# back to the hash bag-of-words" so the memory store stays usable when
+# no embedding provider is configured (or the embeddings endpoint is
+# unreachable). This keeps the existing zero-dep test suite green.
+#
+# Configuration shape:
+#   llm.embedding = {
+#       "provider": "<name of an OpenAI-compatible provider in
+#                     llm.providers>",
+#       "model":    "text-embedding-3-small",   # OpenAI-style
+#   }
+# Plus the global toggle ``vector_db_embedding_provider`` in
+# runtime settings selects "hash" (default) or "llm".
+
+def _embedding_provider_name() -> str | None:
+    return (CONFIG.get("llm", {}).get("embedding", {}) or {}).get("provider")
+
+
+def _embedding_model_name() -> str | None:
+    return (CONFIG.get("llm", {}).get("embedding", {}) or {}).get("model")
+
+
+def embed_text(text, task: str | None = None) -> list[float] | None:
+    """Return an embedding vector for ``text``, or ``None`` on failure.
+
+    The function never raises: callers depend on a clean fallback to
+    the hash embedding when LLM-side embeddings are unavailable.
+    """
+    if CONFIG.get("vector_db_embedding_provider", "hash") != "llm":
+        return None
+    if not isinstance(text, str) or not text.strip():
+        return None
+    provider_name = _embedding_provider_name()
+    if not provider_name or provider_name not in LLM_ROUTER.providers:
+        return None
+    provider = LLM_ROUTER.providers[provider_name]
+    if not hasattr(provider, "embed"):
+        return None
+    try:
+        vecs = provider.embed([text], model=_embedding_model_name())
+    except Exception as exc:
+        _LOG.warning("embed_text failed via %s (task=%s): %s", provider_name, task or "", exc)
+        return None
+    if not vecs or not vecs[0]:
+        return None
+    return [float(x) for x in vecs[0]]

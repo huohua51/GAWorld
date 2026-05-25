@@ -1,3 +1,11 @@
+"""Lifecycle hook dispatcher (HookBus).
+
+Canonical home: :mod:`gaworld.hooks`.
+Legacy callers should use the ``extensibility`` shim at the project root.
+"""
+
+from __future__ import annotations
+
 import importlib
 from collections import defaultdict
 

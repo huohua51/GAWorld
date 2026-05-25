@@ -64,7 +64,7 @@ class TestDefaultsCoverFrequentTasks(unittest.TestCase):
 
 class TestInstallPatch(unittest.TestCase):
     def test_install_swaps_llm_providers_call_llm(self):
-        import llm_providers
+        from gaworld.llm import providers as llm_providers
 
         original = llm_providers.call_llm
         with install() as mock:

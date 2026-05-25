@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from city_map_system import distance_between, load_city_map, shortest_path, travel_plan
+from gaworld.world.city_map import distance_between, load_city_map, shortest_path, travel_plan
 from scripts.generate_citymap import generate_citymap
 
 

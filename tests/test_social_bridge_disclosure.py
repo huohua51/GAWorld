@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-import social_network as sn
+from gaworld.social import network as sn
 
 
 def _agent(aid, ghosts):

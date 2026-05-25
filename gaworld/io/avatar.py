@@ -1,3 +1,11 @@
+"""SVG avatar generation for agents.
+
+Canonical home: :mod:`gaworld.io.avatar`.
+Legacy callers should use the ``avatar_generator`` shim at the project root.
+"""
+
+from __future__ import annotations
+
 import hashlib
 import os
 from html import escape
