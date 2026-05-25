@@ -117,6 +117,108 @@ class AgentProfile:
 价值观：{', '.join(self.values.explicit_priorities)}
 """
 
+    @classmethod
+    def from_gaworld_agent(cls, agent: Dict, gender: str = "", hukou: str = "") -> "AgentProfile":
+        """
+        从 GAWorld 扁平 agent dict 构造 AgentProfile
+
+        用于 build_agent() 中，为每个智能体构建独立的生活史人格档案，
+        而不是共用 Agent 52 的 profile。
+        """
+        identity = Identity(
+            agent_id=agent.get("id", 0),
+            name=agent.get("name", f"Agent {agent.get('id', '?')}"),
+            gender=gender,
+            age=int(agent.get("age", 25)),
+            hukou=hukou,
+            residence=agent.get("living", agent.get("residence", "")),
+            occupation=agent.get("job", agent.get("work_style", "")),
+            role_in_context=agent.get("job", ""),
+        )
+
+        # 从 personality/daily_life 文本推断生活史
+        personality_text = agent.get("personality", "")
+        job_text = agent.get("job", "")
+        values_text = agent.get("values", "")
+
+        # 启发式：从文本关键词推断人格特质（0.0-1.0）
+        openness = _infer_trait(personality_text, ["好奇", "开放", "创意", "艺术"], 0.5)
+        conscientiousness = _infer_trait(personality_text, ["严谨", "负责", "自律", "计划"], 0.65)
+        extraversion = _infer_trait(personality_text, ["外向", "活跃", "社交", "健谈"], 0.45)
+        agreeableness = _infer_trait(personality_text, ["友善", "随和", "合作", "信任"], 0.55)
+        neuroticism = _infer_trait(personality_text, ["敏感", "焦虑", "情绪化", "神经质"], 0.35)
+        rationality = _infer_trait(personality_text, ["理性", "冷静", "逻辑", "务实"], 0.7)
+        result_orientation = _infer_trait(personality_text, ["结果导向", "效率", "成就"], 0.7)
+        impulse_control = _infer_trait(personality_text, ["自律", "克制", "稳重"], 0.6)
+
+        personality_traits = PersonalityTraits(
+            openness=openness,
+            conscientiousness=conscientiousness,
+            extraversion=extraversion,
+            agreeableness=agreeableness,
+            neuroticism=neuroticism,
+            rationality=rationality,
+            result_orientation=result_orientation,
+            impulse_control=impulse_control,
+        )
+
+        # 从 values 文本提取优先级
+        explicit_priorities = [values_text] if values_text else []
+        implicit_biases = {
+            "achievement": result_orientation,
+            "autonomy": _infer_trait(personality_text, ["自主", "独立", "自由"], 0.5),
+            "security": _infer_trait(values_text, ["稳定", "安全", "保障"], 0.5),
+            "social_harmony": agreeableness,
+        }
+
+        values = Values(
+            explicit_priorities=explicit_priorities,
+            implicit_biases=implicit_biases,
+        )
+
+        # 从 daily_life 推断沟通风格
+        daily_life_text = agent.get("daily_life", "")
+        formality = _infer_trait(job_text, ["研究", "学术", "医生", "律师", "教师"], 0.6, inverse=True)
+        directness = _infer_trait(personality_text, ["直接", "果断", "干脆"], 0.65)
+        emotional_expr = _infer_trait(personality_text, ["感性", "情绪化", "表达"], 0.4, inverse=True)
+        humor = _infer_trait(personality_text, ["幽默", "风趣", "调侃"], 0.3)
+
+        communication = CommunicationStyle(
+            formality_level=formality,
+            emotional_expressiveness=emotional_expr,
+            directness=directness,
+            humor_usage=humor,
+        )
+
+        # 生活史：从 job 和 personality 文本构建关键事件摘要
+        life_history = LifeHistory(
+            self_narrative=f"{identity.name}，{identity.occupation}。{personality_text}",
+            narrative_patterns=[],
+        )
+
+        return cls(
+            identity=identity,
+            life_history=life_history,
+            values=values,
+            personality=personality_traits,
+            communication=communication,
+        )
+
+
+def _infer_trait(text: str, keywords: List[str], default: float, inverse: bool = False) -> float:
+    """从文本关键词启发式推断特质值"""
+    if not text:
+        return default
+    count = sum(1 for kw in keywords if kw in text)
+    if count == 0:
+        return default
+    # 线性映射：1个关键词命中 => default+0.15, 2+ => default+0.25, 3+ => default+0.35
+    delta = min(0.35, 0.1 + count * 0.1)
+    value = default + delta
+    if inverse:
+        value = 1.0 - min(1.0, value)
+    return round(min(1.0, max(0.0, value)), 2)
+
 
 # =========================================================
 # 2. AffectState - 情绪、压力、疲劳、自信、动机、注意力

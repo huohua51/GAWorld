@@ -1754,6 +1754,15 @@ def build_agent(agent_id, df, city_map=None):
     if city_map is None:
         city_map = load_city_map(MAP_PATH)
     init_agent_locations(agent, city_map)
+
+    # 为每个 agent 构造独立的 LifeHistory AgentProfile（而非共用 Agent 52 的）
+    from gaworld.core.life_history import AgentProfile
+    agent["profile"] = AgentProfile.from_gaworld_agent(
+        agent,
+        gender=agent.get("gender", ""),
+        hukou=agent.get("hukou", ""),
+    )
+
     return agent
 
 def print_agent_profiles(agent_ids):
