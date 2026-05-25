@@ -142,9 +142,13 @@ class LifeHistoryEngine:
         """
         parts = []
 
-        # 0. Profile 人格摘要 - 身份、职业、核心人格倾向
+        # 0. Profile 人格摘要 - 分层输出，每段独立、稳定进入 prompt
         if self.profile:
             p = self.profile
+            # 身份/职业（固定不变，最重要）
+            identity_line = f"你是{p.identity.name}，{p.identity.occupation}。"
+
+            # 人格倾向（3-4个核心特质，约30字）
             traits = []
             if p.personality.rationality >= 0.75:
                 traits.append("理性优先")
@@ -162,7 +166,23 @@ class LifeHistoryEngine:
                 traits.append("压力下易焦虑")
             elif p.personality.stress_response <= 0.4:
                 traits.append("压力下沉稳")
+            personality_line = f"人格：{'、'.join(traits[:4])}。" if traits else ""
 
+            # 日常习惯（直接取 GAWorld agent 的 daily_life，约40字）
+            daily_life = ""
+            if self._gaworld_agent:
+                raw_daily = self._gaworld_agent.get("daily_life", "")
+                if raw_daily:
+                    daily_life = f"日常：{raw_daily[:40]}"
+            if not daily_life and p.life_history.self_narrative:
+                # fallback: 从 self_narrative 提取"日常："以后的部分
+                import re
+                m = re.search(r'日常[：:](.+?)(?:。|$)', p.life_history.self_narrative)
+                if m:
+                    daily_life = f"日常：{m.group(1)[:40]}"
+            daily_line = daily_life + "。" if daily_life and not daily_life.endswith("。") else daily_life
+
+            # 沟通风格（2-3个维度，约20字）
             comm_parts = []
             if p.communication.formality_level >= 0.7:
                 comm_parts.append("正式")
@@ -174,16 +194,18 @@ class LifeHistoryEngine:
                 comm_parts.append("幽默")
             if p.communication.emotional_expressiveness >= 0.65:
                 comm_parts.append("情感外露")
+            communication_line = f"沟通：{'、'.join(comm_parts[:3])}。" if comm_parts else ""
 
-            profile_desc = f"你是{p.identity.name}，{p.identity.occupation}。"
-            if traits:
-                profile_desc += f"人格倾向：{'、'.join(traits)}。"
-            if comm_parts:
-                profile_desc += f"沟通风格：{'、'.join(comm_parts)}。"
-            if p.life_history.self_narrative:
-                profile_desc += f"自我认知：{p.life_history.self_narrative[:50]}"
+            # 组装：分层输出，保证每段完整
+            profile_lines = [identity_line]
+            if personality_line:
+                profile_lines.append(personality_line)
+            if daily_line:
+                profile_lines.append(daily_line)
+            if communication_line:
+                profile_lines.append(communication_line)
 
-            parts.append(profile_desc)
+            parts.append(" ".join(profile_lines))
 
         # 1. 关系上下文 - 使用持久化的 runtime_state
         if self.runtime_state.relationships:
