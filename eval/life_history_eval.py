@@ -116,32 +116,88 @@ class LifeHistoryEvaluator:
              "differences": [str], "verdict": str}
         """
         from gaworld.core.life_history import AgentProfile, create_life_history_engine
+        import re, os
 
-        li_dict = {
-            "id": 1, "name": "李泽宇", "age": 24, "gender": "男",
-            "job": "互联网企业初级算法工程师",
-            "personality": "性格偏内向理性，低冲突倾向，习惯用技术问题掩盖情绪问题",
-            "daily_life": "工作日以公司—出租屋两点一线为主，饮食高度依赖外卖；周末多用于补觉、个人技术学习、偶尔健身。作息偏晚睡晚起。",
-            "values": "效率导向",
-            "living": "余杭未来科技城",
-        }
-        zhou_dict = {
-            "id": 2, "name": "周婉清", "age": 26, "gender": "女",
-            "job": "互联网公司 UI 设计师",
-            "personality": "外向、感性，对审美与秩序高度敏感，情绪随项目反馈波动",
-            "daily_life": "偏好咖啡馆办公、夜跑和看展，注重生活品质",
-            "values": "支持公共文化与城市美学投入",
-            "living": "滨江区白马湖",
-        }
+        # Read from real MD profile file
+        md_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "hangzhou_profiles_with_names.md")
+        try:
+            with open(md_path, "r", encoding="utf-8") as f:
+                md_text = f.read()
+        except OSError:
+            # Fallback to hardcoded dicts if MD file not accessible
+            md_text = ""
 
-        li_profile = AgentProfile.from_gaworld_agent(li_dict, gender="男", hukou="外省")
-        zhou_profile = AgentProfile.from_gaworld_agent(zhou_dict, gender="女", hukou="外省")
+        def _extract_agent_dict(md_text: str, agent_num: str) -> dict:
+            """Parse a single agent block from MD text."""
+            pattern = rf"## Profile {agent_num}｜(.+?)(?=\n## Profile |\Z)"
+            match = re.search(pattern, md_text, re.S)
+            if not match:
+                return {}
+            block = match.group(0)
 
-        li_engine = create_life_history_engine(agent_id=1, agent_name="李泽宇", profile=li_profile)
+            def _field(key: str) -> str:
+                # Field may appear as "**Key**：value" or "Key：value"
+                m = re.search(rf"\*\*{key}\*\*：(.+?)(?=\n\n\*\*|\n## |$)", block, re.S)
+                if not m:
+                    m = re.search(rf"{key}：(.+?)(?=\n\n\*\*|\n## |$)", block, re.S)
+                return m.group(1).strip() if m else ""
+
+            name_m = re.search(r"## Profile \d+｜(.+)", block)
+            name = name_m.group(1).strip() if name_m else f"Agent {agent_num}"
+
+            base = _field("基础信息")
+            age_m = re.search(r"(\d+)岁", base)
+            gender_m = re.search(r"^(男|女)", base)
+            hukou_m = re.search(r"外省|本地|外国", base)
+            living_m = re.search(r"现居住于?(.+?)[，,。]", base)
+
+            return {
+                "id": int(agent_num),
+                "name": name,
+                "age": int(age_m.group(1)) if age_m else 25,
+                "gender": gender_m.group(1) if gender_m else "",
+                "hukou": hukou_m.group(0) if hukou_m else "",
+                "job": _field("职业与工作节奏"),
+                "personality": _field("性格与情绪特征"),
+                "daily_life": _field("日常生活与生活习惯"),
+                "values": _field("价值观与公共事务态度"),
+                "living": living_m.group(1) if living_m else "",
+            }
+
+        li_dict = _extract_agent_dict(md_text, "01")
+        zhou_dict = _extract_agent_dict(md_text, "02")
+
+        # Fallback if MD parsing failed
+        if not li_dict:
+            li_dict = {
+                "id": 1, "name": "李泽宇", "age": 24, "gender": "男", "hukou": "外省",
+                "job": "互联网企业初级算法工程师",
+                "personality": "性格偏内向理性，低冲突倾向，习惯用技术问题掩盖情绪问题",
+                "daily_life": "工作日以公司—出租屋两点一线为主，饮食高度依赖外卖；周末多用于补觉、个人技术学习、偶尔健身。作息偏晚睡晚起。",
+                "values": "效率导向",
+                "living": "余杭未来科技城",
+            }
+        if not zhou_dict:
+            zhou_dict = {
+                "id": 2, "name": "周婉清", "age": 26, "gender": "女", "hukou": "外省",
+                "job": "互联网公司 UI 设计师",
+                "personality": "外向、感性，对审美与秩序高度敏感，情绪随项目反馈波动",
+                "daily_life": "偏好咖啡馆办公、夜跑和看展，注重生活品质",
+                "values": "支持公共文化与城市美学投入",
+                "living": "滨江区白马湖",
+            }
+
+        li_profile = AgentProfile.from_gaworld_agent(
+            li_dict, gender=li_dict.get("gender", ""), hukou=li_dict.get("hukou", ""))
+        zhou_profile = AgentProfile.from_gaworld_agent(
+            zhou_dict, gender=zhou_dict.get("gender", ""), hukou=zhou_dict.get("hukou", ""))
+
+        li_engine = create_life_history_engine(agent_id=1, agent_name=li_dict["name"], profile=li_profile)
         li_engine._gaworld_agent = li_dict
         li_ctx = li_engine.build_planning_context(activity="规划日程", perception_text="今天天气不错")
 
-        zhou_engine = create_life_history_engine(agent_id=2, agent_name="周婉清", profile=zhou_profile)
+        zhou_engine = create_life_history_engine(agent_id=2, agent_name=zhou_dict["name"], profile=zhou_profile)
         zhou_engine._gaworld_agent = zhou_dict
         zhou_ctx = zhou_engine.build_planning_context(activity="规划日程", perception_text="今天天气不错")
 

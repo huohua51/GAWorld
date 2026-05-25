@@ -168,18 +168,26 @@ class LifeHistoryEngine:
                 traits.append("压力下沉稳")
             personality_line = f"人格：{'、'.join(traits[:4])}。" if traits else ""
 
-            # 日常习惯（直接取 GAWorld agent 的 daily_life，约40字）
+            # 日常习惯：分句提取 2-3 个完整短语，不硬截断
             daily_life = ""
             if self._gaworld_agent:
                 raw_daily = self._gaworld_agent.get("daily_life", "")
                 if raw_daily:
-                    daily_life = f"日常：{raw_daily[:40]}"
+                    # 按句号/分号拆开，保留完整短语
+                    import re
+                    sentences = re.split(r'[；;。]', raw_daily)
+                    sentences = [s.strip() for s in sentences if s.strip()]
+                    # 取前 2-3 个完整句子，拼到约50字
+                    chosen = sentences[:3]
+                    daily_life = "日常：" + "；".join(chosen)
             if not daily_life and p.life_history.self_narrative:
-                # fallback: 从 self_narrative 提取"日常："以后的部分
                 import re
                 m = re.search(r'日常[：:](.+?)(?:。|$)', p.life_history.self_narrative)
                 if m:
-                    daily_life = f"日常：{m.group(1)[:40]}"
+                    sentences = re.split(r'[；;。]', m.group(1))
+                    sentences = [s.strip() for s in sentences if s.strip()]
+                    chosen = sentences[:3]
+                    daily_life = "日常：" + "；".join(chosen)
             daily_line = daily_life + "。" if daily_life and not daily_life.endswith("。") else daily_life
 
             # 沟通风格（2-3个维度，约20字）
