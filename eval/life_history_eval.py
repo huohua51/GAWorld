@@ -103,6 +103,77 @@ class LifeHistoryEvaluator:
         self.mock_scores = create_mock_scores()
         self.profile = create_agent_52_profile()
         self.state = create_agent_52_runtime_state(self.profile)
+
+    def check_profile_context_diversity(self) -> Dict:
+        """
+        辅助指标：验证不同 agent 的 profile context 确实不同。
+
+        使用李泽宇(01)和周婉清(02)的真实数据，
+        验证 per-agent profile → planning context 的差异化是否生效。
+
+        Returns:
+            {"pass": bool, "li_ctx": str, "zhou_ctx": str,
+             "differences": [str], "verdict": str}
+        """
+        from gaworld.core.life_history import AgentProfile, create_life_history_engine
+
+        li_dict = {
+            "id": 1, "name": "李泽宇", "age": 24, "gender": "男",
+            "job": "互联网企业初级算法工程师",
+            "personality": "性格偏内向理性，低冲突倾向，习惯用技术问题掩盖情绪问题",
+            "daily_life": "工作日以公司—出租屋两点一线为主，饮食高度依赖外卖；周末多用于补觉、个人技术学习、偶尔健身。作息偏晚睡晚起。",
+            "values": "效率导向",
+            "living": "余杭未来科技城",
+        }
+        zhou_dict = {
+            "id": 2, "name": "周婉清", "age": 26, "gender": "女",
+            "job": "互联网公司 UI 设计师",
+            "personality": "外向、感性，对审美与秩序高度敏感，情绪随项目反馈波动",
+            "daily_life": "偏好咖啡馆办公、夜跑和看展，注重生活品质",
+            "values": "支持公共文化与城市美学投入",
+            "living": "滨江区白马湖",
+        }
+
+        li_profile = AgentProfile.from_gaworld_agent(li_dict, gender="男", hukou="外省")
+        zhou_profile = AgentProfile.from_gaworld_agent(zhou_dict, gender="女", hukou="外省")
+
+        li_engine = create_life_history_engine(agent_id=1, agent_name="李泽宇", profile=li_profile)
+        li_engine._gaworld_agent = li_dict
+        li_ctx = li_engine.build_planning_context(activity="规划日程", perception_text="今天天气不错")
+
+        zhou_engine = create_life_history_engine(agent_id=2, agent_name="周婉清", profile=zhou_profile)
+        zhou_engine._gaworld_agent = zhou_dict
+        zhou_ctx = zhou_engine.build_planning_context(activity="规划日程", perception_text="今天天气不错")
+
+        differences = []
+        li_daily_markers = ["两点一线", "外卖", "补觉", "技术学习", "晚睡晚起"]
+        zhou_daily_markers = ["咖啡馆", "夜跑", "看展", "生活品质"]
+        li_found = [m for m in li_daily_markers if m in li_ctx]
+        zhou_found = [m for m in zhou_daily_markers if m in zhou_ctx]
+        if li_found:
+            differences.append(f"李泽宇日常标记: {', '.join(li_found)}")
+        if zhou_found:
+            differences.append(f"周婉清日常标记: {', '.join(zhou_found)}")
+        if "内向" in li_ctx or "理性" in li_ctx:
+            differences.append("李泽宇人格: 内向/理性")
+        if "外向" in zhou_ctx or "感性" in zhou_ctx:
+            differences.append("周婉清人格: 外向/感性")
+
+        contexts_differ = li_ctx != zhou_ctx
+        daily_differentiated = bool(li_found and zhou_found)
+        personality_differentiated = ("内向" in li_ctx or "理性" in li_ctx) and ("外向" in zhou_ctx or "感性" in zhou_ctx)
+        verdict = "PASS" if (contexts_differ and daily_differentiated and personality_differentiated) else "FAIL"
+
+        return {
+            "pass": verdict == "PASS",
+            "verdict": verdict,
+            "li_ctx": li_ctx,
+            "zhou_ctx": zhou_ctx,
+            "differences": differences,
+            "daily_differentiated": daily_differentiated,
+            "personality_differentiated": personality_differentiated,
+            "contexts_differ": contexts_differ,
+        }
     
     def run_full_evaluation(self) -> Dict:
         """执行完整评估"""
@@ -138,7 +209,10 @@ class LifeHistoryEvaluator:
         results["total_score"] = sum(d["raw"] for d in results["dimensions"].values())
         results["total_max"] = sum(d["max"] for d in results["dimensions"].values())
         results["grade"] = self._compute_grade(results["weighted_score"])
-        
+
+        # 辅助指标：profile context diversity
+        results["profile_context_diversity"] = self.check_profile_context_diversity()
+
         return results
     
     def _evaluate_dimension(self, dim_key: str, dim_config: Dict) -> Dict:
@@ -205,7 +279,18 @@ class LifeHistoryEvaluator:
             print("优先改进项:")
             for rec in results["recommendations"]:
                 print(f"  {rec}")
-        
+
+        # Profile context diversity 验证
+        div = results.get("profile_context_diversity", {})
+        if div:
+            verdict_icon = "PASS" if div.get("verdict") == "PASS" else "FAIL"
+            icon = "OK" if div.get("verdict") == "PASS" else "!!"
+            print()
+            print("-" * 60)
+            print(f"Profile Context Diversity: {verdict_icon} {icon}")
+            for diff in div.get("differences", []):
+                print(f"  {diff}")
+
         print()
         print("=" * 60)
     
@@ -232,13 +317,27 @@ class LifeHistoryEvaluator:
                 md += "❌ 不足 |\n"
         
         md += f"""
-**总分**: {results['total_score']}/{results['total_max']}  
-**加权得分**: {results['weighted_score']}/100  
+**总分**: {results['total_score']}/{results['total_max']}
+**加权得分**: {results['weighted_score']}/100
 **评级**: {results['grade']}
 
-## 二、各维度详细分析
+## 二、Profile Context Diversity 验证（辅助指标，不计入总分）
 
 """
+
+        div = results.get("profile_context_diversity", {})
+        verdict_icon = "PASS" if div.get("verdict") == "PASS" else "FAIL"
+        md += f"**验证结果**: {verdict_icon}\n\n"
+        for diff in div.get("differences", []):
+            md += f"- {diff}\n"
+        md += "\n**李泽宇 context**:\n"
+        li_ctx = div.get("li_ctx", "")
+        md += f"```\n{li_ctx}\n```\n\n"
+        md += "**周婉清 context**:\n"
+        zhou_ctx = div.get("zhou_ctx", "")
+        md += f"```\n{zhou_ctx}\n```\n\n"
+
+        md += "---\n\n## 三、各维度详细分析\n\n"
         
         for dim_key, dim_result in results["dimensions"].items():
             md += f"### {dim_result['name']}\n\n"
@@ -278,23 +377,23 @@ class LifeHistoryEvaluator:
             
             md += "\n"
         
-        md += """## 三、Agent 52 (郭林峰) 特点总结
+        md += """## 四、Agent 52 (郭林峰) 特点总结
 
-### 3.1 人格特征
+### 4.1 人格特征
 - **理性驱动**：极度结果导向，用数据而非语言证明自己
 - **矛盾性**：完美主义 vs 速度优先；极度理性 vs 对不确定性焦虑
 - **结果导向**：设定可验证的交付节点是核心行为模式
 
-### 3.2 当前优势
+### 4.2 当前优势
 - 人格一致性较高（64%）
 - 状态更新逻辑正确（MiniMax模型）
 
-### 3.3 待改进项
+### 4.3 待改进项
 - 关系记忆（0%）：完全没有追踪与其他Agent的关系
 - 有限理性（33.3%）：无决策限制，无不确定性表达
 - 情感记忆（45%）：无情感事件记忆机制
 
-## 四、下一步实现计划
+## 五、下一步实现计划
 
 | 优先级 | 维度 | 目标 | 实现方式 |
 |--------|------|------|----------|
