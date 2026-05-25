@@ -201,21 +201,11 @@ def update_relationships_from_reflection(
     else:
         signal = "neutral"
 
-    # 更新关系
+    # 更新关系 - 仅通过 InteractionRecord，避免双重应用
     for other_id in social_partners:
         rel = runtime_state.get_relationship(other_id)
 
-        if signal == "positive":
-            rel.trust = min(1.0, rel.trust + 0.02)
-            rel.intimacy = min(1.0, rel.intimacy + 0.03)
-            rel.conflict_level = max(0, rel.conflict_level - 0.02)
-        elif signal == "negative":
-            rel.trust = max(0, rel.trust - 0.03)
-            rel.conflict_level = min(1.0, rel.conflict_level + 0.05)
-        else:
-            rel.intimacy = min(1.0, rel.intimacy + 0.01)
-
-        # 记录交互
+        # 记录交互（trust_change/intimacy_change 在 add_interaction 中应用）
         record = InteractionRecord(
             timestamp=float(current_day),
             interaction_type="reflection_update",

@@ -287,6 +287,12 @@ class LifeHistoryEngine:
             gw_item["obligation"] = min(1.0, rel_mem.pressure + 0.3)
             # conflict_level -> friction (反推)
             gw_item["friction"] = min(1.0, rel_mem.conflict_level + 0.3)
+            # 更新最近互动时间（从 InteractionRecord 中获取最新时间）
+            if rel_mem.interaction_history:
+                latest_timestamp = max(
+                    rec.timestamp for rec in rel_mem.interaction_history
+                )
+                gw_item["last_interaction_day"] = int(latest_timestamp)
 
     def get_memory_summary(self) -> str:
         """获取记忆摘要（用于日志）"""

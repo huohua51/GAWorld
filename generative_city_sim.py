@@ -2891,12 +2891,17 @@ def _is_outcome_success(outcome: str) -> bool:
     判断行动结果是否成功
 
     使用多关键词投票机制，避免单一关键词的脆性判断
+    支持"不算失败"类特殊场景（不算=成功）
     """
     if not outcome:
         return False
 
-    success_keywords_pos = ["完成", "成功", "达成", "顺利", "不错", "好", "达标", "通过"]
-    success_keywords_neg = ["失败", "未完成", "糟糕", "挫折", "失误", "差", "没做成", "不算"]
+    # 特殊模式：明确说"不算X"时，X的反义
+    if "不算" in outcome and "失败" in outcome:
+        return True  # "不算失败" = 成功
+
+    success_keywords_pos = ["完成", "成功", "达成", "顺利", "不错", "好", "达标", "通过", "completed"]
+    success_keywords_neg = ["失败", "未完成", "糟糕", "挫折", "失误", "差", "没做成"]
 
     pos_count = sum(1 for k in success_keywords_pos if k in outcome)
     neg_count = sum(1 for k in success_keywords_neg if k in outcome)
@@ -5216,6 +5221,7 @@ def run_simulation():
             agent["life_history_engine"] = create_life_history_engine(
                 agent_id=agent["id"],
                 agent_name=agent["name"],
+                profile=agent.get("profile"),
             )
     if PRINT_AGENT_PROFILE:
         print_agent_profiles([a["id"] for a in agents])
