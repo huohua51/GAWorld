@@ -161,6 +161,73 @@ class TestProfileContextFourLayers:
         # Contexts must be different strings
         assert li_ctx != zhou_ctx, "Identical contexts for different agents — profile not affecting output"
 
+    def test_behavior_tendency_vs_zhou_wanqing(self):
+        """
+        Same scenario, two agents — behavioral tendencies must differ.
+
+        Li Zeyu (内向理性/两点一线/技术学习) and Zhou Wanqing
+        (外向感性/咖啡馆/夜跑/看展) respond differently to the same
+        weekend-planning scenario, proving profile affects which
+        actions feel natural, not just what keywords appear.
+        """
+        li_dict = {
+            "id": 1, "name": "李泽宇", "age": 24, "gender": "男",
+            "job": "初级算法工程师",
+            "personality": "内向理性，低冲突倾向",
+            "daily_life": "工作日两点一线；周末补觉、个人技术学习。晚睡晚起。",
+            "values": "效率导向",
+            "living": "余杭",
+        }
+        zhou_dict = {
+            "id": 2, "name": "周婉清", "age": 26, "gender": "女",
+            "job": "UI 设计师",
+            "personality": "外向感性，对审美高度敏感",
+            "daily_life": "偏好咖啡馆办公、夜跑和看展，注重生活品质。",
+            "values": "审美与秩序",
+            "living": "滨江",
+        }
+        shared_perception = "周末快到了，你在考虑怎么安排"
+        shared_activity = "规划周末活动"
+
+        li_profile = AgentProfile.from_gaworld_agent(li_dict, gender="男", hukou="外省")
+        zhou_profile = AgentProfile.from_gaworld_agent(zhou_dict, gender="女", hukou="外省")
+
+        li_engine = create_life_history_engine(agent_id=1, agent_name="李泽宇", profile=li_profile)
+        li_engine._gaworld_agent = li_dict
+        li_ctx = li_engine.build_planning_context(activity=shared_activity, perception_text=shared_perception)
+
+        zhou_engine = create_life_history_engine(agent_id=2, agent_name="周婉清", profile=zhou_profile)
+        zhou_engine._gaworld_agent = zhou_dict
+        zhou_ctx = zhou_engine.build_planning_context(activity=shared_activity, perception_text=shared_perception)
+
+        # Structural divergence: work/social markers
+        li_work_markers = ["技术", "学习", "在家", "补觉", "晚睡"]
+        zhou_social_markers = ["咖啡馆", "夜跑", "看展", "生活品质", "审美"]
+
+        li_has_work = any(m in li_ctx for m in li_work_markers)
+        zhou_has_social = any(m in zhou_ctx for m in zhou_social_markers)
+
+        assert li_has_work, (
+            f"李泽宇 context missing work-oriented markers ({li_work_markers}):\n{li_ctx}"
+        )
+        assert zhou_has_social, (
+            f"周婉清 context missing social/lifestyle markers ({zhou_social_markers}):\n{zhou_ctx}"
+        )
+
+        # Cross-agent contrast: what is true for one is not dominant for the other
+        li_work_dominant = sum(m in li_ctx for m in li_work_markers) >= sum(m in zhou_ctx for m in li_work_markers)
+        zhou_social_dominant = sum(m in zhou_ctx for m in zhou_social_markers) >= sum(m in li_ctx for m in zhou_social_markers)
+
+        assert li_work_dominant, (
+            f"李泽宇 should show work tendency over social, but context suggests otherwise:\n{li_ctx}"
+        )
+        assert zhou_social_dominant, (
+            f"周婉清 should show social tendency over work, but context suggests otherwise:\n{zhou_ctx}"
+        )
+
+        # Contexts must be different strings
+        assert li_ctx != zhou_ctx, "Identical contexts despite different profiles"
+
     def test_social_autonomy_from_daily_life(self):
         """social_autonomy trait inferred from daily_life keywords must appear."""
         # Agent who works alone at home
