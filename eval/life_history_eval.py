@@ -346,7 +346,7 @@ class LifeHistoryEvaluator:
             for rec in results["recommendations"]:
                 print(f"  {rec}")
 
-        # Profile context diversity 验证
+        # Context tendency diversity 验证
         div = results.get("profile_context_diversity", {})
         if div:
             verdict_icon = "PASS" if div.get("verdict") == "PASS" else "FAIL"
@@ -355,7 +355,7 @@ class LifeHistoryEvaluator:
             warn = " [WARN: used fallback]" if data_source == "fallback" else ""
             print()
             print("-" * 60)
-            print(f"Profile Context Diversity: {verdict_icon} {icon} (source: {data_source}){warn}")
+            print(f"Context Tendency Diversity: {verdict_icon} {icon} (source: {data_source}){warn}")
             for diff in div.get("differences", []):
                 print(f"  {diff}")
 
@@ -389,9 +389,9 @@ class LifeHistoryEvaluator:
 **加权得分**: {results['weighted_score']}/100
 **评级**: {results['grade']}
 
-## 二、Profile / Behavior Diversity 验证（辅助指标，不计入总分）
+## 二、Context Tendency Diversity 验证（辅助指标，不计入总分）
 
-> 验证：同场景下，不同 profile 的 agent 产生不同行为倾向上下文
+> 验证：同场景下，不同 profile 的 agent 产生不同行为倾向上下文（基于 prompt context 字符串，非真实 action 输出）
 
 """
 
