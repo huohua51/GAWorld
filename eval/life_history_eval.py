@@ -168,8 +168,12 @@ class LifeHistoryEvaluator:
         li_dict = _extract_agent_dict(md_text, "01")
         zhou_dict = _extract_agent_dict(md_text, "02")
 
-        # Fallback if MD parsing failed
-        if not li_dict:
+        # Fallback if MD parsing failed (data_source = "fallback")
+        li_used_fallback = not bool(li_dict)
+        zhou_used_fallback = not bool(zhou_dict)
+        data_source = "fallback" if (li_used_fallback or zhou_used_fallback) else "md"
+
+        if li_used_fallback:
             li_dict = {
                 "id": 1, "name": "李泽宇", "age": 24, "gender": "男", "hukou": "外省",
                 "job": "互联网企业初级算法工程师",
@@ -178,7 +182,7 @@ class LifeHistoryEvaluator:
                 "values": "效率导向",
                 "living": "余杭未来科技城",
             }
-        if not zhou_dict:
+        if zhou_used_fallback:
             zhou_dict = {
                 "id": 2, "name": "周婉清", "age": 26, "gender": "女", "hukou": "外省",
                 "job": "互联网公司 UI 设计师",
@@ -218,11 +222,17 @@ class LifeHistoryEvaluator:
         contexts_differ = li_ctx != zhou_ctx
         daily_differentiated = bool(li_found and zhou_found)
         personality_differentiated = ("内向" in li_ctx or "理性" in li_ctx) and ("外向" in zhou_ctx or "感性" in zhou_ctx)
-        verdict = "PASS" if (contexts_differ and daily_differentiated and personality_differentiated) else "FAIL"
+
+        # strict: require both md parsing AND behavioral differentiation
+        behavior_ok = contexts_differ and daily_differentiated and personality_differentiated
+        verdict = "PASS" if (behavior_ok and data_source == "md") else "FAIL"
 
         return {
             "pass": verdict == "PASS",
             "verdict": verdict,
+            "data_source": data_source,
+            "li_used_fallback": li_used_fallback,
+            "zhou_used_fallback": zhou_used_fallback,
             "li_ctx": li_ctx,
             "zhou_ctx": zhou_ctx,
             "differences": differences,
@@ -341,9 +351,11 @@ class LifeHistoryEvaluator:
         if div:
             verdict_icon = "PASS" if div.get("verdict") == "PASS" else "FAIL"
             icon = "OK" if div.get("verdict") == "PASS" else "!!"
+            data_source = div.get("data_source", "unknown")
+            warn = " [WARN: used fallback]" if data_source == "fallback" else ""
             print()
             print("-" * 60)
-            print(f"Profile Context Diversity: {verdict_icon} {icon}")
+            print(f"Profile Context Diversity: {verdict_icon} {icon} (source: {data_source}){warn}")
             for diff in div.get("differences", []):
                 print(f"  {diff}")
 
@@ -383,7 +395,9 @@ class LifeHistoryEvaluator:
 
         div = results.get("profile_context_diversity", {})
         verdict_icon = "PASS" if div.get("verdict") == "PASS" else "FAIL"
-        md += f"**验证结果**: {verdict_icon}\n\n"
+        data_source = div.get("data_source", "unknown")
+        warn = " ⚠️ Used fallback dicts (MD parsing failed)" if data_source == "fallback" else ""
+        md += f"**验证结果**: {verdict_icon} (source: {data_source}){warn}\n\n"
         for diff in div.get("differences", []):
             md += f"- {diff}\n"
         md += "\n**李泽宇 context**:\n"
