@@ -18,6 +18,7 @@ GAWorld/
 │   ├── memory/               # 记忆系统（store, experience, consolidation, decay, …）
 │   ├── policy/               # 干预策略（intervention.py）
 │   ├── settings/             # 配置（CONFIG, defaults, overrides）
+│   ├── skills/               # 技能系统（schemas, registry, consolidation）
 │   ├── sim/                  # 仿真逻辑（_action, _cognition, _location, …）
 │   ├── social/               # 社交网络（network.py）
 │   ├── work/                 # 工作模块（router, queue, market, adapters）
@@ -77,7 +78,7 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-05-25 6:58am GMT+2
+# [GAWorld] recent context, 2026-05-26 5:05am GMT+2
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE

@@ -18,6 +18,7 @@ from gaworld.logging_setup import get_logger
 from gaworld.memory.consolidation import consolidate_recent
 from gaworld.memory.decay import decay_pass
 from gaworld.memory.ingest import absorb_external_for_agent
+from gaworld.skills.consolidation import run_skill_consolidation
 
 _LOG = get_logger("gaworld.memory.lifecycle")
 
@@ -66,6 +67,7 @@ def run_daily_memory_lifecycle(
     mem_cfg = CONFIG.get("memory", {}) or {}
     cons_cfg = mem_cfg.get("consolidation", {}) or {}
     decay_cfg = mem_cfg.get("decay", {}) or {}
+    skill_cfg = mem_cfg.get("skill_consolidation", {}) or {}
 
     summary: dict[str, Any] = {"day": day, "agent_id": agent.get("id")}
 
@@ -86,6 +88,17 @@ def run_daily_memory_lifecycle(
             summary["decay"] = result
         except Exception as exc:
             _LOG.warning("decay failed for agent %s: %s", agent.get("id"), exc)
+
+    # Skill consolidation: distil a private Skill from recent episodes.
+    # Runs on its own cadence (slower than memory consolidation by
+    # default, since a Skill is supposed to be a more lasting artifact).
+    if skill_cfg.get("enabled", False) and _div_due(day, skill_cfg.get("every_days", 5)):
+        try:
+            skill = run_skill_consolidation(agent, llm=llm, today=day)
+            if skill is not None:
+                summary["skill_consolidated"] = skill.skill_id
+        except Exception as exc:
+            _LOG.warning("skill consolidation failed for agent %s: %s", agent.get("id"), exc)
 
     # Runtime absorption: gated by its own flag inside the function;
     # also no-op if the caller didn't supply a web fetch adapter.

@@ -108,6 +108,22 @@ def simulation_settings() -> dict[str, Any]:
                 "min_age_days": 30,
                 "salience_floor": 0.20,
             },
+            # Periodic experience → private Skill distillation. Runs on
+            # its own cadence inside ``run_daily_memory_lifecycle``.
+            "skill_consolidation": {
+                "enabled": True,
+                "every_days": 3,
+                "lookback_days": 3,
+                "min_episodes": 2,
+            },
+        },
+        # Skill subsystem (file-backed; library at ``global_dir``, private
+        # per-agent skills under the memory dir).
+        "skills": {
+            "global_dir": "data/skills",
+            "inject_into_cognition": True,
+            "inject_into_work_brief": True,
+            "max_per_prompt": 4,
         },
         # Policy events (description only; effect inferred by LLM)
         "policy_events": [

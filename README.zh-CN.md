@@ -397,6 +397,27 @@ Refl: 感受：情绪有一点波动；教训：下次要更早判断状态和�
 兴趣技能是运行时状态，不会写回原始 CSV 或 Markdown profile。全局推导缓存位于
 `output/memory/growth_profiles.json`，单智能体进度位于 `output/memory/agent_<id>_growth.json`。
 
+### Skill 系统（可复用技能库）
+
+与「兴趣爱好与技能成长」并行的是 `gaworld/skills/`：一种可复用的小技能体系，思路与 Claude
+Code 的 Skill 相近。每条 Skill 是一个 Markdown 文件（带 YAML frontmatter，含 `name` /
+`description` / `triggers` / 正文），有两种来源：
+
+- **全局库** `data/skills/*.md`：手写、所有 agent 都能挂载；
+- **私有库** `output/memory/agent_<id>_skills/*.md`：agent 由自己的最近经历**自动总结**得到，
+  默认关闭，通过 `CONFIG["memory"]["skill_consolidation"]["enabled"] = True` 打开，
+  在 `run_daily_memory_lifecycle` 里按 `every_days` 周期触发。
+
+运行时 Skill 会自动注入到 `perception` 提示词与 work brief 的 `【可用技能】` 块里，
+影响 agent 的认知与工作产物。给某个 agent 挂载全局 Skill：
+
+```python
+from gaworld.skills import SkillRegistry
+SkillRegistry().attach_to_agent(agent, "poster-grid")
+```
+
+完整设计与 API 见 [`docs/SKILL_SYSTEM.md`](docs/SKILL_SYSTEM.md)。
+
 ### 动态行为系统
 
 `dynamic_behavior.py` 通过注入上下文感知的日程变更，让智能体的每日行程更接近真实人类。该系统
@@ -481,3 +502,4 @@ LLM 调用之前完成决策。
 - [English README](./README.md)
 - [用户教程](./docs/TUTORIAL.md)
 - [仓库规范](./AGENTS.md)
+- [Skill 系统设计与使用](./docs/SKILL_SYSTEM.md)

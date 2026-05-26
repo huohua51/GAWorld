@@ -29,6 +29,8 @@ from typing import Any
 from gaworld.cognition.realism import relationship_weight
 from gaworld.llm import providers as _llm_providers
 from gaworld.settings import CONFIG
+from gaworld.skills.prompt_helpers import render_agent_skills
+from gaworld.skills.registry import SkillRegistry, get_default_registry
 
 # NB: access ``call_llm`` via ``_llm_providers.call_llm`` rather than a
 # ``from`` import. The mock installer in ``tests/fixtures/mock_llm.py``
@@ -37,6 +39,39 @@ from gaworld.settings import CONFIG
 
 _HUMAN_REALISM_CONFIG: dict[str, Any] = CONFIG.get("human_realism", {})
 HUMAN_REALISM_ENABLED: bool = bool(_HUMAN_REALISM_CONFIG.get("enabled", False))
+
+
+def _skills_cfg() -> dict[str, Any]:
+    s = CONFIG.get("skills", {}) if isinstance(CONFIG, dict) else {}
+    return s if isinstance(s, dict) else {}
+
+
+def _agent_skill_block(
+    agent: dict[str, Any],
+    *,
+    registry: SkillRegistry | None = None,
+) -> str:
+    """Render the agent's currently-held skills as a labelled block.
+
+    Returns an empty string when the agent has no skills, when the
+    feature is disabled in config, or when the registry can't be
+    loaded — callers should branch on the string.
+    """
+    cfg = _skills_cfg()
+    if not cfg.get("inject_into_cognition", True):
+        return ""
+    try:
+        reg = registry or get_default_registry()
+        skills = reg.list_for_agent(agent)
+    except Exception:  # noqa: BLE001 — never let skill rendering break perception
+        return ""
+    if not skills:
+        return ""
+    max_n = int(cfg.get("max_per_prompt", 4))
+    rendered = render_agent_skills(skills, max_skills=max_n)
+    if not rendered:
+        return ""
+    return f"你已经掌握的小技能：\n{rendered}"
 
 
 # ---------------------------------------------------------------------------
@@ -92,13 +127,15 @@ def perception(
     env_context: str,
     policy_event: str,
 ) -> str:
+    skill_block = _agent_skill_block(agent)
+    skill_suffix = f"\n{skill_block}\n" if skill_block else ""
     prompt = f"""
 你是{agent['name']}。
 现在是 {time_str}。
 你感知到的社交环境是：{social_context}
 自然与社会环境：{env_context if env_context else "无特殊变化"}
 政策环境：{policy_event if policy_event else "无特殊变化"}
-
+{skill_suffix}
 请描述你此刻对环境、他人和制度的感知。（1-2句）
 """
     return _llm_providers.call_llm(prompt, task="perception", agent_id=agent["id"])
@@ -128,6 +165,7 @@ def social_influence(agent: dict[str, Any], agents_by_id: dict[Any, dict[str, An
 
 __all__ = [
     "HUMAN_REALISM_ENABLED",
+    "_agent_skill_block",
     "get_social_context",
     "perception",
     "social_influence",

@@ -159,6 +159,41 @@ for j in m.all_jobs():
 
 ---
 
+## 5.5 Skill 注入（自动）
+
+启用 `CONFIG["skills"]["inject_into_work_brief"]`（默认 ON）后，router 会在投递 brief 时
+自动匹配 agent 持有的 Skill：用 `chosen_action + activity` 文本与每个 Skill 的 `name` /
+`triggers` 做子串匹配，最多取 3 个最相关的，追加到 brief 末尾：
+
+```
+【可用技能】
+- 海报网格排版：用三栏网格 + 单一主色，快速给宣传海报定排版
+  · 1. 先选一个主色（占面积 ≥ 60%）...
+- 结构化代码评审：...
+```
+
+adapter（`CodeAdapter` / `WebDesignAdapter` 等）原本就把 `brief_text` 整段拼进 LLM
+prompt，所以 **adapter 代码不需要改**——Skill 的指导内容会自然出现在工作产物的上下文里。
+
+调用侧：
+
+```python
+from gaworld.skills import SkillRegistry
+from gaworld.work.router import RealWorkRouter
+
+router = RealWorkRouter(
+    queue=queue, market=market,
+    capabilities=caps_by_agent,
+    config=CONFIG["real_work"],
+    skill_registry=SkillRegistry(),   # 不传则用默认实例
+)
+```
+
+要给 agent 挂载技能或让 agent 从经历中自总结 Skill，见
+[`docs/SKILL_SYSTEM.md`](SKILL_SYSTEM.md)。
+
+---
+
 ## 6. 写自定义 Adapter
 
 继承 `WorkAdapter` Protocol：

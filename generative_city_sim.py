@@ -2419,6 +2419,10 @@ from gaworld.sim._diary import (  # noqa: E402
     generate_daily_diary,
     save_daily_diary,
 )
+from gaworld.sim._summary import (  # noqa: E402
+    summarize_simulation,
+    take_initial_snapshot,
+)
 
 # =========================================================
 # C. 主循环
@@ -2757,6 +2761,15 @@ def run_simulation():
 
     base_schedule_map = build_schedule_map(schedules)
     validate_action_space(schedules, actions)
+
+    # Snapshot per-agent state at sim start so the end-of-run summary can
+    # diff state / growth / schedule / relationships against the agent's
+    # initial profile. Kept lightweight (deep-copies only the fields the
+    # summary needs). See ``gaworld/sim/_summary.py``.
+    initial_snapshots = {
+        a["id"]: take_initial_snapshot(a, schedule=schedules.get(a["id"]))
+        for a in agents
+    }
     # Real-work runtime: bootstrap capabilities + queue + market + workers.
     # Returns None when CONFIG.real_work.enabled is False, in which case
     # all real-work code paths are no-ops.
@@ -3903,6 +3916,27 @@ def run_simulation():
         output_dir=STATE_OUTPUT_DIR,
         metrics=state_metrics,
     )
+
+    # End-of-simulation recap: per-agent structured block plus an LLM
+    # narrative covering days run, key events, top activities, state /
+    # emotion changes, growth deltas, memory + schedule + relationship
+    # shifts, and a read on how human-like the run felt. Wrapped so a
+    # failure here never reverses successful simulation work.
+    try:
+        last_day = day if "day" in locals() else start_day - 1
+        life_event_log = list_life_events(CONFIG)
+        summarize_simulation(
+            agents,
+            initial_snapshots,
+            state_history,
+            start_day,
+            last_day,
+            life_events=life_event_log,
+            env_timeline_path=env_timeline_path,
+            llm_fn=call_llm,
+        )
+    except Exception as exc:  # noqa: BLE001 - summary is best-effort
+        print(f"⚠️ 仿真总结生成失败：{exc}")
 
 
 # =========================================================
