@@ -1331,6 +1331,8 @@ REQUIRE_CLEAN_RESET_ON_MEMORY_MODEL_CHANGE = bool(
 )
 HUMAN_REALISM_CONFIG = CONFIG.get("human_realism", {})
 HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
+LIFE_HISTORY_CONFIG = CONFIG.get("life_history", {})
+LIFE_HISTORY_ENABLED = bool(LIFE_HISTORY_CONFIG.get("enabled", False))
 HUMAN_MEMORY_CONFIG = HUMAN_REALISM_CONFIG.get("memory", {}) if HUMAN_REALISM_ENABLED else {}
 RECALL_CONFIG = HUMAN_MEMORY_CONFIG.get("recall", {}) if HUMAN_REALISM_ENABLED else {}
 MEMORY_REVIEW_CONFIG = HUMAN_MEMORY_CONFIG.get("review", {}) if HUMAN_REALISM_ENABLED else {}
@@ -2596,6 +2598,26 @@ def format_reflection_text(reflection):
     )
 
 
+def _classify_action_type(act: str) -> str:
+    """Classify action into a type category for A/B logging."""
+    text = str(act or "")
+    if any(k in text for k in ["乘坐", "移动", "前往", "去", "回", "出发", "到达"]):
+        return "movement"
+    if any(k in text for k in ["社交", "聊天", "见面", "拜访", "联系", "约", "聚会", "会面", "沟通"]):
+        return "social"
+    if any(k in text for k in ["工作", "写", "读", "学", "上课", "开会", "研究", "分析", "处理"]):
+        return "work"
+    if any(k in text for k in ["吃饭", "烹饪", "做饭", "购买食物", "买菜"]):
+        return "eating"
+    if any(k in text for k in ["睡觉", "休息", "睡眠", "小睡"]):
+        return "rest"
+    if any(k in text for k in ["娱乐", "游戏", "视频", "电影", "电视", "音乐", "阅读", "看书", "散步"]):
+        return "leisure"
+    if any(k in text for k in ["购物", "买", "消费", "支付", "取", "寄"]):
+        return "transaction"
+    return "other"
+
+
 def _activity_commitment_level(activity):
     text = str(activity or "")
     if any(k in text for k in ["工作", "上班", "会议", "开会", "上课", "学习", "实验", "看病", "医院", "诊所", "面试", "报告"]):
@@ -2610,6 +2632,34 @@ def _commitment_weight(level):
     weights = behavior_cfg.get("commitment_weights", {}) if isinstance(behavior_cfg, dict) else {}
     default_map = {"high": 1.2, "medium": 0.6, "low": 0.2}
     return float(weights.get(level, default_map.get(level, 0.2)))
+
+
+def _is_instrumented_agent(agent_id) -> bool:
+    """Check if agent should be instrumented for LifeHistory A/B logging."""
+    instrument_list = LIFE_HISTORY_CONFIG.get("instrument_agents", [])
+    if not instrument_list:
+        return False
+    return agent_id in instrument_list
+
+
+def _emit_life_history_step_log(step_log: dict) -> None:
+    """Emit a step log entry to the LifeHistory A/B logger.
+
+    Output dir is controlled by LIFE_HISTORY_CONFIG["log_output_dir"].
+    compare-event sets this per-scenario to isolate A/B logs.
+    """
+    import gzip
+    import datetime
+    output_dir = LIFE_HISTORY_CONFIG.get("log_output_dir", "output/life_history_ab") if LIFE_HISTORY_CONFIG else "output/life_history_ab"
+    os.makedirs(output_dir, exist_ok=True)
+    date_str = datetime.datetime.now().strftime("%Y%m%d")
+    log_path = os.path.join(output_dir, f"step_log_{date_str}.jsonl.gz")
+    entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        **step_log,
+    }
+    with gzip.open(log_path, "at") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _state_recall_labels(agent):
@@ -5748,6 +5798,30 @@ def run_simulation():
                 if policy:
                     policy_desc = policy.get("description") or policy.get("name")
                 state_before = dict(agent.get("state", {}))
+                # Capture pre-step relationship state for A/B logger
+                relationships_before = dict(agent.get("relationships", {}))
+                # Step log accumulator - populated through the step
+                step_log = {
+                    "agent_id": agent_id,
+                    "agent_name": agent.get("name", str(agent_id)),
+                    "day": day,
+                    "time_str": time_str,
+                    "scheduled_activity": scheduled_activity,
+                    "life_history_context_present": False,
+                    "life_history_context": None,
+                    "plan": None,
+                    "activity_final": None,
+                    "action": None,
+                    "action_type": None,
+                    "decision_driver": None,
+                    "commitment_level": None,
+                    "relationships_before": relationships_before,
+                    "relationships_after": None,
+                    "changed": False,
+                    "change_reason": None,
+                    "social_partners": [],
+                    "success": None,
+                }
                 step_ctx = {
                     "scheduled_activity": scheduled_activity,
                     "activity": scheduled_activity,
@@ -5806,6 +5880,7 @@ def run_simulation():
                         step_ctx["intervention_feed"] = intervention_feed
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
+                step_log["perception"] = perc
                 transient_thought = maybe_generate_transient_thought(
                     agent,
                     time_str,
@@ -5850,14 +5925,19 @@ def run_simulation():
                 plan_refs["memory_hint"] = plan_recall.get("hint", "")
                 plan_refs["recollection"] = plan_recall.get("recollection", "")
                 plan_refs["transient_thought"] = transient_thought
-                # Inject LifeHistory context if available
-                if "life_history_engine" in agent:
+                # Inject LifeHistory context if available and injection is enabled
+                if (
+                    "life_history_engine" in agent
+                    and LIFE_HISTORY_CONFIG.get("injection_enabled", True)
+                ):
                     lh_ctx = agent["life_history_engine"].build_planning_context(
                         activity=scheduled_activity,
                         perception_text=perc,
                     )
                     if lh_ctx:
                         plan_refs["life_history_context"] = lh_ctx
+                        step_log["life_history_context_present"] = True
+                        step_log["life_history_context"] = lh_ctx
                 plan = planning(agent, perc, recall_context=plan_recall, decision_refs=plan_refs)
                 plan_text = format_plan_text(plan)
                 activity, change_reason, changed = maybe_adjust_activity(
@@ -5878,6 +5958,11 @@ def run_simulation():
                     hook_reason = str(step_ctx.get("change_reason", "")).strip()
                     if hook_reason:
                         change_reason = hook_reason
+                # Update step_log with activity/plan results
+                step_log["plan"] = plan
+                step_log["activity_final"] = activity
+                step_log["changed"] = changed
+                step_log["change_reason"] = change_reason if changed else None
                 if changed:
                     schedule_map[agent_id] = apply_schedule_override(
                         schedule_map[agent_id],
@@ -5917,6 +6002,11 @@ def run_simulation():
                     )
                     location_bias = {}
                     effective_activity = f"前往{movement['target_location']}"
+                    # Populate step_log for travel branch
+                    step_log["action"] = act
+                    step_log["decision_driver"] = action_meta.get("decision_driver")
+                    step_log["commitment_level"] = action_meta.get("commitment_level")
+                    step_log["action_type"] = "movement"
                 else:
                     location_bias = get_location_action_bias(
                         agent,
@@ -5972,6 +6062,11 @@ def run_simulation():
                         decision_refs=action_refs,
                         return_debug=True,
                     )
+                    # Populate step_log with action result
+                    step_log["action"] = act
+                    step_log["decision_driver"] = action_meta.get("decision_driver")
+                    step_log["commitment_level"] = action_meta.get("commitment_level")
+                    step_log["action_type"] = _classify_action_type(act)
                     outcome = f"在【{activity}】中执行了【{act}】"
                 reflection_recall = evoke_memory(
                     agent,
@@ -6077,9 +6172,14 @@ def run_simulation():
                     for sender_id in extract_sender_agent_ids(inbox_messages):
                         if sender_id not in partners:
                             partners.append(sender_id)
+                    step_log["social_partners"] = list(partners)
+                    step_log["success"] = _is_outcome_success(outcome)
+                    # NOTE: relationships_after captured AFTER relationship_update below
                     signal = infer_interaction_signal(refl_text)
                     for pid in partners:
                         relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
+                    # Capture post-relationship-update state for A/B logger
+                    step_log["relationships_after"] = dict(agent.get("relationships", {}))
                     state_after = dict(agent.get("state", {}))
                     delta = {}
                     for key, before_v in state_before.items():
@@ -6180,6 +6280,9 @@ def run_simulation():
                             current_day=day,
                             success=_is_outcome_success(outcome),
                         )
+                    # Emit step log after LifeHistoryEngine has fully processed the step
+                    if LIFE_HISTORY_ENABLED and _is_instrumented_agent(agent_id):
+                        _emit_life_history_step_log(step_log)
                     episode_text = (
                         f"Day {day} {time_str} {effective_activity}/{act} @ {location} "
                         f"driver={episode['decision_driver']} commitment={episode['commitment_level']} "
@@ -6809,6 +6912,10 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
         "policy_events": policy_events,
         "stateful": True,
         "random_seed": int(args.seed),
+        "life_history": {
+            "log_output_dir": os.path.join(scenario_dir, "life_history_logs"),
+            "instrument_agents": list(args.agent_ids) if args.agent_ids else [],
+        },
         "distributed": {
             "enabled": False,
         },

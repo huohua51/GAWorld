@@ -203,6 +203,26 @@ class LifeHistoryEngine:
             if p.communication.emotional_expressiveness >= 0.65:
                 comm_parts.append("情感外露")
             communication_line = f"沟通：{'、'.join(comm_parts[:3])}。" if comm_parts else ""
+            raw_agent = self._gaworld_agent or {}
+            raw_text = " ".join(str(raw_agent.get(k, "")) for k in ("personality", "daily_life", "values", "job"))
+            scene_text = f"{activity} {perception_text} {raw_text}".lower()
+            scene_hints = []
+            money_terms = ["2000", "money", "debt", "owe", "repay", "\u501f", "\u6b20", "\u8fd8\u94b1", "\u50ac", "\u503a", "\u94b1"]
+            social_terms = ["coffee", "chat", "friend", "social", "\u5496\u5561", "\u804a\u5929", "\u670b\u53cb", "\u89c1\u9762", "\u793e\u4ea4", "\u770b\u5c55", "\u591c\u8dd1"]
+            work_terms = ["work", "study", "tech", "\u5de5\u4f5c", "\u6280\u672f", "\u5b66\u4e60", "\u9879\u76ee"]
+            low_conflict = any(term in raw_text for term in ["\u4f4e\u51b2\u7a81", "\u56de\u907f", "\u5185\u5411", "\u5185\u655b"])
+            if any(term in scene_text for term in money_terms):
+                scene_hints.append("money_conflict=confirm_facts_then_low_conflict_followup")
+            if any(term in scene_text for term in social_terms):
+                if p.personality.extraversion >= 0.6:
+                    scene_hints.append("social_pull=prefer_in_person_social_option")
+                elif low_conflict or p.personality.extraversion <= 0.4:
+                    scene_hints.append("social_pull=prefer_low_intensity_or_private_reply")
+                else:
+                    scene_hints.append("social_pull=neutral")
+            if any(term in scene_text for term in work_terms) or p.personality.result_orientation >= 0.75:
+                scene_hints.append("task_pull=protect_focus_and_complete_pending_items")
+            scene_line = f"ScenePreference: {'; '.join(scene_hints)}." if scene_hints else ""
 
             # 组装：分层输出，保证每段完整
             profile_lines = [identity_line]
@@ -212,6 +232,8 @@ class LifeHistoryEngine:
                 profile_lines.append(daily_line)
             if communication_line:
                 profile_lines.append(communication_line)
+            if scene_line:
+                profile_lines.append(scene_line)
 
             parts.append(" ".join(profile_lines))
 
