@@ -109,18 +109,20 @@ def generate_report(log_a, log_b, date_str, agent_ids):
     print(f"Variant A (injection off): {len(lines_a)} steps")
     print(f"Variant B (injection on):  {len(lines_b)} steps")
 
-    agents_str = " ".join(str(a) for a in agent_ids)
+    # Build argv list: ["report", "-a", path, "-b", path, "--date", str, "--agents", "52", "11", ...]
+    agents_arg = [str(a) for a in agent_ids]
+    argv_parts = [
+        "report", "-a", log_a, "-b", log_b,
+        "--date", date_str, "--agents",
+    ] + agents_arg
+
+    import ast
+    argv_repr = repr(argv_parts)
     report_code = f"""
 import sys
 sys.path.insert(0, "{PROJECT_ROOT}")
 from eval.life_history_ab_report import main as report_main
-sys.argv = [
-    "report",
-    "-a", "{log_a}",
-    "-b", "{log_b}",
-    "--date", "{date_str}",
-    "--agents", {agents_str},
-]
+sys.argv = {argv_repr}
 report_main()
 """
 
@@ -184,15 +186,23 @@ def main():
     print("=" * 60)
 
     if args.report_only:
-        # Find latest seed dir under run_a/run_b
         def latest_seed_dir(variant):
+            """Find latest run dir under variant, handles both new (seed_N) and legacy (flat) layouts."""
             base = os.path.join(PROJECT_ROOT, "output", "life_history_ab", variant)
+            # Try new seed_N layout first
             seed_dirs = _glob.glob(os.path.join(base, "seed_*"))
-            if not seed_dirs:
-                return None, None
-            latest = sorted(seed_dirs, key=os.path.getmtime, reverse=True)[0]
-            log = find_step_log(latest)
-            return latest, log
+            if seed_dirs:
+                latest = sorted(seed_dirs, key=os.path.getmtime, reverse=True)[0]
+                log = find_step_log(latest)
+                if log:
+                    return latest, log
+            # Fall back to legacy flat layout (a/life_history_logs/step_log_*.jsonl.gz)
+            flat_dir = os.path.join(base, "life_history_logs")
+            if os.path.isdir(flat_dir):
+                logs = _glob.glob(os.path.join(flat_dir, "step_log_*.jsonl.gz"))
+                if logs:
+                    return flat_dir, logs[0]
+            return None, None
 
         dir_a, log_a = latest_seed_dir("a")
         dir_b, log_b = latest_seed_dir("b")
