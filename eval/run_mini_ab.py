@@ -99,7 +99,7 @@ def run_variant(variant_label, agent_ids, seed, sim_days, injection_enabled, dry
     return base_output, log
 
 
-def generate_report(log_a, log_b, date_str, agent_ids_str):
+def generate_report(log_a, log_b, date_str, agent_ids):
     """Run paired A/B report from two log files."""
     import gzip
     with gzip.open(log_a, "rt") as f:
@@ -109,6 +109,7 @@ def generate_report(log_a, log_b, date_str, agent_ids_str):
     print(f"Variant A (injection off): {len(lines_a)} steps")
     print(f"Variant B (injection on):  {len(lines_b)} steps")
 
+    agents_str = " ".join(str(a) for a in agent_ids)
     report_code = f"""
 import sys
 sys.path.insert(0, "{PROJECT_ROOT}")
@@ -118,7 +119,7 @@ sys.argv = [
     "-a", "{log_a}",
     "-b", "{log_b}",
     "--date", "{date_str}",
-    "--agents", "{agent_ids_str}",
+    "--agents", {agents_str},
 ]
 report_main()
 """
@@ -183,16 +184,24 @@ def main():
     print("=" * 60)
 
     if args.report_only:
-        dir_a = os.path.join(PROJECT_ROOT, "output", "life_history_ab", "run_a")
-        dir_b = os.path.join(PROJECT_ROOT, "output", "life_history_ab", "run_b")
-        log_a = find_step_log(dir_a)
-        log_b = find_step_log(dir_b)
+        # Find latest seed dir under run_a/run_b
+        def latest_seed_dir(variant):
+            base = os.path.join(PROJECT_ROOT, "output", "life_history_ab", variant)
+            seed_dirs = _glob.glob(os.path.join(base, "seed_*"))
+            if not seed_dirs:
+                return None, None
+            latest = sorted(seed_dirs, key=os.path.getmtime, reverse=True)[0]
+            log = find_step_log(latest)
+            return latest, log
+
+        dir_a, log_a = latest_seed_dir("a")
+        dir_b, log_b = latest_seed_dir("b")
         if not log_a or not log_b:
             print("ERROR: Step logs not found.")
-            print(f"  log_a: {log_a}")
-            print(f"  log_b: {log_b}")
+            print(f"  log_a: {log_a} (dir: {dir_a})")
+            print(f"  log_b: {log_b} (dir: {dir_b})")
             return
-        generate_report(log_a, log_b, date_str, agent_ids_str)
+        generate_report(log_a, log_b, date_str, args.agents)
         return
 
     # Run all seed experiments
@@ -267,7 +276,7 @@ def main():
         seed, log_a, log_b, dir_a, dir_b = last
         if log_a and log_b:
             print(f"\n--- Report for last seed ({seed}) ---")
-            generate_report(log_a, log_b, date_str, agent_ids_str)
+            generate_report(log_a, log_b, date_str, args.agents)
 
 
 def mean_std(values):

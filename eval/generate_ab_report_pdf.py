@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
 Generate PDF report for LifeHistory Injection A/B Experiment.
+
+Usage:
+    python eval/generate_ab_report_pdf.py -a log_a.jsonl.gz -b log_b.jsonl.gz
+    python eval/generate_ab_report_pdf.py -a run_a/ -b run_b/ -o report.pdf
 """
 
 import gzip
 import json
 import os
 import sys
+import argparse
 from datetime import datetime
+from collections import Counter
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -15,12 +21,11 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    HRFlowable, PageBreak
+    HRFlowable
 )
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTPUT_PATH = os.path.join(PROJECT_ROOT, "output", "life_history_ab", "report_20260526.pdf")
 
 
 def load_log(path):
@@ -49,25 +54,28 @@ def relationship_drift(before, after):
     return changed
 
 
-def build_report():
-    log_a_path = os.path.join(PROJECT_ROOT, "output", "life_history_ab", "a", "life_history_logs", "step_log_20260526.jsonl.gz")
-    log_b_path = os.path.join(PROJECT_ROOT, "output", "life_history_ab", "b", "life_history_logs", "step_log_20260526.jsonl.gz")
-
+def build_report(log_a_path, log_b_path, output_path, date_str, agents):
     logs_a = load_log(log_a_path)
     logs_b = load_log(log_b_path)
+
+    # Compute per-agent stats if multiple agents
+    from collections import defaultdict
+    agents_set = set(e["agent_id"] for e in logs_a + logs_b)
+    agent_label = f"Agent {', '.join(str(a) for a in sorted(agents_set))}" if agents_set else "Agent 52"
+
     pairs = pair_logs(logs_a, logs_b)
 
     action_changed = sum(1 for a, b in pairs if a.get("action") != b.get("action"))
     activity_changed = sum(1 for a, b in pairs if a.get("activity_final") != b.get("activity_final"))
     at_changed = sum(1 for a, b in pairs if a.get("action_type") != b.get("action_type"))
 
-    lh_rate_a = sum(1 for e in logs_a if e.get("life_history_context_present")) / len(logs_a) * 100
-    lh_rate_b = sum(1 for e in logs_b if e.get("life_history_context_present")) / len(logs_b) * 100
+    lh_rate_a = sum(1 for e in logs_a if e.get("life_history_context_present")) / max(len(logs_a), 1) * 100
+    lh_rate_b = sum(1 for e in logs_b if e.get("life_history_context_present")) / max(len(logs_b), 1) * 100
 
     total = len(pairs)
 
     doc = SimpleDocTemplate(
-        OUTPUT_PATH,
+        output_path,
         pagesize=A4,
         rightMargin=2*cm,
         leftMargin=2*cm,
@@ -87,7 +95,7 @@ def build_report():
 
     # Title
     story.append(Paragraph("LifeHistory Injection A/B 实验报告", title_style))
-    story.append(Paragraph(f"Agent 52 · 2026-05-26 · 真实 GAWorld Runtime 数据", subtitle_style))
+    story.append(Paragraph(f"{agent_label} · {date_str} · 真实 GAWorld Runtime 数据", subtitle_style))
     story.append(Paragraph(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}", subtitle_style))
     story.append(Spacer(1, 0.5*cm))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#1a1a2e")))
@@ -103,13 +111,11 @@ def build_report():
 
     metrics_data = [
         ["指标", "Variant A (off)", "Variant B (on)", "差异"],
-        ["LH Context 注入率", "0%", "100%", "—"],
+        ["LH Context 注入率", f"{lh_rate_a:.0f}%", f"{lh_rate_b:.0f}%", "—"],
         ["配对 Steps", str(total), str(total), "—"],
         ["Action 改变率", f"{action_changed}/{total} ({action_changed/total*100:.0f}%)", "—", "—"],
         ["Activity 改变率", f"{activity_changed}/{total} ({activity_changed/total*100:.0f}%)", "—", "—"],
         ["Action Type 改变率", f"{at_changed}/{total} ({at_changed/total*100:.0f}%)", "—", "—"],
-        ["Relationship Drift (A)", "0", "0", "0"],
-        ["Relationship Drift (B)", "0", "0", "0"],
     ]
     metrics_table = Table(metrics_data, colWidths=[5*cm, 4*cm, 4*cm, 3*cm])
     metrics_table.setStyle(TableStyle([
@@ -288,8 +294,27 @@ def build_report():
     ))
 
     doc.build(story)
-    print(f"PDF saved to: {OUTPUT_PATH}")
+    print(f"PDF saved to: {output_path}")
 
 
 if __name__ == "__main__":
-    build_report()
+    parser = argparse.ArgumentParser(description="Generate PDF report for LifeHistory A/B experiment")
+    parser.add_argument("-a", "--variant-a", required=True, help="Path to variant A log file")
+    parser.add_argument("-b", "--variant-b", required=True, help="Path to variant B log file")
+    parser.add_argument("-o", "--output", default=None, help="Output PDF path")
+    parser.add_argument("--date", default=None, help="Date string YYYYMMDD (default: today)")
+    parser.add_argument("--agents", nargs="+", type=int, default=[52], help="Agent IDs")
+    args = parser.parse_args()
+
+    log_a_path = args.variant_a
+    log_b_path = args.variant_b
+    date_str = args.date or datetime.now().strftime("%Y%m%d")
+    agents = args.agents
+
+    if args.output:
+        output_path = args.output
+    else:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(PROJECT_ROOT, "output", "life_history_ab", f"report_{ts}.pdf")
+
+    build_report(log_a_path, log_b_path, output_path, date_str, agents)
