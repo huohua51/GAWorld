@@ -149,6 +149,10 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 | `human_realism.py:497-537` | `relationship_update` | Does it affect actual decisions? |
 | `generative_city_sim.py:4603-4639` | `get_social_context` | Social context integration |
 | `eval/life_history_eval.py` | Evaluation framework | Are metrics measuring what matters? |
+| `eval/run_mini_ab.py` | A/B experiment runner | Multi-seed, multi-agent support |
+| `eval/life_history_ab_report.py` | Paired A/B comparison | Pairing logic, drift baseline correctness |
+| `eval/generate_ab_report_pdf.py` | PDF report generator | Tables and interpretation |
+| `tests/test_profile_context_diversity.py` | Pipeline tests | 17 tests covering pairing and report logic |
 
 ## Architecture Decision Records
 
@@ -197,5 +201,40 @@ This ensures `git diff CLAUDE.md` shows the evolution of the Life-History Agent 
 ### 2026-05-24: Life-History Agent Evaluation Framework Created
 - Added 6-dimension HumanScore evaluation
 
+### 2026-05-26: Real A/B Injection Experiment — Pipeline and Results
+
+**Pipeline:**
+- `eval/run_mini_ab.py`: Runner that calls `generative_city_sim.py run` directly (abandoned compare-event harness)
+- Each variant gets isolated `memory_dir`, `log_dir`, `vector_db_path`, `life_history.log_output_dir`
+- `GAWORLD_CONFIG_OVERRIDES` env var controls `life_history.injection_enabled` per variant
+- Supports `--seeds` (multi-seed statistical significance), `--agents` (multi-agent), `--sim-days`
+- `eval/life_history_ab_report.py`: Paired comparison on (agent_id, day, time_str)
+- `eval/generate_ab_report_pdf.py`: PDF report generator from real log files
+- `tests/test_profile_context_diversity.py`: 17 tests (all passing, 1 integration deselected)
+
+**Real Experiment Results (Agent 52, seed 42, 1 day, Minimax API):**
+- Variant A (injection off): 8 steps, LH context rate = 0%
+- Variant B (injection on): 8 steps, LH context rate = 100%
+- Paired steps: 8
+- **Action changed: 4/8 (50%)** — LH context changed how agent executed tasks
+- **Activity changed: 0/8 (0%)** — What agent chose to do was unchanged
+- **Action type changed: 4/8 (50%)**
+- Relationship drift: A=0, B=0 (no social partners in this run)
+
+**Interpretation:**
+- LH profile context affects "how" (action selection), not "what" (activity)
+- Decision driver distribution shifted: Variant A driven by "成长动机" (50%), Variant B shows "惯性延续" (12.5%) and balanced "现实承诺约束"
+- Relationship drift unverifiable: agent 52 had no social partners in this run
+
+**Limitations:**
+- Single seed, single agent — needs 5-10 seeds for statistical significance
+- Single agent — needs multi-agent validation to confirm not Agent 52-specific
+- No social scenario — relationship drift cannot be measured yet
+- Activity unchanged (0%) — next step should check if multi-day runs show activity drift
+
+**Evidence:**
+- Real logs: `output/life_history_ab/{a,b}/life_history_logs/step_log_20260526.jsonl.gz`
+- Test suite: `bash run_life_history_tests.sh` → 17 passed, 1 deselected
+
 ---
-*Last Updated: 2026-05-25*
+*Last Updated: 2026-05-26*
