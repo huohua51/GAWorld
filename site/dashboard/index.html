@@ -62,6 +62,15 @@
     </section>
 
     <section class="workspace">
+      <aside class="panel left-stack">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Agent List</p>
+            <h2>智能体列表</h2>
+          </div>
+        </div>
+        <div id="agentList" class="agent-list"></div>
+      </aside>
       <section class="panel map-panel">
         <div class="section-head">
           <div>
@@ -82,18 +91,63 @@
         <section class="panel">
           <div class="section-head">
             <div>
-              <p class="kicker">Agent Profile</p>
-              <h2>人物设定</h2>
+              <p class="kicker">Skills</p>
+              <h2>技能</h2>
             </div>
-            <select id="agentSelect"></select>
           </div>
-          <textarea id="profileEditor" class="profile-editor" spellcheck="false"></textarea>
-          <div class="button-row end">
-            <button id="saveProfileBtn" class="button">保存 Profile</button>
-            <button id="refreshAgentBtn" class="button">刷新</button>
+          <div id="skillsContainer" class="skill-grid">
+            <p id="skillsPlaceholder" class="placeholder-text">读取技能中...</p>
           </div>
         </section>
 
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Agent State</p>
+              <h2>智能体状态</h2>
+            </div>
+            <button id="reloadRadarBtn" class="button small">刷新</button>
+            <button id="radarCompareBtn" class="button small">多智能体对比</button>
+          </div>
+          <div class="chart-container">
+            <canvas id="radarChart" width="400" height="400" aria-label="智能体状态雷达图"></canvas>
+            <p id="radarPlaceholder" class="placeholder-text">暂无状态数据。</p>
+          </div>
+          <div id="radarLegend" class="radar-legend" style="display:none"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Performance</p>
+              <h2>运行性能</h2>
+            </div>
+            <button id="reloadPerfBtn" class="button small">刷新</button>
+          </div>
+          <div id="performanceSummary" class="perf-grid">
+            <p class="placeholder-text">暂无性能数据。</p>
+          </div>
+        </section>
+      </aside>
+    </section>
+
+    <section class="lower-grid">
+      <section class="panel lower-left">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Agent Profile</p>
+            <h2>人物设定</h2>
+          </div>
+          <select id="agentSelect"></select>
+        </div>
+        <textarea id="profileEditor" class="profile-editor" spellcheck="false"></textarea>
+        <div class="button-row end">
+          <button id="saveProfileBtn" class="button">保存 Profile</button>
+          <button id="refreshAgentBtn" class="button">刷新</button>
+        </div>
+      </section>
+
+      <section class="lower-center">
         <section class="panel">
           <div class="section-head">
             <div>
@@ -108,11 +162,27 @@
           </div>
           <pre id="interviewOutput" class="codebox">采访结果会显示在这里。</pre>
         </section>
-      </aside>
-    </section>
 
-    <section class="lower-grid">
-      <section class="panel">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Economy</p>
+              <h2>经济状况</h2>
+            </div>
+            <button id="reloadEconBtn" class="button small">刷新</button>
+          </div>
+          <div id="economySummary" class="economy-grid">
+            <p class="placeholder-text">暂无经济数据。</p>
+          </div>
+          <div class="chart-container-wide">
+            <h3>经济趋势</h3>
+            <canvas id="economyChart" width="600" height="280"></canvas>
+            <p id="economyChartPlaceholder" class="placeholder-text">暂无经济趋势数据。</p>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel lower-right">
         <div class="section-head">
           <div>
             <p class="kicker">Memory</p>
@@ -127,19 +197,21 @@
           <article><h3>Agent 日志</h3><pre id="agentLogBox" class="codebox"></pre></article>
         </div>
       </section>
+    </section>
 
-      <section class="panel">
-        <div class="section-head">
-          <div>
-            <p class="kicker">Run Log</p>
-            <h2>运行输出</h2>
-          </div>
-          <button id="reloadStatusBtn" class="button small">刷新状态</button>
+    <section class="panel log-section">
+      <div class="section-head">
+        <div>
+          <p class="kicker">Run Log</p>
+          <h2>运行输出</h2>
         </div>
-        <pre id="runLogBox" class="codebox run-log">暂无运行日志。</pre>
-      </section>
+        <button id="reloadStatusBtn" class="button small">刷新状态</button>
+      </div>
+      <pre id="runLogBox" class="codebox run-log">暂无运行日志。</pre>
     </section>
   </main>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="/site/dashboard/charts.js"></script>
   <script src="/site/dashboard/app.js"></script>
 </body>
 </html>

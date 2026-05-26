@@ -1,0 +1,84 @@
+<h2>GAWorld 仪表板升级策略</h2>
+<p class="subtitle">当前是原生 JS + Python http.server，需要确定迭代路线</p>
+
+<div class="section">
+  <h3>当前架构</h3>
+  <div class="mockup" style="margin-top:8px">
+    <div class="mockup-body" style="font-size:13px;line-height:1.8">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center">
+        <div>
+          <div class="mock-nav" style="margin-bottom:4px">app.js</div>
+          <div style="font-size:11px;color:#666">原生 JS + Fetch API<br/>无框架 · 无构建工具</div>
+        </div>
+        <div>
+          <div class="mock-nav" style="margin-bottom:4px">dashboard_server.py</div>
+          <div style="font-size:11px;color:#666">Python http.server<br/>简单 REST API · 12个端点</div>
+        </div>
+        <div>
+          <div class="mock-nav" style="margin-bottom:4px">generative_city_sim.py</div>
+          <div style="font-size:11px;color:#666">模拟引擎 · 记忆存储<br/>经济系统 · 事件系统</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>痛点</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+    <div class="mockup">
+      <div class="mockup-header">❌ 缺失</div>
+      <div class="mockup-body" style="font-size:12px">
+        <div>• 经济趋势图表</div>
+        <div>• 社交网络可视化</div>
+        <div>• 多 agent 对比</div>
+        <div>• 环境事件时间线</div>
+        <div>• 数据导出</div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">⚠️ 薄弱</div>
+      <div class="mockup-body" style="font-size:12px">
+        <div>• 2.5s 轮询 → 非实时</div>
+        <div>• RAW JSON → 不友好</div>
+        <div>• 单 agent → 无法对比</div>
+        <div>• 无搜索/过滤</div>
+        <div>• 无响应式表格</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>三条路线</h3>
+  <div class="options" data-multiselect style="grid-template-columns:1fr;max-width:100%">
+    <div class="option" data-choice="a" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>渐进增强 🟢 推荐</h3>
+        <p>保持原生 JS + http.server，增量加图表库 (Chart.js) 和新 API 端点。零构建步骤，风险最低，快速出成果。</p>
+        <div style="font-size:11px;color:#888;margin-top:4px">预计：2-3天 · 适合新手PR · 可逐步交付</div>
+      </div>
+    </div>
+    <div class="option" data-choice="b" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>API 升级 + 前端渐进</h3>
+        <p>后端从 http.server 升级到 FastAPI（自动文档、类型校验、SSE推流），前端保持原生 JS 渐进增强。</p>
+        <div style="font-size:11px;color:#888;margin-top:4px">预计：3-5天 · 后端架构改善 · 学习收益大</div>
+      </div>
+    </div>
+    <div class="option" data-choice="c" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content">
+        <h3>前后端全重构</h3>
+        <p>FastAPI + React/Vue + ECharts + WebSocket。现代化但改动大，对项目当前阶段可能过度工程化。</p>
+        <div style="font-size:11px;color:#888;margin-top:4px">预计：1-2周 · 需构建工具链 · 学习曲线陡</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="text-align:center;padding:12px 0">
+  <p class="subtitle">你倾向哪条路线？也可以选多个组合。在浏览器点击选择后，在终端告诉我你的想法。</p>
+</div>

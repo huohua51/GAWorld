@@ -1,0 +1,117 @@
+<h2>GAWorld 仪表盘 — 设计方向选择</h2>
+<p class="subtitle">现在有三种风格方向，你看哪种更符合你的感觉？选一个作为后续迭代的基础。</p>
+
+<div class="cards" style="grid-template-columns: repeat(3, 1fr);">
+
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>A. 暗色工业风<br><span style="font-size:12px;color:var(--muted);font-weight:400;">当前方向，继续深化</span></h3>
+    </div>
+    <div class="card-image" style="background:#0d1110;padding:16px;min-height:280px;">
+      <div style="border:1px solid #28302d;border-radius:6px;overflow:hidden;">
+        <div style="background:#141a18;padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid #28302d;">
+          <span style="color:#2dd4a0;font-size:11px;font-weight:700;">GAWorld Console</span>
+          <span style="color:#788680;font-size:11px;margin-left:auto;">● 运行中</span>
+        </div>
+        <div style="display:grid;grid-template-columns:180px 1fr 260px;gap:6px;padding:6px;background:#0b0f0e;">
+          <div style="background:#141a18;border-radius:4px;padding:6px;">
+            <div style="background:#2dd4a0;border-radius:2px;height:4px;width:60%;margin-bottom:4px;"></div>
+            <div style="color:#788680;font-size:9px;">01 · 李泽宇</div>
+            <div style="color:#788680;font-size:9px;">02 · 周婉清</div>
+            <div style="color:#2dd4a0;font-size:9px;font-weight:700;">03 · 陈一航 ●</div>
+          </div>
+          <div style="background:#141a18;border-radius:4px;"></div>
+          <div style="background:#141a18;border-radius:4px;padding:6px;">
+            <div style="color:#2dd4a0;font-size:9px;border-bottom:1px solid #28302d;padding-bottom:4px;">智能体状态</div>
+            <div style="color:#788680;font-size:8px;">精力 0.8</div>
+            <div style="color:#788680;font-size:8px;">社交 0.6</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <p>深色背景、翡翠绿主色、层次分明的面板。适合监控感，但需要更多视觉丰富度。</p>
+      <div class="pros-cons" style="margin-top:8px;">
+        <div class="pros"><h4>优势</h4><ul><li>技术感强</li><li>图表突出</li><li>已实现</li></ul></div>
+        <div class="cons"><h4>不足</h4><ul><li>偏单调</li><li>缺少视觉亮点</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>B. 编辑刊/杂志风<br><span style="font-size:12px;color:var(--muted);font-weight:400;">亮色 · 图文混排 · 有性格</span></h3>
+    </div>
+    <div class="card-image" style="background:#f4f0e8;padding:16px;min-height:280px;">
+      <div style="border:1px solid #d4cdc0;border-radius:6px;overflow:hidden;">
+        <div style="background:#fffcf5;padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid #d4cdc0;">
+          <span style="color:#c65d3a;font-size:11px;font-weight:700;font-family:Georgia,serif;">GAWorld</span>
+          <span style="color:#8a7e6e;font-size:11px;margin-left:auto;">仿真控制台</span>
+        </div>
+        <div style="display:grid;grid-template-columns:180px 1fr 240px;gap:6px;padding:6px;background:#faf6ef;">
+          <div style="background:#fffcf5;border-radius:4px;padding:6px;">
+            <div style="color:#8a7e6e;font-size:8px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">AGENTS</div>
+            <div style="color:#3a3230;font-size:10px;">01 · 李泽宇</div>
+            <div style="color:#3a3230;font-size:10px;">02 · 周婉清</div>
+            <div style="color:#c65d3a;font-size:10px;font-weight:700;">03 · 陈一航 ●</div>
+          </div>
+          <div style="background:#fffcf5;border-radius:4px;"></div>
+          <div style="background:#fffcf5;border-radius:4px;padding:6px;">
+            <div style="color:#c65d3a;font-size:9px;border-bottom:1px solid #d4cdc0;padding-bottom:4px;">State</div>
+            <div style="color:#3a3230;font-size:8px;">Energy 0.8</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <p>暖白底色、赭石红主色、衬线标题。更像一本关于城市的故事书。</p>
+      <div class="pros-cons" style="margin-top:8px;">
+        <div class="pros"><h4>优势</h4><ul><li>有温度</li><li>视觉辨识度高</li><li>适合展示型页面</li></ul></div>
+        <div class="cons"><h4>不足</h4><ul><li>偏内容展示</li><li>监控感弱</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>C. 霓虹都市风<br><span style="font-size:12px;color:var(--muted);font-weight:400;">深色 · 赛博感 · 数据可视化</span></h3>
+    </div>
+    <div class="card-image" style="background:#0a0e14;padding:16px;min-height:280px;">
+      <div style="border:1px solid #1e2a38;border-radius:6px;overflow:hidden;">
+        <div style="background:#111a22;padding:8px 12px;display:flex;gap:6px;border-bottom:1px solid #1e2a38;">
+          <span style="color:#6dd0ff;font-size:11px;font-weight:700;">GAWorld █</span>
+          <span style="color:#588098;font-size:11px;margin-left:auto;">SIM RUNNING</span>
+        </div>
+        <div style="display:grid;grid-template-columns:180px 1fr 240px;gap:6px;padding:6px;background:#0a0e14;">
+          <div style="background:#111a22;border-radius:4px;padding:6px;border-left:2px solid #6dd0ff;">
+            <div style="color:#588098;font-size:8px;letter-spacing:1px;">AGENT LIST</div>
+            <div style="color:#8faabd;font-size:9px;">01 · 李泽宇</div>
+            <div style="color:#6dd0ff;font-size:9px;font-weight:700;">03 · 陈一航 ▸</div>
+          </div>
+          <div style="background:#111a22;border-radius:4px;display:flex;align-items:center;justify-content:center;">
+            <span style="color:#1e2a38;font-size:24px;">◈</span>
+          </div>
+          <div style="background:#111a22;border-radius:4px;padding:6px;">
+            <div style="color:#6dd0ff;font-size:9px;border-bottom:1px solid #1e2a38;padding-bottom:4px;">RADAR</div>
+            <div style="color:#8faabd;font-size:8px;">精力 0.8</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <p>深蓝底色、冰蓝/青色主色、霓虹点缀。数据感最强，适合城市监控场景。</p>
+      <div class="pros-cons" style="margin-top:8px;">
+        <div class="pros"><h4>优势</h4><ul><li>视觉冲击强</li><li>数据感足</li><li>贴合城市模拟主题</li></ul></div>
+        <div class="cons"><h4>不足</h4><ul><li>可能过于风格化</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="section">
+  <p class="subtitle">你觉得哪个方向更对味？选了之后我们再深入细化。</p>
+</div>

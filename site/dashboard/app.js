@@ -5,6 +5,7 @@ const state = {
   trace: null,
   frameIndex: 0,
   pollTimer: null,
+  compareMode: false,
 };
 
 const els = {
@@ -43,6 +44,20 @@ const els = {
   agentLogBox: document.getElementById("agentLogBox"),
   reloadStatusBtn: document.getElementById("reloadStatusBtn"),
   runLogBox: document.getElementById("runLogBox"),
+  radarChart: document.getElementById("radarChart"),
+  radarPlaceholder: document.getElementById("radarPlaceholder"),
+  economySummary: document.getElementById("economySummary"),
+  reloadRadarBtn: document.getElementById("reloadRadarBtn"),
+  reloadEconBtn: document.getElementById("reloadEconBtn"),
+  radarCompareBtn: document.getElementById("radarCompareBtn"),
+  radarLegend: document.getElementById("radarLegend"),
+  economyChart: document.getElementById("economyChart"),
+  economyChartPlaceholder: document.getElementById("economyChartPlaceholder"),
+  reloadPerfBtn: document.getElementById("reloadPerfBtn"),
+  performanceSummary: document.getElementById("performanceSummary"),
+  agentList: document.getElementById("agentList"),
+  skillsContainer: document.getElementById("skillsContainer"),
+  skillsPlaceholder: document.getElementById("skillsPlaceholder"),
 };
 
 const ctx = els.mapCanvas.getContext("2d");
@@ -145,6 +160,51 @@ async function loadAgents() {
     option.selected = agent.id === state.selectedAgentId;
     els.agentSelect.appendChild(option);
   });
+  renderAgentList();
+}
+
+async function selectAgent(agentId) {
+  state.selectedAgentId = agentId;
+  els.agentSelect.value = String(agentId);
+  renderAgentList();
+  try {
+    await loadProfile();
+    await loadMemory();
+    await loadSkills();
+    await loadEconomy();
+    await loadEconomyHistory();
+    await loadStateRadar();
+    renderTrace();
+  } catch (error) {
+    message(error.message, "error");
+  }
+}
+
+function renderAgentList() {
+  els.agentList.innerHTML = "";
+  state.agents.forEach((agent) => {
+    const item = document.createElement("div");
+    item.className = `agent-list-item${agent.id === state.selectedAgentId ? " selected" : ""}`;
+    if (agent.configured) {
+      const dot = document.createElement("span");
+      dot.className = "active-dot";
+      item.appendChild(dot);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.style.cssText = "width:7px;flex-shrink:0";
+      item.appendChild(spacer);
+    }
+    const idSpan = document.createElement("span");
+    idSpan.className = "agent-id";
+    idSpan.textContent = String(agent.id).padStart(2, "0");
+    item.appendChild(idSpan);
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "agent-name";
+    nameSpan.textContent = agent.name;
+    item.appendChild(nameSpan);
+    item.addEventListener("click", () => selectAgent(agent.id));
+    els.agentList.appendChild(item);
+  });
 }
 
 async function loadProfile() {
@@ -174,6 +234,133 @@ async function loadMemory() {
   }, null, 2);
   els.episodesBox.textContent = payload.episodes_tail || "暂无 episode。";
   els.agentLogBox.textContent = payload.log_tail || "暂无 agent 日志。";
+}
+
+async function loadSkills() {
+  if (!state.selectedAgentId) return;
+  els.skillsContainer.innerHTML = '<p class="placeholder-text">读取技能中...</p>';
+  try {
+    const payload = await api(`/api/agents/${state.selectedAgentId}/skills`);
+    const skills = payload.skills || [];
+    if (!skills.length) {
+      els.skillsContainer.innerHTML = '<p class="placeholder-text">该智能体暂无技能</p>';
+      return;
+    }
+    els.skillsContainer.innerHTML = "";
+    skills.forEach((skill) => {
+      const card = document.createElement("div");
+      card.className = "skill-card";
+
+      const header = document.createElement("div");
+      header.className = "skill-header";
+
+      const nameEl = document.createElement("span");
+      nameEl.className = "skill-name";
+      nameEl.textContent = skill.name;
+
+      const levelEl = document.createElement("span");
+      levelEl.className = `level-badge lv${Math.min(skill.level, 5)}`;
+      levelEl.textContent = `Lv.${skill.level}`;
+
+      header.appendChild(nameEl);
+      header.appendChild(levelEl);
+
+      const bar = document.createElement("div");
+      bar.className = "skill-bar";
+
+      const fill = document.createElement("div");
+      fill.className = "skill-bar-fill";
+      const pct = skill.xp_next > 0 ? Math.min((skill.xp / skill.xp_next) * 100, 100) : 0;
+      fill.style.width = `${pct}%`;
+      bar.appendChild(fill);
+
+      const xpEl = document.createElement("div");
+      xpEl.className = "skill-xp";
+      xpEl.textContent = `${skill.xp}/${skill.xp_next}`;
+
+      card.appendChild(header);
+      card.appendChild(bar);
+      card.appendChild(xpEl);
+      els.skillsContainer.appendChild(card);
+    });
+  } catch (error) {
+    els.skillsContainer.innerHTML = `<p class="placeholder-text">技能数据读取失败: ${error.message}</p>`;
+  }
+}
+
+async function loadEconomy() {
+  if (!state.selectedAgentId) return;
+  try {
+    const payload = await api(`/api/economy/${state.selectedAgentId}`);
+    const econ = payload.economy;
+    if (!econ || econ.error) {
+      els.economySummary.innerHTML = '<p class="placeholder-text">暂无经济数据。</p>';
+      return;
+    }
+    const balance = Number(econ.balance) || 0;
+    const income = Number(econ.daily_income) || 0;
+    const expense = Number(econ.daily_expense) || 0;
+    els.economySummary.innerHTML = `
+      <div class="econ-card"><div class="label">余额</div><div class="value ${balance >= 0 ? "positive" : "negative"}">${balance.toFixed(0)}</div></div>
+      <div class="econ-card"><div class="label">今日收入</div><div class="value positive">+${income.toFixed(0)}</div></div>
+      <div class="econ-card"><div class="label">今日支出</div><div class="value negative">-${expense.toFixed(0)}</div></div>
+    `;
+  } catch (error) {
+    els.economySummary.innerHTML = `<p class="placeholder-text">经济数据读取失败: ${error.message}</p>`;
+  }
+}
+
+async function loadEconomyHistory() {
+  if (!state.selectedAgentId) return;
+  try {
+    const payload = await api(`/api/economy/${state.selectedAgentId}/history`);
+    updateEconomyChart(payload.history || []);
+  } catch (error) {
+    document.getElementById("economyChartPlaceholder").textContent = "经济趋势读取失败";
+    document.getElementById("economyChartPlaceholder").style.display = "block";
+  }
+}
+
+async function loadPerformance() {
+  try {
+    const perf = await api("/api/run/performance");
+    const cards = [];
+    cards.push(`<div class="perf-card"><span class="perf-label">智能体数量</span><span class="perf-value">${perf.agent_count ?? "-"}</span></div>`);
+    cards.push(`<div class="perf-card"><span class="perf-label">设定天数</span><span class="perf-value">${perf.sim_days ?? "-"}</span></div>`);
+    cards.push(`<div class="perf-card"><span class="perf-label">已完成天数</span><span class="perf-value">${perf.days_completed ?? "-"}</span></div>`);
+    if (perf.duration_seconds != null) {
+      const mins = Math.floor(perf.duration_seconds / 60);
+      const secs = Math.floor(perf.duration_seconds % 60);
+      cards.push(`<div class="perf-card"><span class="perf-label">运行时长</span><span class="perf-value">${mins}m ${secs}s</span></div>`);
+    }
+    cards.push(`<div class="perf-card"><span class="perf-label">日志行数</span><span class="perf-value">${perf.log_line_count ?? "-"}</span></div>`);
+    cards.push(`<div class="perf-card"><span class="perf-label">日志大小</span><span class="perf-value">${perf.log_size_bytes ? (perf.log_size_bytes / 1024).toFixed(0) + "KB" : "-"}</span></div>`);
+    els.performanceSummary.innerHTML = cards.join("");
+  } catch (error) {
+    els.performanceSummary.innerHTML = `<p class="placeholder-text">性能数据读取失败: ${error.message}</p>`;
+  }
+}
+
+async function loadStateRadar() {
+  if (!state.selectedAgentId) return;
+  window.__selectedAgentId__ = state.selectedAgentId;
+  try {
+    if (state.compareMode) {
+      const agentIds = state.agents.map((a) => a.id).join(",");
+      const payload = await api(`/api/agents/memory/batch?ids=${agentIds}`);
+      updateRadarChart(null, payload.agents || []);
+    } else {
+      const payload = await api(`/api/agents/${state.selectedAgentId}/memory`);
+      const agentState = payload.memory && Array.isArray(payload.memory)
+        ? payload.memory[payload.memory.length - 1]
+        : null;
+      const radarState = (agentState && agentState.state) || {};
+      updateRadarChart(radarState);
+    }
+  } catch (error) {
+    els.radarPlaceholder.textContent = "状态数据读取失败";
+    els.radarPlaceholder.style.display = "block";
+  }
 }
 
 async function runSimulation(reset = false) {
@@ -312,15 +499,19 @@ function bindEvents() {
   els.stopBtn.addEventListener("click", () => stopSimulation().catch((error) => message(error.message, "error")));
   els.reloadTraceBtn.addEventListener("click", () => loadTrace(true));
   els.reloadStatusBtn.addEventListener("click", () => refreshStatus().catch((error) => message(error.message, "error")));
-  els.agentSelect.addEventListener("change", async () => {
-    state.selectedAgentId = Number(els.agentSelect.value);
-    await loadProfile();
-    await loadMemory();
-    renderTrace();
-  });
+  els.agentSelect.addEventListener("change", () => selectAgent(Number(els.agentSelect.value)));
   els.saveProfileBtn.addEventListener("click", () => saveProfile().catch((error) => message(error.message, "error")));
   els.refreshAgentBtn.addEventListener("click", () => loadProfile().catch((error) => message(error.message, "error")));
   els.reloadMemoryBtn.addEventListener("click", () => loadMemory().catch((error) => message(error.message, "error")));
+  els.reloadRadarBtn.addEventListener("click", () => loadStateRadar().catch((error) => message(error.message, "error")));
+  els.reloadEconBtn.addEventListener("click", () => loadEconomy().catch((error) => message(error.message, "error")));
+  els.radarCompareBtn.addEventListener("click", () => {
+    state.compareMode = !state.compareMode;
+    els.radarCompareBtn.textContent = state.compareMode ? "退出对比" : "多智能体对比";
+    els.radarCompareBtn.className = `button small${state.compareMode ? " primary" : ""}`;
+    loadStateRadar().catch((error) => message(error.message, "error"));
+  });
+  els.reloadPerfBtn.addEventListener("click", () => loadPerformance().catch((error) => message(error.message, "error")));
   els.interviewBtn.addEventListener("click", () => interview().catch((error) => {
     els.interviewOutput.textContent = error.message;
   }));
@@ -334,13 +525,21 @@ async function init() {
   bindEvents();
   await loadConfig();
   await loadAgents();
+  initRadarChart("radarChart");
+  initEconomyChart("economyChart");
   await loadProfile();
   await loadMemory();
+  await loadSkills();
+  await loadEconomy();
+  await loadEconomyHistory();
+  await loadStateRadar();
+  await loadPerformance();
   await refreshStatus();
   await loadTrace(false);
   state.pollTimer = window.setInterval(() => {
     refreshStatus().catch(() => {});
     loadTrace(false).catch(() => {});
+    loadPerformance().catch(() => {});
   }, 2500);
 }
 

@@ -1,0 +1,76 @@
+<h2>杂志风监控面板 — 细化方案</h2>
+<p class="subtitle">在保持当前信息密度的前提下，用编辑设计的语言重构视觉</p>
+
+<div class="section">
+  <h3>🎨 配色方案</h3>
+  <div class="options">
+    <div class="option" data-choice="palette-1" onclick="toggleSelect(this)">
+      <div class="letter">1</div>
+      <div class="content">
+        <h3>赭石 + 暖白</h3>
+        <div style="display:flex;gap:6px;margin:8px 0;">
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#faf6ef;border:1px solid #d4cdc0;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#c65d3a;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#3a3230;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#d4cdc0;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#6a8f7a;"></span>
+        </div>
+        <p>暖白底、赭石红标题、深棕文字、灰褐色边框、鼠尾草绿数据</p>
+      </div>
+    </div>
+    <div class="option" data-choice="palette-2" onclick="toggleSelect(this)">
+      <div class="letter">2</div>
+      <div class="content">
+        <h3>海军蓝 + 纸白</h3>
+        <div style="display:flex;gap:6px;margin:8px 0;">
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#f4f1ea;border:1px solid #c8c2b6;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#1f3a4b;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#2b5e6b;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#c8a96e;"></span>
+          <span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#8aaaaa;"></span>
+        </div>
+        <p>纸白底、海军蓝面板、墨绿副色、金色点缀、灰蓝数据</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>📐 布局变化</h3>
+  <div class="options">
+    <div class="option" data-choice="layout-1" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>当前三栏 + 杂志润色</h3>
+        <p>保持左-agent列表 / 中-地图 / 右-侧栏 的结构，用更好的间距、字体、卡片样式提升质感</p>
+      </div>
+    </div>
+    <div class="option" data-choice="layout-2" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>重新组织：顶部仪表板 + 下方详情</h3>
+        <p>上方一行关键指标卡片（总agent数、运行状态、经济概要），下方左地图右详情</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>🔤 字体方向</h3>
+  <div class="options">
+    <div class="option" data-choice="font-1" onclick="toggleSelect(this)">
+      <div class="letter">1</div>
+      <div class="content">
+        <h3>Noto Serif SC + Inter</h3>
+        <p>标题衬线（有编辑感），数据无衬线（清晰），Google Fonts CDN</p>
+      </div>
+    </div>
+    <div class="option" data-choice="font-2" onclick="toggleSelect(this)">
+      <div class="letter">2</div>
+      <div class="content">
+        <h3>系统字体优先</h3>
+        <p>用系统已有字体（Georgia 标题, SF Pro/Aptos 正文），不额外加载，速度最快</p>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,3 +1,5 @@
+import csv
+import datetime
 import json
 import os
 import re
@@ -48,6 +50,16 @@ def _read_json_file(path, default=None):
     except (OSError, json.JSONDecodeError):
         return {} if default is None else default
     return payload
+
+
+def _read_csv_file(path, default=None):
+    if not os.path.exists(path):
+        return [] if default is None else default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+    except (OSError, csv.Error):
+        return [] if default is None else default
 
 
 def _atomic_write_json(path, payload):
@@ -213,6 +225,15 @@ def _memory_payload(agent_id):
     }
 
 
+def _skills_payload(agent_id):
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_skills.json")
+    skills = _read_json_file(path, [])
+    if isinstance(skills, list):
+        return {"agent_id": int(agent_id), "skills": skills}
+    return {"agent_id": int(agent_id), "skills": []}
+
+
 def _run_status():
     proc = RUN_STATE.get("process")
     running = bool(proc and proc.poll() is None)
@@ -316,6 +337,122 @@ def _latest_trace_meta():
     }
 
 
+def _economy_payload(agent_id):
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_economy.json")
+    data = _read_json_file(path, {})
+    if not data:
+        return {"agent_id": int(agent_id), "error": "Economy data not found"}
+    return {"agent_id": int(agent_id), "economy": data}
+
+
+def _economy_history_payload(agent_id):
+    cfg = _effective_config()
+    output_dir = cfg.get("economy_output_dir", "output/economy")
+    path = os.path.join(REPO_ROOT, output_dir, "agents", f"agent_{agent_id}_ledger.csv")
+    rows = _read_csv_file(path)
+    if not rows:
+        return {"agent_id": int(agent_id), "history": []}
+    for row in rows:
+        for key in ("day", "income", "expense", "net", "balance"):
+            if key in row:
+                try:
+                    row[key] = float(row[key]) if "." in str(row[key]) else int(row[key])
+                except (ValueError, TypeError):
+                    row[key] = 0 if key == "day" else 0.0
+    return {"agent_id": int(agent_id), "history": rows}
+
+
+def _batch_memory_state_payload(agent_ids):
+    if not agent_ids:
+        return {"agents": []}
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    results = []
+    _, sections = _profile_sections()
+    name_map = {str(s["id"]): s["name"] for s in sections}
+    for agent_id in agent_ids:
+        path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}.json")
+        memory = _read_json_file(path, [])
+        agent_state = None
+        if isinstance(memory, list) and memory:
+            last = memory[-1]
+            agent_state = last.get("state") if isinstance(last, dict) else None
+        results.append({
+            "agent_id": int(agent_id),
+            "name": name_map.get(str(agent_id), str(agent_id)),
+            "state": agent_state if isinstance(agent_state, dict) else {},
+        })
+    return {"agents": results}
+
+
+def _state_history_latest_payload():
+    path = os.path.join(REPO_ROOT, "output", "state", "agent_state_history.csv")
+    rows = _read_csv_file(path)
+    if not rows:
+        return {"agents": {}}
+    latest = {}
+    for row in rows:
+        agent_id = row.get("agent_id")
+        metric = row.get("metric")
+        value = row.get("value")
+        if not agent_id or not metric or value is None:
+            continue
+        agent_key = str(agent_id)
+        if agent_key not in latest:
+            latest[agent_key] = {}
+        try:
+            current = float(value)
+        except (ValueError, TypeError):
+            continue
+        latest[agent_key][metric] = current
+    return {"agents": latest}
+
+
+def _performance_payload():
+    cfg = _effective_config()
+    agent_ids = cfg.get("agent_ids", [])
+    sim_days = cfg.get("sim_days", 0)
+
+    started_at = RUN_STATE.get("started_at")
+    duration_seconds = None
+    if started_at:
+        try:
+            start = datetime.datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+            duration_seconds = (datetime.datetime.now() - start).total_seconds()
+        except (ValueError, TypeError):
+            pass
+
+    log_path = RUN_STATE.get("log_path", RUN_LOG_PATH)
+    log_size_bytes = 0
+    log_line_count = 0
+    if os.path.exists(log_path):
+        log_size_bytes = os.path.getsize(log_path)
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                log_line_count = sum(1 for _ in f)
+        except OSError:
+            pass
+
+    day_count = 0
+    if os.path.exists(RUN_LOG_PATH):
+        try:
+            with open(RUN_LOG_PATH, "r", encoding="utf-8") as f:
+                content = f.read()
+            day_count = len(re.findall(r"Day \d+", content))
+        except OSError:
+            pass
+
+    return {
+        "agent_count": len(agent_ids),
+        "sim_days": sim_days,
+        "days_completed": day_count if day_count > 0 else None,
+        "duration_seconds": duration_seconds,
+        "log_size_bytes": log_size_bytes,
+        "log_line_count": log_line_count,
+        "started_at": started_at,
+    }
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     server_version = "GAWorldDashboard/0.1"
 
@@ -348,13 +485,30 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not profile:
                 return self._json_response({"error": "Profile not found"}, status=404)
             return self._json_response(profile)
+        if path == "/api/agents/memory/batch":
+            ids_str = query.get("ids", [""])[0]
+            agent_ids = [int(x.strip()) for x in ids_str.split(",") if x.strip()]
+            return self._json_response(_batch_memory_state_payload(agent_ids))
         if path.startswith("/api/agents/") and path.endswith("/memory"):
             agent_id = path.split("/")[3]
             return self._json_response(_memory_payload(agent_id))
+        if path.startswith("/api/agents/") and path.endswith("/skills"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_skills_payload(agent_id))
         if path == "/api/run/status":
             return self._json_response(_run_status())
+        if path == "/api/run/performance":
+            return self._json_response(_performance_payload())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
+        if path == "/api/state-history/latest":
+            return self._json_response(_state_history_latest_payload())
+        if path.startswith("/api/economy/") and path.endswith("/history"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_economy_history_payload(agent_id))
+        if path.startswith("/api/economy/") and len(path.split("/")) == 4:
+            agent_id = path.split("/")[3]
+            return self._json_response(_economy_payload(agent_id))
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
