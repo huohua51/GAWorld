@@ -353,6 +353,22 @@ CONFIG = {
             },
         },
     },
+    # Life-History Agent (6-dimension human-like behavior)
+    "life_history": {
+        "enabled": True,
+        # Controls whether LH context is injected into planning prompts
+        # Toggle this to True/False for A/B comparison
+        "injection_enabled": True,
+        # Agents to instrument for step logging (empty = disabled)
+        "instrument_agents": [],
+        # Mini simulation: run short scenario with limited agents
+        "mini_simulation": {
+            "enabled": False,
+            "max_agents": 3,
+            "max_days": 1,
+            "max_steps_per_day": 3,
+        },
+    },
     # Economy module (currency, income/expense, assets, wealth pursuit)
     "economy": {
         "enabled": True,

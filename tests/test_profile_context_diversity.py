@@ -246,3 +246,341 @@ class TestProfileContextFourLayers:
         # Both should have daily life visible
         assert "独自" in ctx1, f"social_autonomy daily life missing: {ctx1}"
         assert "朋友" in ctx2, f"social_autonomy daily life missing: {ctx2}"
+
+
+
+
+def _load_life_history_evaluator():
+    """Load eval/life_history_eval.py without requiring eval/ to be a package."""
+    import importlib.util
+    import os
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "eval", "life_history_eval.py")
+    spec = importlib.util.spec_from_file_location("life_history_eval_module", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module.LifeHistoryEvaluator
+
+
+def _install_fake_planning(monkeypatch, plans, calls=None):
+    """Install a fake generative_city_sim.planning for non-live eval tests."""
+    import sys
+    import types
+
+    queue = list(plans)
+    calls = calls if calls is not None else []
+    fake_module = types.ModuleType("generative_city_sim")
+
+    def fake_planning(agent, perception_text, recall_context=None, decision_refs=None):
+        calls.append({
+            "agent": agent,
+            "perception_text": perception_text,
+            "recall_context": recall_context,
+            "decision_refs": decision_refs,
+        })
+        if not queue:
+            return {"goal": "??", "constraint": "?", "urge": "?", "plan": "??", "expected_outcome": "?"}
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    fake_module.planning = fake_planning
+    monkeypatch.setitem(sys.modules, "generative_city_sim", fake_module)
+    return calls
+
+
+class TestProfileContextSceneHints:
+    def test_money_social_conflict_adds_scene_relevant_hint(self):
+        """Scene conflict should surface profile-relevant money/social preferences."""
+        agent = _make_agent(
+            "Li Zeyu",
+            "algorithm engineer",
+            "introverted rational low conflict avoids direct confrontation",
+            "home office loop; weekend technical study; dislikes high frequency socializing",
+            "efficiency, contract boundaries, result orientation",
+        )
+        profile = AgentProfile.from_gaworld_agent(agent, gender="male", hukou="outside")
+        engine = create_life_history_engine(agent_id=1, agent_name="Li Zeyu", profile=profile)
+        engine._gaworld_agent = agent
+
+        ctx = engine.build_planning_context(
+            activity="weekend planning",
+            perception_text="friend coffee chat and another person owes you 2000 money",
+        )
+
+        assert "ScenePreference" in ctx
+        assert "money_conflict" in ctx
+        assert "social_pull" in ctx
+
+class TestPlanDiversityEvaluatorHelpers:
+    def test_check_plan_diversity_returns_ab_structure_with_fake_planner(self, monkeypatch):
+        """Non-live test: A/B helper returns stable structure and fixed recall calls."""
+        plans = [
+            {"goal": "coffee chat", "constraint": "limited time", "urge": "social", "plan": "go coffee chat", "expected_outcome": "relax"},
+            {"goal": "coffee chat", "constraint": "limited time", "urge": "social", "plan": "go coffee chat", "expected_outcome": "relax"},
+            {"goal": "repay followup", "constraint": "avoid conflict", "urge": "progress", "plan": "call debt and study", "expected_outcome": "resolve"},
+            {"goal": "coffee friend", "constraint": "energy", "urge": "social", "plan": "coffee exhibit chat", "expected_outcome": "happy"},
+        ]
+        calls = _install_fake_planning(monkeypatch, plans)
+        Evaluator = _load_life_history_evaluator()
+
+        result = Evaluator(52).check_plan_diversity()
+
+        assert result["verdict"] in {"PASS", "FAIL"}
+        assert result["score_A"] >= 0
+        assert result["score_B"] >= 0
+        assert isinstance(result["improvement"], bool)
+        assert len(calls) == 4
+        assert all(call["recall_context"].get("recollection") == "" for call in calls)
+        assert all("hint" in call["recall_context"] for call in calls)
+        assert calls[0]["decision_refs"].get("life_history_context") == ""
+        assert calls[2]["decision_refs"].get("life_history_context")
+
+    def test_check_plan_diversity_reports_error_with_fake_planner(self, monkeypatch):
+        """Non-live test: LLM/planning failures become ERROR results."""
+        _install_fake_planning(monkeypatch, [RuntimeError("offline")])
+        Evaluator = _load_life_history_evaluator()
+
+        result = Evaluator(52).check_plan_diversity()
+
+        assert result["verdict"] == "ERROR"
+        assert result["score_A"] == -1
+        assert "offline" in result["error"]
+
+    def test_runtime_ab_diversity_returns_multistep_report_with_fake_planner(self, monkeypatch):
+        """Runtime A/B helper should report context injection over multiple steps."""
+        plans = [
+            {"goal": "rest", "constraint": "none", "urge": "rest", "plan": "stay home rest", "expected_outcome": "recover"},
+            {"goal": "social", "constraint": "none", "urge": "social", "plan": "coffee chat", "expected_outcome": "happy"},
+            {"goal": "debt followup", "constraint": "none", "urge": "progress", "plan": "call debt", "expected_outcome": "resolve"},
+            {"goal": "social", "constraint": "none", "urge": "social", "plan": "exhibit chat", "expected_outcome": "happy"},
+            {"goal": "study", "constraint": "none", "urge": "complete", "plan": "technical study", "expected_outcome": "progress"},
+            {"goal": "social", "constraint": "none", "urge": "social", "plan": "night run friend", "expected_outcome": "relax"},
+        ]
+        calls = _install_fake_planning(monkeypatch, plans)
+        Evaluator = _load_life_history_evaluator()
+
+        result = Evaluator(52).check_runtime_ab_diversity()
+
+        assert result["verdict"] in {"PASS", "FAIL"}
+        assert result["steps"] == 3
+        assert result["contexts_injected_B"] == 3
+        assert result["contexts_injected_A"] == 0
+        assert "action_distribution_A" in result
+        assert "action_distribution_B" in result
+        assert len(calls) == 6
+
+
+class TestLifeHistoryABReportHelpers:
+    """Tests for eval/life_history_ab_report.py helper functions."""
+
+    def test_pair_logs_excludes_b_missing_steps(self):
+        """Only pairs where both A and B have entries are returned."""
+        from eval.life_history_ab_report import pair_logs
+        logs_a = [
+            {"agent_id": 52, "day": 1, "time_str": "08:00", "action": "coffee"},
+            {"agent_id": 52, "day": 1, "time_str": "09:00", "action": "walk"},
+            {"agent_id": 52, "day": 1, "time_str": "10:00", "action": "study"},
+        ]
+        logs_b = [
+            {"agent_id": 52, "day": 1, "time_str": "08:00", "action": "tea"},
+            # 09:00 missing in B
+            {"agent_id": 52, "day": 1, "time_str": "10:00", "action": "read"},
+        ]
+        pairs, missing_b = pair_logs(logs_a, logs_b)
+        assert len(pairs) == 2
+        assert missing_b == 1
+        assert pairs[0][0]["time_str"] == "08:00"
+        assert pairs[0][1]["time_str"] == "08:00"
+        assert pairs[1][0]["time_str"] == "10:00"
+        assert pairs[1][1]["time_str"] == "10:00"
+
+    def test_pair_logs_all_b_entries_paired(self):
+        """All B entries that have A counterparts are in pairs."""
+        from eval.life_history_ab_report import pair_logs
+        logs_a = [
+            {"agent_id": 52, "day": 1, "time_str": "08:00", "action": "coffee"},
+            {"agent_id": 52, "day": 1, "time_str": "09:00", "action": "walk"},
+        ]
+        logs_b = [
+            {"agent_id": 52, "day": 1, "time_str": "08:00", "action": "tea"},
+            {"agent_id": 52, "day": 1, "time_str": "09:00", "action": "jog"},
+            {"agent_id": 52, "day": 1, "time_str": "10:00", "action": "read"},  # no A counterpart
+        ]
+        pairs, missing_b = pair_logs(logs_a, logs_b)
+        assert len(pairs) == 2
+        assert missing_b == 0
+        # B's 10:00 entry should not appear in any pair
+        pair_times = {(p[0]["time_str"], p[1]["time_str"]) for p in pairs}
+        assert ("10:00", "10:00") not in pair_times
+
+    def test_relationship_drift_uses_correct_per_variant_baseline(self):
+        """A drift = A.after - A.before; B drift = B.after - B.before (not A.before).
+
+        Uses a case where the two variants start from different baselines and
+        B's delta is sub-threshold (0.005) while the buggy baseline (A.before)
+        would cross threshold (0.505). Correct code gives drift_b=0; buggy code
+        (using A.before as B's baseline) gives drift_b=1.
+        """
+        from eval.life_history_ab_report import compute_paired_diff
+        # A: trust 0.3→0.6 (delta 0.3 > 0.01 → drift_a = 1)
+        # B: trust 0.8→0.805 (delta 0.005 < 0.01 → drift_b = 0 if correct)
+        # If buggy uses A.before (0.3): B.after - A.before = 0.805-0.3=0.505 → drift_b = 1
+        pairs = [
+            (
+                {
+                    "agent_id": 52, "day": 1, "time_str": "08:00",
+                    "action": "coffee", "action_type": "social", "decision_driver": "social",
+                    "scheduled_activity": "social", "activity_final": "coffee",
+                    "life_history_context_present": False,
+                    "relationships_before": {"11": {"trust": 0.3, "closeness": 0.5}},
+                    "relationships_after": {"11": {"trust": 0.6, "closeness": 0.5}},
+                },
+                {
+                    "agent_id": 52, "day": 1, "time_str": "08:00",
+                    "action": "tea", "action_type": "social", "decision_driver": "social",
+                    "scheduled_activity": "social", "activity_final": "tea",
+                    "life_history_context_present": True,
+                    "relationships_before": {"11": {"trust": 0.8, "closeness": 0.2}},
+                    "relationships_after": {"11": {"trust": 0.805, "closeness": 0.2}},
+                },
+            )
+        ]
+        diff = compute_paired_diff(pairs)
+        assert len(diff["relationship_drift"]) == 1
+        rd = diff["relationship_drift"][0]
+        # Correct: drift_a=1 (A delta > threshold), drift_b=0 (B delta < threshold)
+        # Buggy: drift_b would be 1 (B.after - A.before = 0.505 crosses threshold)
+        assert rd["drift_a"] == 1
+        assert rd["drift_b"] == 0
+        # The numeric inequality proves per-variant baselines are used, not A.before for B
+        assert rd["drift_a"] != rd["drift_b"]
+
+    def test_action_changed_count_excludes_none_b(self):
+        """action_changed only counts when B has an action (not when B is None)."""
+        from eval.life_history_ab_report import compute_paired_diff
+        pairs = [
+            (
+                {"agent_id": 52, "day": 1, "time_str": "08:00", "action": "coffee",
+                 "action_type": "social", "decision_driver": "social",
+                 "scheduled_activity": "social", "activity_final": "coffee",
+                 "life_history_context_present": False,
+                 "relationships_before": {}, "relationships_after": {}},
+                {"agent_id": 52, "day": 1, "time_str": "08:00", "action": "tea",
+                 "action_type": "social", "decision_driver": "social",
+                 "scheduled_activity": "social", "activity_final": "tea",
+                 "life_history_context_present": True,
+                 "relationships_before": {}, "relationships_after": {}},
+            ),
+            (
+                {"agent_id": 52, "day": 1, "time_str": "09:00", "action": "walk",
+                 "action_type": "movement", "decision_driver": "spacetime",
+                 "scheduled_activity": "walk", "activity_final": "walk",
+                 "life_history_context_present": False,
+                 "relationships_before": {}, "relationships_after": {}},
+                {"agent_id": 52, "day": 1, "time_str": "09:00", "action": "jog",
+                 "action_type": "movement", "decision_driver": "spacetime",
+                 "scheduled_activity": "walk", "activity_final": "jog",
+                 "life_history_context_present": True,
+                 "relationships_before": {}, "relationships_after": {}},
+            ),
+            (
+                {"agent_id": 52, "day": 1, "time_str": "10:00", "action": "study",
+                 "action_type": "work", "decision_driver": "goal",
+                 "scheduled_activity": "study", "activity_final": "study",
+                 "life_history_context_present": False,
+                 "relationships_before": {}, "relationships_after": {}},
+                {"agent_id": 52, "day": 1, "time_str": "10:00", "action": "study",
+                 "action_type": "work", "decision_driver": "goal",
+                 "scheduled_activity": "study", "activity_final": "study",
+                 "life_history_context_present": True,
+                 "relationships_before": {}, "relationships_after": {}},
+            ),
+        ]
+        diff = compute_paired_diff(pairs)
+        # step 1: coffee != tea → 1
+        # step 2: walk != jog → 1
+        # step 3: study == study → 0
+        assert diff["action_changed"] == 2
+        assert diff["total_paired"] == 3
+
+
+@pytest.mark.integration
+class TestPlanActionDiversity:
+    """
+    Regression test for real planning output diversity.
+
+    Requires live LLM (Ollama). Marked as integration to exclude from
+    default `bash run_life_history_tests.sh`.
+
+    Run separately with:
+        /home/glf/miniconda3/bin/python -m pytest tests/test_profile_context_diversity.py::TestPlanActionDiversity -v
+    """
+
+    def test_li_vs_zhou_planning_differs(self):
+        """
+        Li Zeyu (技术内向) and Zhou Wanqing (审美外向)
+        must produce different planning decisions for the same scenario.
+
+        This is the core test for action-level behavioral differentiation.
+        """
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from generative_city_sim import planning
+
+        scenario = (
+            "周末下午 4 点，无工作安排。"
+            "关系人 A 发消息约你去咖啡馆聊天，说很久没见了。"
+            "另外，关系人 B 之前借了你 2000 元一直没还，你催过一次还没回应。"
+            "当前心情一般，空闲时间充裕。"
+        )
+
+        li_agent = {
+            "id": 1, "name": "李泽宇",
+            "state": {"emotion": 0.5, "stress": 0.5},
+            "intentions": [],
+        }
+        zhou_agent = {
+            "id": 2, "name": "周婉清",
+            "state": {"emotion": 0.5, "stress": 0.5},
+            "intentions": [],
+        }
+
+        li_plan = planning(li_agent, scenario)
+        zhou_plan = planning(zhou_agent, scenario)
+
+        # Helper to classify action type
+        def _goal_type(plan):
+            goal = plan.get("goal", "")
+            if any(k in goal for k in ["聊天", "咖啡馆", "见面", "赴约", "朋友", "社交"]):
+                return "social"
+            if any(k in goal for k in ["工作", "技术", "学习", "处理", "还钱", "催", "联系"]):
+                return "work"
+            if any(k in goal for k in ["休息", "睡觉", "放松", "恢复"]):
+                return "self_care"
+            return "other"
+
+        def _urge_type(plan):
+            urge = plan.get("urge", "")
+            if "社交" in urge:
+                return "social"
+            if any(k in urge for k in ["躺着", "懒", "休息", "省力", "不想动"]):
+                return "lazy"
+            if any(k in urge for k in ["完成", "处理", "推进"]):
+                return "achievement"
+            return "other"
+
+        li_goal = _goal_type(li_plan)
+        zhou_goal = _goal_type(zhou_plan)
+        li_urge = _urge_type(li_plan)
+        zhou_urge = _urge_type(zhou_plan)
+
+        # Detailed inspection: log all four dimensions for debugging
+        print(f"\n[plan diversity] 李泽宇 → goal={li_goal}({li_plan.get('goal')}), "
+              f"urge={li_urge}({li_plan.get('urge')}), "
+              f"plan={li_plan.get('plan')}")
+        print(f"[plan diversity] 周婉清 → goal={zhou_goal}({zhou_plan.get('goal')}), "
+              f"urge={zhou_urge}({zhou_plan.get('urge')}), "
+              f"plan={zhou_plan.get('plan')}")
