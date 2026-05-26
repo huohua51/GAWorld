@@ -69,6 +69,15 @@ def build_report(log_a_path, log_b_path, output_path, date_str, agents):
     activity_changed = sum(1 for a, b in pairs if a.get("activity_final") != b.get("activity_final"))
     at_changed = sum(1 for a, b in pairs if a.get("action_type") != b.get("action_type"))
 
+    # Compute relationship drift
+    total_drift_a = 0
+    total_drift_b = 0
+    for a, b in pairs:
+        drift_a = relationship_drift(a.get("relationships_before", {}), a.get("relationships_after", {}))
+        drift_b = relationship_drift(b.get("relationships_before", {}), b.get("relationships_after", {}))
+        total_drift_a += drift_a
+        total_drift_b += drift_b
+
     lh_rate_a = sum(1 for e in logs_a if e.get("life_history_context_present")) / max(len(logs_a), 1) * 100
     lh_rate_b = sum(1 for e in logs_b if e.get("life_history_context_present")) / max(len(logs_b), 1) * 100
 
@@ -250,31 +259,66 @@ def build_report(log_a_path, log_b_path, output_path, date_str, agents):
 
     # Interpretation
     story.append(Paragraph("结果解读", h1_style))
-    story.append(Paragraph(
-        "<b>Action 改变 (50%)</b>：Variant B 中 profile context 注入后，同一时间点的具体执行动作发生了变化。"
-        "例如 09:09 A 选择「联系一下相关的人确认接下来的安排」，B 选择「先拖一会儿再说，顺手刷会儿手机」。"
-        "这说明 profile context 影响了决策时的 action selection。",
-        body_style
-    ))
+
+    # Action
+    if action_changed > 0:
+        story.append(Paragraph(
+            f"<b>Action 改变 ({action_changed/total*100:.0f}%)</b>：Variant B 中 profile context 注入后，"
+            f"同一时间点的具体执行动作发生了变化。"
+            f"这说明 profile context 影响了决策时的 action selection。",
+            body_style
+        ))
+    else:
+        story.append(Paragraph(
+            "<b>Action 改变 (0%)</b>：Variant A 和 B 的具体执行动作完全一致，"
+            "说明 profile context 在本次实验中未影响 action selection。",
+            body_style
+        ))
     story.append(Spacer(1, 0.2*cm))
-    story.append(Paragraph(
-        "<b>Activity 不变 (0%)</b>：虽然具体 action 不同，但最终 activity（工作、睡觉等）完全一致。"
-        "说明 profile context 影响的是「怎么做」而非「做什么」。",
-        body_style
-    ))
+
+    # Activity
+    if activity_changed > 0:
+        story.append(Paragraph(
+            f"<b>Activity 改变 ({activity_changed/total*100:.0f}%)</b>：Variant B 选择了不同的最终活动，"
+            "说明 profile context 不仅影响如何做，还影响做什么。",
+            body_style
+        ))
+    else:
+        story.append(Paragraph(
+            "<b>Activity 不变 (0%)</b>：虽然具体 action 不同，但最终 activity 完全一致。"
+            "说明 profile context 影响的是「怎么做」而非「做什么」。",
+            body_style
+        ))
     story.append(Spacer(1, 0.2*cm))
-    story.append(Paragraph(
-        "<b>Decision Driver 差异</b>：Variant A 的驱动因素以「成长动机」(50%) 为主；"
-        "Variant B 出现「惯性延续」(12.5%)，且「成长动机」和「现实承诺约束」各占 37.5%。"
-        "说明 profile context 改变了 agent 的决策归因。",
-        body_style
-    ))
+
+    # Action type
+    if at_changed > 0:
+        story.append(Paragraph(
+            f"<b>Action Type 改变 ({at_changed/total*100:.0f}%)</b>：Variant B 的行为类别发生了变化，"
+            "说明 profile context 影响了更高层次的行为分类。",
+            body_style
+        ))
+    else:
+        story.append(Paragraph(
+            "<b>Action Type 不变 (0%)</b>：Variant A 和 B 的行为类别一致，"
+            "说明 profile context 对行为类型没有影响。",
+            body_style
+        ))
     story.append(Spacer(1, 0.2*cm))
-    story.append(Paragraph(
-        "<b>Relationship Drift = 0</b>：本次实验 agent 52 无 social partners，无 relationship 更新。"
-        "Relationship drift 在有社交场景时才有意义。",
-        body_style
-    ))
+
+    # Relationship drift
+    if total_drift_a == 0 and total_drift_b == 0:
+        story.append(Paragraph(
+            "<b>Relationship Drift = 0</b>：本次实验无 relationship 更新。"
+            "Relationship drift 在有社交场景时才有意义。",
+            body_style
+        ))
+    else:
+        story.append(Paragraph(
+            f"<b>Relationship Drift</b>：Variant A={total_drift_a}, Variant B={total_drift_b}。"
+            "Relationship drift 反映每次交互后关系状态的变化次数。",
+            body_style
+        ))
     story.append(Spacer(1, 0.4*cm))
 
     # Raw data excerpt

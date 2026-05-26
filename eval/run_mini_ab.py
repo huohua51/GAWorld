@@ -146,19 +146,25 @@ def run_and_collect(args):
         print(f"Seed {seed}/{len(args.seeds)}")
         print("=" * 60)
 
-        dir_a, log_a = run_variant(
-            "A", agent_ids=args.agents, seed=seed, sim_days=args.sim_days,
-            injection_enabled=False, dry_run=args.dry_run,
-        )
+        # In dry-run mode, just print both A and B configs without running
         if args.dry_run:
-            print("  (dry run, skipping B)")
+            # Print A config
+            run_variant("A", agent_ids=args.agents, seed=seed, sim_days=args.sim_days,
+                         injection_enabled=False, dry_run=True)
+            # Print B config
+            run_variant("B", agent_ids=args.agents, seed=seed, sim_days=args.sim_days,
+                         injection_enabled=True, dry_run=True)
+            results.append((seed, None, None, None, None))
             continue
 
+        dir_a, log_a = run_variant(
+            "A", agent_ids=args.agents, seed=seed, sim_days=args.sim_days,
+            injection_enabled=False, dry_run=False,
+        )
         dir_b, log_b = run_variant(
             "B", agent_ids=args.agents, seed=seed, sim_days=args.sim_days,
-            injection_enabled=True, dry_run=args.dry_run,
+            injection_enabled=True, dry_run=False,
         )
-
         results.append((seed, log_a, log_b, dir_a, dir_b))
 
     return results
