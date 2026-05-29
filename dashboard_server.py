@@ -1,5 +1,3 @@
-import csv
-import datetime
 import json
 import os
 import re
@@ -8,9 +6,12 @@ import sys
 import time
 from copy import deepcopy
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 from urllib.parse import parse_qs, unquote, urlparse
 
 from config import CONFIG
+from life_events import add_life_event, list_life_event_templates, list_life_events
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.dashboard")
@@ -28,6 +29,21 @@ RUN_STATE = {
     "started_at": None,
     "log_path": RUN_LOG_PATH,
 }
+
+
+def _simulator_env(extra=None):
+    env = os.environ.copy()
+    pythonpath_items = [REPO_ROOT]
+    existing_pythonpath = str(env.get("PYTHONPATH", "")).strip()
+    if existing_pythonpath:
+        pythonpath_items.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_items)
+    env.setdefault("MPLCONFIGDIR", "/private/tmp")
+    env.setdefault("XDG_CACHE_HOME", "/private/tmp")
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            env[str(key)] = str(value)
+    return env
 
 
 def _deep_update(base, patch):
@@ -50,16 +66,6 @@ def _read_json_file(path, default=None):
     except (OSError, json.JSONDecodeError):
         return {} if default is None else default
     return payload
-
-
-def _read_csv_file(path, default=None):
-    if not os.path.exists(path):
-        return [] if default is None else default
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return list(csv.DictReader(f))
-    except (OSError, csv.Error):
-        return [] if default is None else default
 
 
 def _atomic_write_json(path, payload):
@@ -213,6 +219,7 @@ def _memory_payload(agent_id):
     schedule = _read_json_file(os.path.join(base, f"agent_{agent_id}_schedule.json"), {})
     habits = _read_json_file(os.path.join(base, f"agent_{agent_id}_habits.json"), {})
     intentions = _read_json_file(os.path.join(base, f"agent_{agent_id}_intentions.json"), {})
+    twin_state = _read_json_file(os.path.join(base, f"agent_{agent_id}_twin_state.json"), {})
     episodes = _tail_text(os.path.join(base, f"agent_{agent_id}_episodes.jsonl"), max_chars=24000)
     log_text = _tail_text(os.path.join(REPO_ROOT, "output", "logs", f"agent_{agent_id}.log"), max_chars=24000)
     return {
@@ -220,18 +227,10 @@ def _memory_payload(agent_id):
         "schedule": schedule,
         "habits": habits,
         "intentions": intentions,
+        "twin_state": twin_state,
         "episodes_tail": episodes,
         "log_tail": log_text,
     }
-
-
-def _skills_payload(agent_id):
-    memory_dir = _effective_config().get("memory_dir", "output/memory")
-    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_skills.json")
-    skills = _read_json_file(path, [])
-    if isinstance(skills, list):
-        return {"agent_id": int(agent_id), "skills": skills}
-    return {"agent_id": int(agent_id), "skills": []}
 
 
 def _run_status():
@@ -254,8 +253,7 @@ def _start_simulation(payload):
     if isinstance(payload.get("config"), dict):
         _save_config_patch(payload["config"])
     os.makedirs(os.path.dirname(RUN_LOG_PATH), exist_ok=True)
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
+    env = _simulator_env({"PYTHONUNBUFFERED": "1"})
     if payload.get("reset"):
         with open(RUN_LOG_PATH, "w", encoding="utf-8") as log_file:
             log_file.write(f"[dashboard] reset at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -314,7 +312,7 @@ def _interview_agent(payload):
     result = subprocess.run(
         command,
         cwd=REPO_ROOT,
-        env=os.environ.copy(),
+        env=_simulator_env(),
         capture_output=True,
         text=True,
         timeout=int(payload.get("timeout", 300)),
@@ -337,120 +335,106 @@ def _latest_trace_meta():
     }
 
 
-def _economy_payload(agent_id):
-    memory_dir = _effective_config().get("memory_dir", "output/memory")
-    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_economy.json")
-    data = _read_json_file(path, {})
-    if not data:
-        return {"agent_id": int(agent_id), "error": "Economy data not found"}
-    return {"agent_id": int(agent_id), "economy": data}
+def _current_trace_frame():
+    latest = _latest_trace_meta().get("latest", {})
+    if isinstance(latest, dict) and isinstance(latest.get("frame"), dict):
+        return latest["frame"]
+    return {}
 
 
-def _economy_history_payload(agent_id):
-    cfg = _effective_config()
-    output_dir = cfg.get("economy_output_dir", "output/economy")
-    path = os.path.join(REPO_ROOT, output_dir, "agents", f"agent_{agent_id}_ledger.csv")
-    rows = _read_csv_file(path)
-    if not rows:
-        return {"agent_id": int(agent_id), "history": []}
-    for row in rows:
-        for key in ("day", "income", "expense", "net", "balance"):
-            if key in row:
-                try:
-                    row[key] = float(row[key]) if "." in str(row[key]) else int(row[key])
-                except (ValueError, TypeError):
-                    row[key] = 0 if key == "day" else 0.0
-    return {"agent_id": int(agent_id), "history": rows}
-
-
-def _batch_memory_state_payload(agent_ids):
-    if not agent_ids:
-        return {"agents": []}
-    memory_dir = _effective_config().get("memory_dir", "output/memory")
-    results = []
-    _, sections = _profile_sections()
-    name_map = {str(s["id"]): s["name"] for s in sections}
-    for agent_id in agent_ids:
-        path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}.json")
-        memory = _read_json_file(path, [])
-        agent_state = None
-        if isinstance(memory, list) and memory:
-            last = memory[-1]
-            agent_state = last.get("state") if isinstance(last, dict) else None
-        results.append({
-            "agent_id": int(agent_id),
-            "name": name_map.get(str(agent_id), str(agent_id)),
-            "state": agent_state if isinstance(agent_state, dict) else {},
-        })
-    return {"agents": results}
-
-
-def _state_history_latest_payload():
-    path = os.path.join(REPO_ROOT, "output", "state", "agent_state_history.csv")
-    rows = _read_csv_file(path)
-    if not rows:
-        return {"agents": {}}
-    latest = {}
-    for row in rows:
-        agent_id = row.get("agent_id")
-        metric = row.get("metric")
-        value = row.get("value")
-        if not agent_id or not metric or value is None:
-            continue
-        agent_key = str(agent_id)
-        if agent_key not in latest:
-            latest[agent_key] = {}
-        try:
-            current = float(value)
-        except (ValueError, TypeError):
-            continue
-        latest[agent_key][metric] = current
-    return {"agents": latest}
-
-
-def _performance_payload():
-    cfg = _effective_config()
-    agent_ids = cfg.get("agent_ids", [])
-    sim_days = cfg.get("sim_days", 0)
-
-    started_at = RUN_STATE.get("started_at")
-    duration_seconds = None
-    if started_at:
-        try:
-            start = datetime.datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
-            duration_seconds = (datetime.datetime.now() - start).total_seconds()
-        except (ValueError, TypeError):
-            pass
-
-    log_path = RUN_STATE.get("log_path", RUN_LOG_PATH)
-    log_size_bytes = 0
-    log_line_count = 0
-    if os.path.exists(log_path):
-        log_size_bytes = os.path.getsize(log_path)
-        try:
-            with open(log_path, "r", encoding="utf-8") as f:
-                log_line_count = sum(1 for _ in f)
-        except OSError:
-            pass
-
-    day_count = 0
-    if os.path.exists(RUN_LOG_PATH):
-        try:
-            with open(RUN_LOG_PATH, "r", encoding="utf-8") as f:
-                content = f.read()
-            day_count = len(re.findall(r"Day \d+", content))
-        except OSError:
-            pass
-
+def _life_events_payload():
     return {
-        "agent_count": len(agent_ids),
-        "sim_days": sim_days,
-        "days_completed": day_count if day_count > 0 else None,
-        "duration_seconds": duration_seconds,
-        "log_size_bytes": log_size_bytes,
-        "log_line_count": log_line_count,
-        "started_at": started_at,
+        "templates": list_life_event_templates(),
+        "events": list_life_events(CONFIG, include_consumed=True),
     }
+
+
+def _add_life_event(payload):
+    event = add_life_event(payload, CONFIG, current_frame=_current_trace_frame())
+    return {
+        "event": event,
+        "events": list_life_events(CONFIG, include_consumed=True),
+    }
+
+
+def _run_personal_what_if(payload):
+    agent_id = int(payload.get("agent_id"))
+    question = str(payload.get("question", "")).strip()
+    if agent_id <= 0 or not question:
+        raise ValueError("agent_id and question are required")
+    command = [
+        sys.executable,
+        os.path.join(REPO_ROOT, "generative_city_sim.py"),
+        "personal-what-if",
+        "--agent-id",
+        str(agent_id),
+        "--question",
+        question,
+    ]
+    if payload.get("scenario_title"):
+        command.extend(["--scenario-title", str(payload["scenario_title"]).strip()])
+    if payload.get("event_day") is not None:
+        command.extend(["--event-day", str(int(payload.get("event_day", 1)))])
+    if payload.get("event_time"):
+        command.extend(["--event-time", str(payload.get("event_time")).strip()])
+    if payload.get("sim_days") is not None:
+        command.extend(["--sim-days", str(int(payload.get("sim_days", 2)))])
+    if payload.get("llm_provider"):
+        command.extend(["--llm-provider", str(payload.get("llm_provider")).strip()])
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=_simulator_env(),
+        capture_output=True,
+        text=True,
+        timeout=int(payload.get("timeout", 1800)),
+    )
+    output = {
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+    for line in result.stdout.splitlines():
+        if line.startswith("输出目录:"):
+            output["output_root"] = line.split(":", 1)[1].strip()
+        elif line.startswith("个人报告:"):
+            output["personal_report"] = line.split(":", 1)[1].strip()
+        elif line.startswith("通用报告:"):
+            output["comparison_report"] = line.split(":", 1)[1].strip()
+    return output
+
+
+def _distributed_social_payload():
+    cfg = _effective_config()
+    distributed_cfg = cfg.get("distributed", {}) if isinstance(cfg.get("distributed"), dict) else {}
+    relay_cfg = distributed_cfg.get("relay", {}) if isinstance(distributed_cfg.get("relay"), dict) else {}
+    base_url = str(relay_cfg.get("base_url", "http://127.0.0.1:8877")).rstrip("/")
+    cluster = str(distributed_cfg.get("cluster", "default")).strip() or "default"
+    personal_twin_cfg = cfg.get("personal_twin", {}) if isinstance(cfg.get("personal_twin"), dict) else {}
+    result = {
+        "enabled": bool(distributed_cfg.get("enabled", False)),
+        "cluster": cluster,
+        "relay_base_url": base_url,
+        "personal_twin": {
+            "enabled": bool(personal_twin_cfg.get("enabled", False)),
+            "local_first": bool(personal_twin_cfg.get("local_first", False)),
+            "share_social_summaries": bool(personal_twin_cfg.get("share_social_summaries", False)),
+            "what_if_enabled": bool(personal_twin_cfg.get("what_if_enabled", False)),
+        },
+    }
+    if not result["enabled"]:
+        result["snapshot"] = {}
+        result["error"] = "distributed mode disabled"
+        return result
+    url = f"{base_url}/social/snapshot?cluster={cluster}&limit=18"
+    try:
+        with urlopen(url, timeout=2.5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        result["snapshot"] = payload if isinstance(payload, dict) else {}
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        result["snapshot"] = {}
+        result["error"] = str(exc)
+    return result
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -485,30 +469,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not profile:
                 return self._json_response({"error": "Profile not found"}, status=404)
             return self._json_response(profile)
-        if path == "/api/agents/memory/batch":
-            ids_str = query.get("ids", [""])[0]
-            agent_ids = [int(x.strip()) for x in ids_str.split(",") if x.strip()]
-            return self._json_response(_batch_memory_state_payload(agent_ids))
         if path.startswith("/api/agents/") and path.endswith("/memory"):
             agent_id = path.split("/")[3]
             return self._json_response(_memory_payload(agent_id))
-        if path.startswith("/api/agents/") and path.endswith("/skills"):
-            agent_id = path.split("/")[3]
-            return self._json_response(_skills_payload(agent_id))
         if path == "/api/run/status":
             return self._json_response(_run_status())
-        if path == "/api/run/performance":
-            return self._json_response(_performance_payload())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
-        if path == "/api/state-history/latest":
-            return self._json_response(_state_history_latest_payload())
-        if path.startswith("/api/economy/") and path.endswith("/history"):
-            agent_id = path.split("/")[3]
-            return self._json_response(_economy_history_payload(agent_id))
-        if path.startswith("/api/economy/") and len(path.split("/")) == 4:
-            agent_id = path.split("/")[3]
-            return self._json_response(_economy_payload(agent_id))
+        if path == "/api/life-events":
+            return self._json_response(_life_events_payload())
+        if path == "/api/distributed/social":
+            return self._json_response(_distributed_social_payload())
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
@@ -524,6 +495,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_stop_simulation())
         if path == "/api/interview":
             return self._json_response(_interview_agent(payload))
+        if path == "/api/life-events":
+            return self._json_response(_add_life_event(payload))
+        if path == "/api/personal-what-if":
+            return self._json_response(_run_personal_what_if(payload))
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def do_GET(self):

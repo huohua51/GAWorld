@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GAWorld Console</title>
-  <meta name="description" content="GAWorld 本地仿真控制台" />
+  <title>GAWorld Twin Console</title>
+  <meta name="description" content="GAWorld 个人孪生与分布式社交控制台" />
   <link rel="stylesheet" href="/site/dashboard/styles.css" />
 </head>
 <body>
@@ -12,8 +12,8 @@
     <header class="masthead">
       <div class="masthead-copy">
         <p class="kicker">GAWorld Console</p>
-        <h1>仿真控制台</h1>
-        <p>配置、人物、运行、采访与记忆观察集中在一个本地面板中。</p>
+        <h1>个人孪生控制台</h1>
+        <p>本地分身、分布式社交、运行控制、访谈与记忆观察集中在一个面板中。</p>
       </div>
       <img src="/video/public/gaworld-graphical-abstract.png" alt="GAWorld abstract map" />
     </header>
@@ -62,15 +62,6 @@
     </section>
 
     <section class="workspace">
-      <aside class="panel left-stack">
-        <div class="section-head">
-          <div>
-            <p class="kicker">Agent List</p>
-            <h2>智能体列表</h2>
-          </div>
-        </div>
-        <div id="agentList" class="agent-list"></div>
-      </aside>
       <section class="panel map-panel">
         <div class="section-head">
           <div>
@@ -90,64 +81,24 @@
       <aside class="right-stack">
         <section class="panel">
           <div class="section-head">
-            <div>
-              <p class="kicker">Skills</p>
-              <h2>技能</h2>
+            <div class="agent-head">
+              <div class="dashboard-avatar-wrap">
+                <img id="selectedAgentAvatar" class="dashboard-avatar" alt="" />
+              </div>
+              <div>
+                <p class="kicker">Twin Profile</p>
+                <h2>分身画像</h2>
+              </div>
             </div>
+            <select id="agentSelect"></select>
           </div>
-          <div id="skillsContainer" class="skill-grid">
-            <p id="skillsPlaceholder" class="placeholder-text">读取技能中...</p>
+          <textarea id="profileEditor" class="profile-editor" spellcheck="false"></textarea>
+          <div class="button-row end">
+            <button id="saveProfileBtn" class="button">保存 Profile</button>
+            <button id="refreshAgentBtn" class="button">刷新</button>
           </div>
         </section>
 
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="kicker">Agent State</p>
-              <h2>智能体状态</h2>
-            </div>
-            <button id="reloadRadarBtn" class="button small">刷新</button>
-            <button id="radarCompareBtn" class="button small">多智能体对比</button>
-          </div>
-          <div class="chart-container">
-            <canvas id="radarChart" width="400" height="400" aria-label="智能体状态雷达图"></canvas>
-            <p id="radarPlaceholder" class="placeholder-text">暂无状态数据。</p>
-          </div>
-          <div id="radarLegend" class="radar-legend" style="display:none"></div>
-        </section>
-
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="kicker">Performance</p>
-              <h2>运行性能</h2>
-            </div>
-            <button id="reloadPerfBtn" class="button small">刷新</button>
-          </div>
-          <div id="performanceSummary" class="perf-grid">
-            <p class="placeholder-text">暂无性能数据。</p>
-          </div>
-        </section>
-      </aside>
-    </section>
-
-    <section class="lower-grid">
-      <section class="panel lower-left">
-        <div class="section-head">
-          <div>
-            <p class="kicker">Agent Profile</p>
-            <h2>人物设定</h2>
-          </div>
-          <select id="agentSelect"></select>
-        </div>
-        <textarea id="profileEditor" class="profile-editor" spellcheck="false"></textarea>
-        <div class="button-row end">
-          <button id="saveProfileBtn" class="button">保存 Profile</button>
-          <button id="refreshAgentBtn" class="button">刷新</button>
-        </div>
-      </section>
-
-      <section class="lower-center">
         <section class="panel">
           <div class="section-head">
             <div>
@@ -166,27 +117,90 @@
         <section class="panel">
           <div class="section-head">
             <div>
-              <p class="kicker">Economy</p>
-              <h2>经济状况</h2>
+              <p class="kicker">What-if</p>
+              <h2>个人反事实</h2>
             </div>
-            <button id="reloadEconBtn" class="button small">刷新</button>
           </div>
-          <div id="economySummary" class="economy-grid">
-            <p class="placeholder-text">暂无经济数据。</p>
+          <input id="whatIfTitleInput" class="event-title-input" placeholder="情景标题（可选）" />
+          <textarea id="whatIfQuestionInput" class="compact-editor" placeholder="例如：如果我明天不去上班而是准备面试，会怎样？"></textarea>
+          <div class="event-grid">
+            <label>
+              <span>Day</span>
+              <input id="whatIfDayInput" type="number" min="1" value="1" />
+            </label>
+            <label>
+              <span>Time</span>
+              <input id="whatIfTimeInput" value="09:00" />
+            </label>
+            <label>
+              <span>仿真天数</span>
+              <input id="whatIfSimDaysInput" type="number" min="1" value="2" />
+            </label>
+            <label>
+              <span>LLM Provider</span>
+              <input id="whatIfProviderInput" placeholder="留空=默认路由" />
+            </label>
           </div>
-          <div class="chart-container-wide">
-            <h3>经济趋势</h3>
-            <canvas id="economyChart" width="600" height="280"></canvas>
-            <p id="economyChartPlaceholder" class="placeholder-text">暂无经济趋势数据。</p>
+          <div class="button-row end">
+            <button id="runWhatIfBtn" class="button primary">运行 What-if</button>
           </div>
+          <pre id="whatIfOutput" class="codebox">What-if 输出会显示在这里。</pre>
         </section>
-      </section>
 
-      <section class="panel lower-right">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">Life Event</p>
+              <h2>人生事件</h2>
+            </div>
+            <button id="reloadLifeEventsBtn" class="button small">刷新</button>
+          </div>
+          <div class="event-grid">
+            <label>
+              <span>事件模板</span>
+              <select id="lifeEventTemplateSelect"></select>
+            </label>
+            <label>
+              <span>目标 Agent</span>
+              <input id="lifeEventAgentInput" placeholder="留空=所有，或 4,5" />
+            </label>
+            <label>
+              <span>触发方式</span>
+              <select id="lifeEventModeSelect">
+                <option value="immediate">下一时间步</option>
+                <option value="scheduled">指定 Day/Time</option>
+              </select>
+            </label>
+            <label>
+              <span>Day</span>
+              <input id="lifeEventDayInput" type="number" min="1" placeholder="当前 Day" />
+            </label>
+            <label>
+              <span>Time</span>
+              <input id="lifeEventTimeInput" placeholder="HH:MM" />
+            </label>
+            <label>
+              <span>强度</span>
+              <input id="lifeEventSeverityInput" type="number" min="0" max="1" step="0.05" value="0.7" />
+            </label>
+          </div>
+          <input id="lifeEventTitleInput" class="event-title-input" placeholder="事件标题（可覆盖模板）" />
+          <textarea id="lifeEventDescriptionInput" class="compact-editor" placeholder="事件描述（可覆盖模板）"></textarea>
+          <div class="button-row end">
+            <button id="useSelectedAgentBtn" class="button">使用当前人物</button>
+            <button id="addLifeEventBtn" class="button primary">添加事件</button>
+          </div>
+          <pre id="lifeEventListBox" class="codebox event-list">暂无人生事件。</pre>
+        </section>
+      </aside>
+    </section>
+
+    <section class="lower-grid">
+      <section class="panel">
         <div class="section-head">
           <div>
-            <p class="kicker">Memory</p>
-            <h2>记忆与习惯</h2>
+              <p class="kicker">Memory</p>
+              <h2>本地记忆与习惯</h2>
           </div>
           <button id="reloadMemoryBtn" class="button small">刷新记忆</button>
         </div>
@@ -197,21 +211,53 @@
           <article><h3>Agent 日志</h3><pre id="agentLogBox" class="codebox"></pre></article>
         </div>
       </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Run Log</p>
+            <h2>运行输出</h2>
+          </div>
+          <button id="reloadStatusBtn" class="button small">刷新状态</button>
+        </div>
+        <pre id="runLogBox" class="codebox run-log">暂无运行日志。</pre>
+      </section>
     </section>
 
-    <section class="panel log-section">
+    <section class="panel distributed-panel">
       <div class="section-head">
         <div>
-          <p class="kicker">Run Log</p>
-          <h2>运行输出</h2>
+          <p class="kicker">Distributed Social</p>
+          <h2>分布式虚拟社交</h2>
         </div>
-        <button id="reloadStatusBtn" class="button small">刷新状态</button>
+        <div class="button-row">
+          <span id="distributedStatusBadge" class="status-badge">未连接</span>
+          <button id="reloadDistributedBtn" class="button small">刷新社交层</button>
+        </div>
       </div>
-      <pre id="runLogBox" class="codebox run-log">暂无运行日志。</pre>
+      <div class="social-meta">
+        <span id="distributedMetaLine">等待 relay snapshot。</span>
+      </div>
+      <div class="social-grid">
+        <article>
+          <h3>个人孪生状态</h3>
+          <pre id="personalTwinBox" class="codebox">暂无个人孪生状态。</pre>
+        </article>
+        <article>
+          <h3>连接中的分身</h3>
+          <pre id="distributedAgentsBox" class="codebox">暂无远程分身。</pre>
+        </article>
+        <article>
+          <h3>社交关系边</h3>
+          <pre id="distributedEdgesBox" class="codebox">暂无互动边。</pre>
+        </article>
+        <article>
+          <h3>最近跨节点消息</h3>
+          <pre id="distributedMessagesBox" class="codebox">暂无社交消息。</pre>
+        </article>
+      </div>
     </section>
   </main>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="/site/dashboard/charts.js"></script>
   <script src="/site/dashboard/app.js"></script>
 </body>
 </html>

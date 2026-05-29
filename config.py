@@ -73,8 +73,8 @@ CONFIG = {
         },
     },
     # Simulation
-    "agent_ids": [4],
-    "sim_days": 1,
+    "agent_ids": [2],
+    "sim_days": 2,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,
@@ -130,7 +130,7 @@ CONFIG = {
     # Distributed multi-machine simulation.
     # Run a relay server and let each node process its own local agent subset.
     "distributed": {
-        "enabled": False,
+        "enabled": True,
         "cluster": "default",
         # Leave empty to auto-generate using hostname + pid.
         "node_id": "",
@@ -176,6 +176,17 @@ CONFIG = {
             "max_inbound_per_cycle": 5,
             "message_max_chars": 300,
         },
+    },
+    # Personal twin runtime.
+    # Private memory and raw context stay local; only public social summaries
+    # are shared with the relay-backed social layer.
+    "personal_twin": {
+        "enabled": True,
+        "local_first": True,
+        "private_memory_policy": "local_only",
+        "share_social_summaries": True,
+        "daily_self_update": True,
+        "what_if_enabled": True,
     },
     "environment_server": {
         "host": "0.0.0.0",
@@ -353,33 +364,24 @@ CONFIG = {
             },
         },
     },
-    # Life-History Agent (6-dimension human-like behavior)
-    "life_history": {
+    # Dynamic behaviour system — makes agent daily schedules feel human
+    # by injecting spontaneous urges, social encounters, need-based
+    # interrupts, and environment-triggered activity changes.
+    "dynamic_behavior": {
         "enabled": True,
-        # Controls whether LH context is injected into planning prompts
-        # Toggle this to True/False for A/B comparison
-        "injection_enabled": True,
-        # Agents to instrument for step logging (empty = disabled)
-        "instrument_agents": [],
-        # Mini simulation: run short scenario with limited agents
-        "mini_simulation": {
-            "enabled": False,
-            "max_agents": 3,
-            "max_days": 1,
-            "max_steps_per_day": 3,
-        },
     },
-    # Economy module (currency, income/expense, assets, wealth pursuit)
+    # Economy module – realistic personal finance with tax, social insurance,
+    # Engel-coefficient spending, investment, and macro-economic cycles.
     "economy": {
         "enabled": True,
         "currency": "CNY",
         "output_dir": "output/economy",
-        # Fixed simulation hours represented by one time step.
-        # If `time_step_minutes` is set, module will derive from it.
         "hours_per_step": 1.0,
+        "work_days_per_month": 22,
+        "work_hours_per_day": 8,
+        # --- Initial assets ---
         "initial_savings_months_min": 1.0,
         "initial_savings_months_max": 6.0,
-        # Optional inheritance-based initial assets.
         "inheritance_enabled": True,
         "inheritance_base_probability": 0.28,
         "inheritance_age_peak_low": 30,
@@ -387,19 +389,109 @@ CONFIG = {
         "inheritance_ratio_min": 0.25,
         "inheritance_ratio_max": 2.0,
         "inheritance_hukou_bonus": {
-            "urban": 0.04,
-            "city": 0.04,
-            "town": 0.02,
-            "rural": -0.03,
-            "village": -0.03,
+            "urban": 0.04, "city": 0.04, "town": 0.02,
+            "rural": -0.03, "village": -0.03,
         },
+        # --- Tax (China 2024 progressive individual income tax) ---
+        "tax": {
+            "enabled": True,
+            "monthly_exemption": 5000.0,
+            "default_special_deduction": 1500.0,
+            "brackets": [
+                (3000,   0.03,    0),
+                (12000,  0.10,  210),
+                (25000,  0.20, 1410),
+                (35000,  0.25, 2660),
+                (55000,  0.30, 4410),
+                (80000,  0.35, 7160),
+                (float("inf"), 0.45, 15160),
+            ],
+        },
+        # --- Social insurance (individual contribution rates) ---
+        "social_insurance": {
+            "enabled": True,
+            "pension_rate": 0.08,
+            "medical_rate": 0.02,
+            "unemployment_rate": 0.005,
+            "work_injury_rate": 0.0,
+            "maternity_rate": 0.0,
+            "housing_fund_rate": 0.08,
+            "housing_fund_employer_rate": 0.08,
+            "base_cap": 36000.0,
+            "base_floor": 4462.0,
+        },
+        # --- Spending (Engel coefficient curve) ---
+        "spending": {
+            "engel_curve": [
+                (4000,   0.48, 0.05),
+                (7000,   0.38, 0.15),
+                (12000,  0.30, 0.25),
+                (20000,  0.22, 0.32),
+                (float("inf"), 0.15, 0.40),
+            ],
+            "budget_template": {
+                "food": 0.30, "housing": 0.25, "transport": 0.10,
+                "clothing": 0.06, "leisure": 0.10, "education": 0.08,
+                "healthcare": 0.06, "misc": 0.05,
+            },
+            "income_elasticity": {
+                "food": 0.5, "housing": 0.8, "transport": 0.7,
+                "clothing": 1.2, "leisure": 1.5, "education": 1.1,
+                "healthcare": 0.6, "misc": 1.0,
+            },
+            "daily_variance": 0.25,
+        },
+        # --- Investment & savings ---
+        "investment": {
+            "enabled": True,
+            "asset_returns": {
+                "deposits": (0.025, 0.005),
+                "funds":    (0.06,  0.08),
+                "stocks":   (0.08,  0.22),
+            },
+            "portfolio_profiles": {
+                "conservative": {"deposits": 0.70, "funds": 0.25, "stocks": 0.05},
+                "moderate":     {"deposits": 0.40, "funds": 0.40, "stocks": 0.20},
+                "aggressive":   {"deposits": 0.15, "funds": 0.35, "stocks": 0.50},
+            },
+            "auto_save_enabled": True,
+            "checking_buffer_months": 2.0,
+        },
+        # --- Macro-economic cycle ---
+        "macro": {
+            "enabled": True,
+            "initial_inflation_rate": 0.025,
+            "initial_unemployment_rate": 0.052,
+            "cycle_phase_duration_days": (60, 180),
+            "phases": ["expansion", "peak", "contraction", "trough"],
+            "phase_effects": {
+                "expansion":   {"income_mult": 1.05, "expense_mult": 1.02, "layoff_risk": 0.002, "raise_chance": 0.03},
+                "peak":        {"income_mult": 1.08, "expense_mult": 1.06, "layoff_risk": 0.005, "raise_chance": 0.02},
+                "contraction": {"income_mult": 0.95, "expense_mult": 1.04, "layoff_risk": 0.015, "raise_chance": 0.005},
+                "trough":      {"income_mult": 0.90, "expense_mult": 0.98, "layoff_risk": 0.025, "raise_chance": 0.002},
+            },
+            "industry_conditions": {
+                "tech": 1.0, "finance": 1.0, "medical": 1.0,
+                "education": 1.0, "service": 1.0, "trade": 1.0, "default": 1.0,
+            },
+        },
+        # --- Shock events ---
+        "shocks": {
+            "enabled": True,
+            "layoff_base_prob": 0.001,
+            "raise_base_prob": 0.008,
+            "medical_emergency_prob": 0.0005,
+            "medical_cost_range": (2000.0, 50000.0),
+            "year_end_bonus_enabled": True,
+            "year_end_bonus_months": 1.0,
+        },
+        # --- Backward-compat behavior triggers ---
         "rent_income_ratio": 0.22,
         "daily_utilities_cost": 12.0,
         "base_living_cost_per_hour": 6.0,
         "min_hourly_income": 8.0,
         "income_volatility": 0.25,
         "target_work_hours_per_day": 7.0,
-        # Safety margin for asset buffer and behavior trigger.
         "asset_safety_days": 18.0,
         "income_seek_threshold": 0.56,
         "income_seek_probability_scale": 0.9,
@@ -407,14 +499,10 @@ CONFIG = {
         "income_growth_when_deficit": 0.08,
         "income_seek_activities": ["工作", "兼职", "接单", "技能提升"],
         "expense_ranges": {
-            "food": [8.0, 26.0],
-            "clothing": [18.0, 120.0],
-            "transport": [3.0, 28.0],
-            "housing": [0.0, 0.0],
-            "leisure": [8.0, 70.0],
-            "education": [10.0, 60.0],
-            "healthcare": [12.0, 90.0],
-            "misc": [4.0, 22.0],
+            "food": [8.0, 26.0], "clothing": [18.0, 120.0],
+            "transport": [3.0, 28.0], "housing": [0.0, 0.0],
+            "leisure": [8.0, 70.0], "education": [10.0, 60.0],
+            "healthcare": [12.0, 90.0], "misc": [4.0, 22.0],
         },
     },
     # ----------------------------------------------------------------
@@ -440,6 +528,42 @@ CONFIG = {
             "on_agent_post_step": ["economy_module:on_agent_post_step"],
             "on_day_end": ["economy_module:on_day_end"],
             "on_simulation_end": ["economy_module:on_simulation_end"],
+        },
+    },
+    # Real Work Execution (gaworld/work/*).
+    # When enabled, "工作"-class activities can be dispatched to local
+    # adapters that produce real artifacts (HTML / .py / .md / lesson
+    # plans) under artifacts_dir, and agents can browse a mock job
+    # market. Disabled by default — flipping on must not change any
+    # other simulation behaviour.
+    "real_work": {
+        "enabled": True,
+        "queue_path": "output/work/queue.jsonl",
+        "artifacts_dir": "output/work",
+        "capabilities_cache": "output/work/capabilities.json",
+        "max_concurrent_tasks": 2,
+        "task_timeout_seconds": 600,
+        "tick_ingest_limit": 5,
+        "adapters": {
+            "web_design": {"enabled": True},
+            "code": {"enabled": True, "write_pytest": True},
+            "content": {"enabled": True},
+            "teaching": {"enabled": True},
+        },
+        "market": {
+            "enabled": True,
+            "seed_path": "gaworld/work/market_seed.json",
+            "store_path": "output/work/market.jsonl",
+            "browse_top_k": 5,
+            "max_taken_per_agent_per_day": 2,
+            "browse_probability_base": 0.15,
+            "expire_after_sim_days": 5,
+            "auto_replenish": True,
+            "replenish_threshold": 5,
+        },
+        "external_hooks": {
+            "webhook_url": "",
+            "mcp_server": "",
         },
     },
 }

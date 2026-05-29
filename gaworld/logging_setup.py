@@ -21,6 +21,13 @@ working without code changes:
 
 * ``GAWORLD_LOG_LEVEL`` (default ``INFO``)
 * ``GAWORLD_LOG_FILE``  – optional; defaults to ``output/logs/run.log``.
+* ``GAWORLD_LOG_MODE``  – ``simple`` (default) or ``verbose``.
+
+  ``simple``  — compact terminal output: no per-call LLM INFO lines,
+                repeated warnings suppressed to once per 60 s, and the
+                structured-context tail (agent=/day=/stage=) is hidden
+                (those fields are still written to the log file).
+  ``verbose`` — full structured output, identical to pre-S4 behaviour.
 """
 
 from __future__ import annotations
@@ -28,10 +35,14 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import os
+import time
 from typing import Any
 
 _CONFIGURED = False
 _DEFAULT_LOG_PATH = os.path.join("output", "logs", "run.log")
+
+# Read once at import time so the mode is stable for the whole process.
+LOG_MODE: str = os.environ.get("GAWORLD_LOG_MODE", "simple").strip().lower()
 
 
 class _ContextFilter(logging.Filter):
@@ -43,6 +54,32 @@ class _ContextFilter(logging.Filter):
         for key in self._KEYS:
             if not hasattr(record, key):
                 setattr(record, key, "")
+        return True
+
+
+class _DeduplicateFilter(logging.Filter):
+    """Suppress repeated identical WARNING/INFO messages within a cooldown.
+
+    Used in simple mode to avoid flooding the terminal with the same
+    connection-refused warning on every simulation tick.
+    ERROR and CRITICAL messages always pass through unchanged.
+    """
+
+    def __init__(self, cooldown_seconds: float = 60.0) -> None:
+        super().__init__()
+        self._cooldown = cooldown_seconds
+        self._last_seen: dict[str, float] = {}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR:
+            return True
+        # Key on logger name + level + first 120 chars of the message template
+        # (not the formatted string, to catch parameterised repeats cheaply).
+        key = f"{record.name}:{record.levelno}:{str(record.msg)[:120]}"
+        now = time.monotonic()
+        if now - self._last_seen.get(key, 0.0) < self._cooldown:
+            return False
+        self._last_seen[key] = now
         return True
 
 
@@ -75,15 +112,35 @@ def configure_logging(
     root.handlers.clear()
     root.propagate = False
 
-    fmt = "%(asctime)s | %(levelname)-7s | %(name)s | agent=%(agent_id)s day=%(day)s stage=%(stage)s | %(message)s"
-    formatter = logging.Formatter(fmt, datefmt="%Y-%m-%d %H:%M:%S")
     context_filter = _ContextFilter()
 
+    # Simple mode: strip the always-empty agent=/day=/stage= tail from the
+    # terminal stream (it still appears in the file for post-mortem analysis).
+    if LOG_MODE == "simple":
+        stream_fmt = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
+    else:
+        stream_fmt = (
+            "%(asctime)s | %(levelname)-7s | %(name)s"
+            " | agent=%(agent_id)s day=%(day)s stage=%(stage)s"
+            " | %(message)s"
+        )
+    stream_formatter = logging.Formatter(stream_fmt, datefmt="%H:%M:%S")
+
     stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
+    stream_handler.setFormatter(stream_formatter)
     stream_handler.addFilter(context_filter)
+    if LOG_MODE == "simple":
+        # Suppress repeated identical warnings (e.g. env-server unreachable).
+        stream_handler.addFilter(_DeduplicateFilter(cooldown_seconds=60.0))
     root.addHandler(stream_handler)
 
+    # File handler always uses the full structured format.
+    file_fmt = (
+        "%(asctime)s | %(levelname)-7s | %(name)s"
+        " | agent=%(agent_id)s day=%(day)s stage=%(stage)s"
+        " | %(message)s"
+    )
+    file_formatter = logging.Formatter(file_fmt, datefmt="%Y-%m-%d %H:%M:%S")
     target = log_file if log_file is not None else os.environ.get("GAWORLD_LOG_FILE")
     if target is None:
         target = _DEFAULT_LOG_PATH
@@ -96,12 +153,17 @@ def configure_logging(
             file_handler = logging.handlers.RotatingFileHandler(
                 target, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
             )
-            file_handler.setFormatter(formatter)
+            file_handler.setFormatter(file_formatter)
             file_handler.addFilter(context_filter)
             root.addHandler(file_handler)
         except OSError:
-            # File logging is best-effort; stream handler keeps the messages.
             root.warning("Failed to attach file handler at %s", target)
+
+    if LOG_MODE == "simple":
+        # Per-call LLM INFO lines (ok/err) are useful in verbose mode but noisy
+        # in simple mode.  Raise the floor for that sub-logger so only warnings
+        # and errors surface on the terminal.
+        logging.getLogger("gaworld.llm").setLevel(logging.WARNING)
 
     _CONFIGURED = True
     return root

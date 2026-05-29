@@ -50,26 +50,8 @@ def _location_action_bias_path(agent_id):
     return os.path.join(MEMORY_DIR, f"agent_{agent_id}_location_action_bias.json")
 
 
-def _skills_path(agent_id):
-    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_skills.json")
-
-
-def load_agent_skills(agent_id):
-    path = _skills_path(agent_id)
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-    return data if isinstance(data, list) else []
-
-
-def save_agent_skills(agent_id, skills):
-    os.makedirs(MEMORY_DIR, exist_ok=True)
-    with open(_skills_path(agent_id), "w", encoding="utf-8") as f:
-        json.dump(skills, f, ensure_ascii=False, indent=2)
+def _twin_state_path(agent_id):
+    return os.path.join(MEMORY_DIR, f"agent_{agent_id}_twin_state.json")
 
 
 def _log_path(agent_id):
@@ -250,6 +232,24 @@ def save_agent_location_action_bias(agent_id, bias_map):
     os.makedirs(MEMORY_DIR, exist_ok=True)
     with open(_location_action_bias_path(agent_id), "w", encoding="utf-8") as f:
         json.dump(bias_map, f, ensure_ascii=False, indent=2)
+
+
+def load_agent_twin_state(agent_id):
+    path = _twin_state_path(agent_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_agent_twin_state(agent_id, twin_state):
+    os.makedirs(MEMORY_DIR, exist_ok=True)
+    with open(_twin_state_path(agent_id), "w", encoding="utf-8") as f:
+        json.dump(twin_state if isinstance(twin_state, dict) else {}, f, ensure_ascii=False, indent=2)
 
 
 def reset_agent_memory(agent_id):
