@@ -68,6 +68,7 @@ def run_variant(variant_label, agent_ids, seed, sim_days, injection_enabled, dry
     import json
     env = dict(os.environ)
     env["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(overrides, ensure_ascii=False)
+    env["GAWORLD_VARIANT_DIR"] = base_output
 
     cmd = [
         sys.executable,

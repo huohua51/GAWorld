@@ -138,6 +138,7 @@ from experience_store import (
     save_agent_relationships,
 )
 from human_realism import (
+    apply_relationship_decay,
     build_context_key,
     build_daily_intentions,
     compute_episode_salience,
@@ -2807,6 +2808,103 @@ def _activity_commitment_level(activity):
     return "low"
 
 
+def _compute_relationship_delta(before, after):
+    """Compute direction, magnitude, and stability of relationship changes."""
+    if not before and not after:
+        return {"trust_change": 0.0, "closeness_change": 0.0, "direction": "stable", "stability_score": 1.0, "changed_partners": []}
+
+    all_partners = set()
+    if before:
+        all_partners.update(str(k) for k in before.keys())
+    if after:
+        all_partners.update(str(k) for k in after.keys())
+
+    trust_delta_sum = 0.0
+    closeness_delta_sum = 0.0
+    changed = []
+    total = len(all_partners) or 1
+
+    for pid in all_partners:
+        b = before.get(str(pid), {}) if before else {}
+        a = after.get(str(pid), {}) if after else {}
+        b_trust = float(b.get("trust", 0.5) or 0.5)
+        a_trust = float(a.get("trust", 0.5) or 0.5)
+        b_close = float(b.get("closeness", 0.5) or 0.5)
+        a_close = float(a.get("closeness", 0.5) or 0.5)
+        trust_delta_sum += a_trust - b_trust
+        closeness_delta_sum += a_close - b_close
+        if abs(a_trust - b_trust) >= 0.008 or abs(a_close - b_close) >= 0.008:
+            changed.append(str(pid))
+
+    n = len(all_partners) or 1
+    trust_change = trust_delta_sum / n
+    closeness_change = closeness_delta_sum / n
+    direction = "stable"
+    if trust_change >= 0.008 or closeness_change >= 0.008:
+        direction = "improving"
+    elif trust_change <= -0.008 or closeness_change <= -0.008:
+        direction = "deteriorating"
+    stability_score = 1.0 - (len(changed) / n)
+
+    return {
+        "trust_change": round(trust_change, 4),
+        "closeness_change": round(closeness_change, 4),
+        "direction": direction,
+        "stability_score": round(stability_score, 4),
+        "changed_partners": changed,
+    }
+
+
+def _save_daily_network_snapshot(agents, variant_label="", day=1):
+    """Save daily relationship network snapshot for A/B analysis."""
+    import json
+    from collections import defaultdict
+
+    variant_dir = os.environ.get("GAWORLD_VARIANT_DIR", "")
+    if not variant_dir:
+        return
+    snap_dir = os.path.join(variant_dir, "network_snapshots")
+    os.makedirs(snap_dir, exist_ok=True)
+
+    nodes = []
+    edges = []
+    adj = defaultdict(list)
+    for a in agents:
+        aid = a["id"]
+        rels = a.get("relationships", {})
+        nodes.append({
+            "id": aid,
+            "name": a.get("name", str(aid)),
+            "trust": float(np.mean([float(r.get("trust", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "closeness": float(np.mean([float(r.get("closeness", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "relationship_count": len(rels),
+        })
+        for pid, rel in rels.items():
+            if int(pid) > aid:
+                edges.append({
+                    "source": aid,
+                    "target": int(pid),
+                    "trust": float(rel.get("trust", 0.5)),
+                    "closeness": float(rel.get("closeness", 0.5)),
+                    "friction": float(rel.get("friction", 0.5)),
+                })
+                adj[aid].append(int(pid))
+                adj[int(pid)].append(aid)
+
+    snapshot = {
+        "day": day,
+        "variant": variant_label,
+        "nodes": nodes,
+        "edges": edges,
+        "degree_distribution": {str(k): len(v) for k, v in adj.items()},
+    }
+
+    snap_path = os.path.join(snap_dir, f"day_{day}.json")
+    with open(snap_path, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+    print(f"  [snapshot] Network saved: {snap_path}")
+
+
 def _commitment_weight(level):
     behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
     weights = behavior_cfg.get("commitment_weights", {}) if isinstance(behavior_cfg, dict) else {}
@@ -2923,6 +3021,113 @@ def _social_relationship_snapshot(agent):
         "friction": float(np.mean([float(item.get("friction", 0.5)) for item in selected])),
         "support": float(np.mean([float(item.get("closeness", 0.5)) for item in selected])),
     }
+
+
+def _compute_relationship_delta(before, after):
+    """Compute direction, magnitude, and stability of relationship changes.
+
+    Returns dict with:
+      - trust_change: net change in trust (-1 to 1 scale, roughly)
+      - closeness_change: net change in closeness (-1 to 1)
+      - direction: "improving" | "deteriorating" | "stable"
+      - stability_score: 0-1, fraction of relationships that did NOT change
+      - changed_partners: list of partner IDs whose relationship changed
+    """
+    if not before and not after:
+        return {"trust_change": 0.0, "closeness_change": 0.0, "direction": "stable", "stability_score": 1.0, "changed_partners": []}
+
+    all_partners = set()
+    if before:
+        all_partners.update(str(k) for k in before.keys())
+    if after:
+        all_partners.update(str(k) for k in after.keys())
+
+    trust_delta_sum = 0.0
+    closeness_delta_sum = 0.0
+    changed = []
+    total = len(all_partners) or 1
+
+    for pid in all_partners:
+        b = before.get(str(pid), {}) if before else {}
+        a = after.get(str(pid), {}) if after else {}
+        b_trust = float(b.get("trust", 0.5) or 0.5)
+        a_trust = float(a.get("trust", 0.5) or 0.5)
+        b_close = float(b.get("closeness", 0.5) or 0.5)
+        a_close = float(a.get("closeness", 0.5) or 0.5)
+        trust_delta_sum += a_trust - b_trust
+        closeness_delta_sum += a_close - b_close
+        if abs(a_trust - b_trust) >= 0.008 or abs(a_close - b_close) >= 0.008:
+            changed.append(str(pid))
+
+    # Per-partner average delta (scale to roughly +/- 1)
+    n = len(all_partners) or 1
+    trust_change = trust_delta_sum / n
+    closeness_change = closeness_delta_sum / n
+    direction = "stable"
+    if trust_change >= 0.008 or closeness_change >= 0.008:
+        direction = "improving"
+    elif trust_change <= -0.008 or closeness_change <= -0.008:
+        direction = "deteriorating"
+    stability_score = 1.0 - (len(changed) / n)
+
+    return {
+        "trust_change": round(trust_change, 4),
+        "closeness_change": round(closeness_change, 4),
+        "direction": direction,
+        "stability_score": round(stability_score, 4),
+        "changed_partners": changed,
+    }
+
+
+def _save_daily_network_snapshot(agents, variant_label="", day=1):
+    """Save daily relationship network snapshot for A/B analysis."""
+    import json
+    from collections import defaultdict
+
+    variant_dir = os.environ.get("GAWORLD_VARIANT_DIR", "")
+    if not variant_dir:
+        return
+    snap_dir = os.path.join(variant_dir, "network_snapshots")
+    os.makedirs(snap_dir, exist_ok=True)
+
+    # Build adjacency + attributes
+    nodes = []
+    edges = []
+    adj = defaultdict(list)
+    for a in agents:
+        aid = a["id"]
+        rels = a.get("relationships", {})
+        nodes.append({
+            "id": aid,
+            "name": a.get("name", str(aid)),
+            "trust": float(np.mean([float(r.get("trust", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "closeness": float(np.mean([float(r.get("closeness", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "relationship_count": len(rels),
+        })
+        for pid, rel in rels.items():
+            if int(pid) > aid:  # deduplicate edges
+                edges.append({
+                    "source": aid,
+                    "target": int(pid),
+                    "trust": float(rel.get("trust", 0.5)),
+                    "closeness": float(rel.get("closeness", 0.5)),
+                    "friction": float(rel.get("friction", 0.5)),
+                })
+                adj[aid].append(int(pid))
+                adj[int(pid)].append(aid)
+
+    snapshot = {
+        "day": day,
+        "variant": variant_label,
+        "nodes": nodes,
+        "edges": edges,
+        "degree_distribution": {str(k): len(v) for k, v in adj.items()},
+    }
+
+    snap_path = os.path.join(snap_dir, f"day_{day}.json")
+    with open(snap_path, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+    print(f"  [snapshot] Network saved: {snap_path}")
 
 
 def _current_emotion_text(agent):
@@ -6316,12 +6521,27 @@ def run_simulation():
                             )
                 if HUMAN_REALISM_ENABLED:
                     partners = list(agent.get("_recent_social_partners", []))
+                    # Co-location encounter: add agents at the same location as potential social partners
+                    if resolved_location:
+                        colocated = [
+                            other_id for other_id, other in agents_by_id.items()
+                            if other_id != agent_id
+                            and other.get("locations", {}).get("current") == resolved_location
+                        ]
+                        for pid in colocated:
+                            if pid not in partners:
+                                partners.append(pid)
                     for sender_id in extract_sender_agent_ids(inbox_messages):
                         if sender_id not in partners:
                             partners.append(sender_id)
                     signal = infer_interaction_signal(refl_text)
                     for pid in partners:
                         relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
+                    # Capture post-relationship-update state for A/B logger
+                    step_log["relationships_after"] = dict(agent.get("relationships", {}))
+                    # Compute relationship_delta: direction + magnitude of change
+                    rel_delta = _compute_relationship_delta(relationships_before, step_log["relationships_after"])
+                    step_log["relationship_delta"] = rel_delta
                     state_after = dict(agent.get("state", {}))
                     delta = {}
                     for key, before_v in state_before.items():
@@ -6673,6 +6893,17 @@ def run_simulation():
                 if STATEFUL:
                     save_agent_twin_state(agent["id"], twin_state)
                 print(f"🪞 {agent['name']} 的个人孪生公开摘要：{public_summary}")
+
+        # Save daily relationship network snapshot
+        _save_daily_network_snapshot(agents, variant_label="", day=day)
+
+        # Save daily relationship network snapshot
+        _save_daily_network_snapshot(agents, variant_label="", day=day)
+
+        # Apply relationship decay for agents with no recent interaction
+        for agent in agents:
+            apply_relationship_decay(agent, day)
+
         hook_bus.emit(
             "on_day_end",
             day=day,
