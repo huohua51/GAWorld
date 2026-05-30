@@ -195,6 +195,17 @@ CONFIG = {
             "message_max_chars": 300,
         },
     },
+    # Personal twin runtime.
+    # Private memory and raw context stay local; only public social summaries
+    # are shared with the relay-backed social layer.
+    "personal_twin": {
+        "enabled": True,
+        "local_first": True,
+        "private_memory_policy": "local_only",
+        "share_social_summaries": True,
+        "daily_self_update": True,
+        "what_if_enabled": True,
+    },
     "environment_server": {
         "host": "0.0.0.0",
         "port": 8765,
