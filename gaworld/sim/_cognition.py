@@ -41,6 +41,15 @@ _HUMAN_REALISM_CONFIG: dict[str, Any] = CONFIG.get("human_realism", {})
 HUMAN_REALISM_ENABLED: bool = bool(_HUMAN_REALISM_CONFIG.get("enabled", False))
 
 
+def _fos_fast_mode_cfg() -> dict[str, Any]:
+    cfg = CONFIG.get("fos_fast_mode", {}) if isinstance(CONFIG, dict) else {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _deterministic_cognition_enabled() -> bool:
+    return bool(_fos_fast_mode_cfg().get("deterministic_cognition", False))
+
+
 def _skills_cfg() -> dict[str, Any]:
     s = CONFIG.get("skills", {}) if isinstance(CONFIG, dict) else {}
     return s if isinstance(s, dict) else {}
@@ -127,6 +136,13 @@ def perception(
     env_context: str,
     policy_event: str,
 ) -> str:
+    if _deterministic_cognition_enabled():
+        social_text = str(social_context or "").strip() or "周围的人没有太多新变化"
+        env_text = str(env_context or "").strip() or "环境整体比较平稳"
+        policy_text = str(policy_event or "").strip()
+        if policy_text:
+            return f"我注意到{env_text}，也感到{social_text}，政策上的变化让我会顺手多留意一下。"
+        return f"我注意到{env_text}，也感到{social_text}，所以更想先按当前节奏把这段时间过稳。"
     skill_block = _agent_skill_block(agent)
     skill_suffix = f"\n{skill_block}\n" if skill_block else ""
     prompt = f"""
