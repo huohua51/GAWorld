@@ -11,7 +11,7 @@ import os
 from datetime import UTC, datetime
 
 from gaworld.io.avatar import ensure_agent_avatar
-from gaworld.world.city_map import project_to_tile
+from gaworld.world.city_map import TERRAIN_LEGEND, project_to_tile
 
 
 def _utc_timestamp():
@@ -58,6 +58,10 @@ def build_map_layout(city_map):
             "y_km": node.get("y_km", 0.0),
             "tile_x": int(tile_x),
             "tile_y": int(tile_y),
+            "style": node.get("style", {}),
+            "capacity": node.get("capacity"),
+            "popularity": node.get("popularity"),
+            "density": node.get("density"),
         })
 
     return {
@@ -69,6 +73,7 @@ def build_map_layout(city_map):
         "bridges": city_map.get("bridges", []) if isinstance(city_map, dict) else [],
         "bounds": bounds,
         "scale": city_map.get("scale", {}),
+        "terrain_legend": TERRAIN_LEGEND,
     }
 
 

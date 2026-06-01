@@ -1,4 +1,6 @@
+import hashlib
 import heapq
+import json
 import math
 import os
 import re
@@ -65,6 +67,51 @@ WEATHER_MODE_ADJUSTMENTS = {
     "clear": {"walk": 1.0, "bike": 1.0, "e-bike": 1.0, "bus": 1.0, "metro": 1.0, "car": 1.0, "taxi": 1.0},
 }
 
+# --- Road-class speed multipliers (applied to a mode's base speed) ---
+# Wider arterials flow faster than narrow local streets; bridges are neutral.
+# Used by ``estimate_travel_minutes`` so travel time reflects the road classes
+# actually traversed instead of a single flat mode speed.
+ROAD_TYPE_SPEED_FACTOR = {
+    "arterial":  1.15,
+    "collector": 1.0,
+    "road":      1.0,
+    "local":     0.8,
+    "bridge":    1.0,
+}
+
+# --- Per-category visual style hints for front-end rendering ---
+# color: marker/fill hex; icon: lucide-style icon name; radius: marker weight.
+# Surfaced on every node so the visualizer / web map need not hard-code a
+# category→colour table.
+CATEGORY_STYLE = {
+    "residential": {"color": "#7bb37a", "icon": "home",            "radius": 3},
+    "commerce":    {"color": "#e0a458", "icon": "shopping-bag",    "radius": 4},
+    "education":   {"color": "#5a9bd4", "icon": "graduation-cap",  "radius": 3},
+    "medical":     {"color": "#d96c6c", "icon": "cross",           "radius": 3},
+    "industry":    {"color": "#8a8f98", "icon": "factory",         "radius": 4},
+    "government":  {"color": "#b08ad4", "icon": "landmark",        "radius": 3},
+    "leisure":     {"color": "#5cc2a8", "icon": "trees",           "radius": 3},
+    "transit":     {"color": "#d4b95a", "icon": "train-front",     "radius": 4},
+    "mixed":       {"color": "#a8a8a8", "icon": "map-pin",         "radius": 2},
+}
+
+# --- Per-category land-use defaults used to enrich nodes for simulation ---
+# capacity:   rough simultaneous-occupancy ceiling (people)
+# open/close: opening hours in minutes-from-midnight (None = always open)
+# popularity: relative draw 0..1 (upper-layer destination sampling weight)
+# density:    relative built density 0..1 (drives visualization gradients)
+CATEGORY_LANDUSE = {
+    "residential": {"capacity": 400,  "open": None,         "close": None,          "popularity": 0.35, "density": 0.60},
+    "commerce":    {"capacity": 600,  "open": 9 * 60,       "close": 22 * 60,       "popularity": 0.90, "density": 0.85},
+    "education":   {"capacity": 1200, "open": 7 * 60,       "close": 18 * 60,       "popularity": 0.50, "density": 0.55},
+    "medical":     {"capacity": 500,  "open": None,         "close": None,          "popularity": 0.45, "density": 0.60},
+    "industry":    {"capacity": 800,  "open": 6 * 60,       "close": 20 * 60,       "popularity": 0.25, "density": 0.40},
+    "government":  {"capacity": 300,  "open": 8 * 60 + 30,  "close": 17 * 60 + 30,  "popularity": 0.30, "density": 0.50},
+    "leisure":     {"capacity": 700,  "open": 6 * 60,       "close": 23 * 60,       "popularity": 0.70, "density": 0.35},
+    "transit":     {"capacity": 2000, "open": 5 * 60,       "close": 24 * 60,       "popularity": 0.60, "density": 0.70},
+    "mixed":       {"capacity": 300,  "open": None,         "close": None,          "popularity": 0.40, "density": 0.50},
+}
+
 CATEGORY_KEYWORDS = [
     ("residential", ["Block", "Building", "Dormitory", "Flat", "Family"]),
     ("education", ["School", "Library", "University", "Daycare", "Engineering", "Arts"]),
@@ -112,6 +159,17 @@ def _slug(text):
     return re.sub(r"\s+", " ", str(text or "").strip())
 
 
+def _stable_jitter(name, amp=0.9):
+    """Deterministic (x, y) offset in [-amp, amp] derived from a name.
+
+    Uses md5 (not Python's salted ``hash``) so auto-generated layouts get the
+    same organic nudge every run, breaking up the rigid spawn grid."""
+    digest = hashlib.md5(_slug(name).encode("utf-8")).hexdigest()
+    a = int(digest[:8], 16) / 0xFFFFFFFF
+    b = int(digest[8:16], 16) / 0xFFFFFFFF
+    return ((a - 0.5) * 2 * amp, (b - 0.5) * 2 * amp)
+
+
 def _parse_directive_parts(text):
     parts = [part.strip() for part in str(text or "").split("|")]
     head = parts[0] if parts else ""
@@ -150,11 +208,14 @@ def _parse_map_file(map_path):
         "roads": [],
         "metro_lines": [],
         "river": None,
+        "interiors": {},
     }
     if not os.path.exists(map_path):
         return parsed
 
     current_hub = None
+    current_place = None
+    current_floor = None
     with open(map_path, "r", encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
@@ -172,6 +233,11 @@ def _parse_map_file(map_path):
                         "x": _float_attr(attrs, "x"),
                         "y": _float_attr(attrs, "y"),
                         "parent": attrs.get("parent", ""),
+                        "capacity": attrs.get("capacity"),
+                        "open": attrs.get("open"),
+                        "close": attrs.get("close"),
+                        "popularity": attrs.get("popularity"),
+                        "density": attrs.get("density"),
                     }
                 elif line.startswith("@road:"):
                     head, attrs = _parse_directive_parts(line[len("@road:"):].strip())
@@ -215,10 +281,32 @@ def _parse_map_file(map_path):
             if hub_match:
                 current_hub = {"name": _slug(hub_match.group(1).strip()), "nearby": []}
                 parsed["hubs"].append(current_hub)
+                current_place = None
+                current_floor = None
                 continue
             nearby_match = re.match(r"-\s*Nearby:\s*(.+)", line)
             if nearby_match and current_hub is not None:
-                current_hub["nearby"].append(_slug(nearby_match.group(1).strip()))
+                place_name = _slug(nearby_match.group(1).strip())
+                current_hub["nearby"].append(place_name)
+                current_place = place_name
+                current_floor = None
+                continue
+            # Optional building-interior tree nested under a "- Nearby:" place.
+            # Captured as structured metadata (parsed["interiors"]) — NOT added
+            # to the routable graph, so it never bloats node count or routing.
+            floor_match = re.match(r"-\s*Floor:\s*(.+)", line)
+            if floor_match and current_place is not None:
+                current_floor = _slug(floor_match.group(1).strip())
+                interior = parsed["interiors"].setdefault(current_place, {"floors": []})
+                interior["floors"].append({"name": current_floor, "units": []})
+                continue
+            unit_match = re.match(r"-\s*(?:Flat|Unit|Room|Apt):\s*(.+)", line)
+            if unit_match and current_place is not None:
+                interior = parsed["interiors"].setdefault(current_place, {"floors": []})
+                if not interior["floors"]:
+                    interior["floors"].append({"name": "", "units": []})
+                interior["floors"][-1]["units"].append(_slug(unit_match.group(1).strip()))
+                continue
     return parsed
 
 
@@ -230,6 +318,7 @@ def load_city_map(map_path):
         explicit_roads=parsed.get("roads", []),
         explicit_metro=parsed.get("metro_lines", []),
         explicit_river=parsed.get("river"),
+        explicit_interiors=parsed.get("interiors", {}),
     )
 
 
@@ -244,21 +333,30 @@ def load_city_map_text(map_path):
         return ""
 
 
-def _build_city_map(hubs, explicit_nodes=None, explicit_roads=None, explicit_metro=None, explicit_river=None):
+def _build_city_map(hubs, explicit_nodes=None, explicit_roads=None, explicit_metro=None,
+                    explicit_river=None, explicit_interiors=None):
     explicit_nodes = explicit_nodes or {}
     explicit_roads = explicit_roads or []
     explicit_metro = explicit_metro or []
+    explicit_interiors = explicit_interiors or {}
     river = explicit_river or dict(DEFAULT_RIVER)
     nodes = {}
     hub_names = [item["name"] for item in hubs]
     cols = max(3, math.ceil(math.sqrt(max(len(hub_names), 1))))
     road_edges = []
 
+    # First pass: materialize all hubs (with explicit or default positions) so
+    # we can compute hub-to-nearest-hub distance for adaptive block sizing.
+    hub_nodes = []
     for index, hub in enumerate(hubs):
         row = index // cols
         col = index % cols
-        default_x = 2.5 + col * 3.4
-        default_y = 3.6 + row * 2.9
+        # Deterministic jitter gives auto-laid hubs an organic, non-grid feel.
+        # Explicit @node x/y override the default entirely, so curated maps are
+        # unaffected.
+        jitter_x, jitter_y = _stable_jitter(hub["name"])
+        default_x = 2.5 + col * 5.2 + jitter_x
+        default_y = 3.6 + row * 4.4 + jitter_y
         node = _make_node_from_spec(
             hub["name"],
             explicit_nodes.get(hub["name"]),
@@ -268,28 +366,79 @@ def _build_city_map(hubs, explicit_nodes=None, explicit_roads=None, explicit_met
             default_y=default_y,
         )
         nodes[node["id"]] = node
+        hub_nodes.append((node, hub))
 
+    def _nearest_hub_distance(target):
+        best = float("inf")
+        for other, _ in hub_nodes:
+            if other["id"] == target["id"]:
+                continue
+            d = math.hypot(other["grid_x"] - target["grid_x"], other["grid_y"] - target["grid_y"])
+            if d < best:
+                best = d
+        return best if best < float("inf") else 4.0
+
+    # Second pass: lay each hub's "nearby" places into a square grid (a block).
+    # Adjacent places get local street edges so the road network reads as a
+    # real grid instead of radial spokes around the hub.
+    for node, hub in hub_nodes:
         nearby = hub.get("nearby", [])
         if not nearby:
             continue
-        arc_step = (2 * math.pi) / max(len(nearby), 6)
-        for near_index, place_name in enumerate(nearby):
-            ring = near_index // 8
-            radius = 0.75 + ring * 0.35
-            angle = -math.pi / 2 + arc_step * near_index
-            near_x = node["grid_x"] + math.cos(angle) * radius
-            near_y = node["grid_y"] + math.sin(angle) * radius
+        n = len(nearby)
+        grid_size = max(2, math.ceil(math.sqrt(n + 1)))  # +1 reserves a center cell for the hub
+        # Adaptive spacing: keep the whole block under ~45% of the distance to
+        # the nearest neighbor hub so blocks don't collide.
+        block_room = _nearest_hub_distance(node) * 0.45
+        spacing = max(0.35, min(0.75, block_room / max(grid_size, 2)))
+
+        # Pre-compute all cell offsets, sorted by distance from center so that
+        # the closest-to-hub cells get filled first.
+        half = (grid_size - 1) / 2.0
+        all_cells = []
+        for r in range(grid_size):
+            for c in range(grid_size):
+                dx = (c - half) * spacing
+                dy = (r - half) * spacing
+                all_cells.append({"r": r, "c": c, "dx": dx, "dy": dy, "d": math.hypot(dx, dy)})
+        all_cells.sort(key=lambda cell: cell["d"])
+        # The hub occupies the center cell (dx≈dy≈0). Reserve it for the hub.
+        center_cell = all_cells[0]
+        place_cells = all_cells[1:1 + n]
+
+        # Materialize place nodes and remember the (r,c) → place_id map for
+        # generating local street edges between adjacent places.
+        rc_to_place = {}
+        for cell, place_name in zip(place_cells, nearby):
             place_node = _make_node_from_spec(
                 place_name,
                 explicit_nodes.get(place_name),
                 default_kind="place",
                 default_district=node["name"],
-                default_x=near_x,
-                default_y=near_y,
+                default_x=node["grid_x"] + cell["dx"],
+                default_y=node["grid_y"] + cell["dy"],
                 default_parent=node["id"],
             )
             nodes[place_node["id"]] = place_node
-            road_edges.append(_make_edge(node["id"], place_node["id"], "local"))
+            rc_to_place[(cell["r"], cell["c"])] = place_node["id"]
+        rc_to_place[(center_cell["r"], center_cell["c"])] = node["id"]
+
+        # Local streets: connect each cell to its orthogonal neighbors. The
+        # hub appears at the center cell so this naturally radiates from the
+        # hub but only along the 4 cardinal directions, producing the look of
+        # a block.
+        added_pairs = set()
+        for (r, c), id_a in rc_to_place.items():
+            for dr, dc in ((1, 0), (0, 1)):
+                id_b = rc_to_place.get((r + dr, c + dc))
+                if not id_b or id_a == id_b:
+                    continue
+                pair = tuple(sorted((id_a, id_b)))
+                if pair in added_pairs:
+                    continue
+                added_pairs.add(pair)
+                road_type = "collector" if node["id"] in pair else "local"
+                road_edges.append(_make_edge(id_a, id_b, road_type))
 
     for name, spec in explicit_nodes.items():
         if _slug(name) in nodes:
@@ -313,21 +462,44 @@ def _build_city_map(hubs, explicit_nodes=None, explicit_roads=None, explicit_met
     road_edges.extend(_normalize_explicit_roads(nodes, explicit_roads))
     road_edges = _dedupe_edges(road_edges)
 
-    adjacency = _build_adjacency(nodes, road_edges)
     metro_lines = _normalize_metro_lines(nodes, explicit_metro or DEFAULT_METRO_LINES)
     bridges = _detect_bridges(nodes, road_edges, river)
     tile_map = _build_tile_map(nodes, road_edges, river=river, metro_lines=metro_lines, bridges=bridges)
-    return {
+    city_map = {
         "nodes": nodes,
         "edges": road_edges,
-        "adjacency": adjacency,
         "metro_lines": metro_lines,
         "river": river,
         "bridges": bridges,
         "tile_map": tile_map,
         "bounds": _compute_bounds(nodes),
         "scale": {"km_per_grid_x": KM_PER_GRID_X, "km_per_grid_y": KM_PER_GRID_Y},
+        "interiors": explicit_interiors,
     }
+    # adjacency, spatial / name indices, runtime state and viz overlays.
+    _attach_derived(city_map)
+    return city_map
+
+
+def _parse_hours_to_min(value, default):
+    """Parse an opening-hour spec (``"9:00"``, ``"540"`` or a number) to minutes
+    from midnight.  Returns *default* when unset/blank/invalid; an explicit
+    ``"none"``/``"24h"`` means always-open (None)."""
+    if value is None or value == "":
+        return default
+    text = str(value).strip().lower()
+    if text in {"none", "24h", "always"}:
+        return None
+    if ":" in text:
+        parts = text.split(":")
+        try:
+            return int(parts[0]) * 60 + int(parts[1])
+        except (ValueError, IndexError):
+            return default
+    try:
+        return int(round(float(text)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _make_node_from_spec(name, spec, default_kind, default_district, default_x, default_y, default_parent=""):
@@ -343,6 +515,19 @@ def _make_node_from_spec(name, spec, default_kind, default_district, default_x, 
     lng = BASE_LNG + x_km * LNG_PER_KM
     label = _slug(name)
     category = spec.get("category", infer_category(label))
+
+    # Enrich with land-use attributes the upper-layer simulation can consume
+    # (capacity / opening hours / popularity / density) and a visual style.
+    landuse = CATEGORY_LANDUSE.get(category, CATEGORY_LANDUSE["mixed"])
+    capacity = _float_attr(spec, "capacity", landuse["capacity"])
+    open_min = _parse_hours_to_min(spec.get("open"), landuse["open"])
+    close_min = _parse_hours_to_min(spec.get("close"), landuse["close"])
+    popularity = _float_attr(spec, "popularity", landuse["popularity"])
+    density = _float_attr(spec, "density", landuse["density"])
+    # Hubs are denser / larger than the small places that cluster around them.
+    if kind == "hub":
+        density = min(1.0, float(density) * 1.15)
+        capacity = float(capacity) * 1.5
     return {
         "id": label,
         "name": label,
@@ -357,6 +542,12 @@ def _make_node_from_spec(name, spec, default_kind, default_district, default_x, 
         "y_km": round(y_km, 3),
         "lat": round(lat, 6),
         "lng": round(lng, 6),
+        "capacity": int(round(float(capacity))),
+        "open_min": open_min,
+        "close_min": close_min,
+        "popularity": round(float(popularity), 3),
+        "density": round(float(density), 3),
+        "style": dict(CATEGORY_STYLE.get(category, CATEGORY_STYLE["mixed"])),
     }
 
 
@@ -382,30 +573,61 @@ def _dedupe_edges(edges):
 
 
 def _connect_hubs(nodes, hub_ids):
+    """Build a realistic arterial road network connecting hubs.
+
+    Strategy: MST as the backbone, then close 2-3 loops by adding the
+    shortest cycle-forming edges. Real road networks have redundancy,
+    a pure tree feels unnatural.
+    """
+    if not hub_ids:
+        return []
+    # Compute pairwise distances.
+    hubs = list(hub_ids)
+    dist_pair = []  # (dist, a, b)
+    for i in range(len(hubs)):
+        for j in range(i + 1, len(hubs)):
+            d = _euclidean_distance_km(nodes[hubs[i]], nodes[hubs[j]])
+            dist_pair.append((d, hubs[i], hubs[j]))
+    dist_pair.sort(key=lambda t: t[0])
+
+    # Prim-style MST via union-find on sorted edges (= Kruskal).
+    parent = {h: h for h in hubs}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return False
+        parent[ra] = rb
+        return True
+
     edges = []
-    linked = set()
-    sorted_hubs = sorted(hub_ids, key=lambda item: (nodes[item]["grid_y"], nodes[item]["grid_x"]))
-    for idx, hub_id in enumerate(sorted_hubs):
-        distances = []
-        for other_id in sorted_hubs:
-            if other_id == hub_id:
-                continue
-            dist = _euclidean_distance_km(nodes[hub_id], nodes[other_id])
-            distances.append((dist, other_id))
-        distances.sort(key=lambda item: item[0])
-        for dist, other_id in distances[:3]:
-            pair = tuple(sorted((hub_id, other_id)))
-            if pair in linked:
-                continue
-            linked.add(pair)
-            road_type = "arterial" if dist > 2.4 else "collector"
-            edges.append(_make_edge(hub_id, other_id, road_type))
-        if idx > 0:
-            prev_id = sorted_hubs[idx - 1]
-            pair = tuple(sorted((hub_id, prev_id)))
-            if pair not in linked:
-                linked.add(pair)
-                edges.append(_make_edge(hub_id, prev_id, "arterial"))
+    used = set()
+    # Pass 1: MST
+    for d, a, b in dist_pair:
+        if union(a, b):
+            pair = tuple(sorted((a, b)))
+            used.add(pair)
+            road_type = "arterial" if d > 2.4 else "collector"
+            edges.append(_make_edge(a, b, road_type))
+    # Pass 2: add ~25% extra short edges to form loops (realism: roads have
+    # alternate routes, not a strict tree).
+    target_loops = max(2, len(hubs) // 4)
+    added = 0
+    for d, a, b in dist_pair:
+        if added >= target_loops:
+            break
+        pair = tuple(sorted((a, b)))
+        if pair in used:
+            continue
+        used.add(pair)
+        edges.append(_make_edge(a, b, "arterial" if d > 2.4 else "collector"))
+        added += 1
     return edges
 
 
@@ -450,6 +672,68 @@ def _build_adjacency(nodes, edges):
         reverse["node"] = source["id"]
         adjacency[target["id"]].append(reverse)
     return dict(adjacency)
+
+
+# ===================================================================
+# DERIVED STRUCTURES: adjacency, indices, runtime state, overlays
+# ===================================================================
+
+def _build_name_index(nodes):
+    """Map lowercased name and id → canonical node id for O(1) lookup."""
+    index = {}
+    for node_id, node in nodes.items():
+        index[node_id.lower()] = node_id
+        index[str(node.get("name", "")).lower()] = node_id
+    return index
+
+
+def _build_spatial_index(nodes, cell_km=1.0):
+    """Bucket nodes into a uniform km grid for fast radius queries.
+
+    Bucket keys are ``"i,j"`` strings so the index survives JSON round-trips."""
+    buckets = defaultdict(list)
+    for node_id, node in nodes.items():
+        ci = int(math.floor(float(node["x_km"]) / cell_km))
+        cj = int(math.floor(float(node["y_km"]) / cell_km))
+        buckets[f"{ci},{cj}"].append(node_id)
+    return {"cell_km": cell_km, "buckets": dict(buckets)}
+
+
+def _spatial_candidate_ids(city_map, origin, radius_km):
+    """Candidate node ids whose bucket lies within *radius_km* of *origin*.
+
+    Returns ``None`` when no usable index exists, signalling callers to fall
+    back to a full scan.  Results are a superset filtered exactly by callers."""
+    index = city_map.get("spatial_index")
+    if not index or not index.get("buckets"):
+        return None
+    cell_km = float(index.get("cell_km", 1.0)) or 1.0
+    buckets = index["buckets"]
+    ci = int(math.floor(float(origin["x_km"]) / cell_km))
+    cj = int(math.floor(float(origin["y_km"]) / cell_km))
+    reach = int(math.ceil(float(radius_km) / cell_km)) + 1
+    out = []
+    for di in range(-reach, reach + 1):
+        for dj in range(-reach, reach + 1):
+            out.extend(buckets.get(f"{ci + di},{cj + dj}", ()))
+    return out
+
+
+def _attach_derived(city_map):
+    """Attach (or rebuild) adjacency, indices, runtime state and overlays.
+
+    Shared by ``_build_city_map`` and ``deserialize_city_map`` so a map loaded
+    from JSON behaves identically to a freshly built one."""
+    nodes = city_map.get("nodes", {})
+    if not city_map.get("adjacency"):
+        city_map["adjacency"] = _build_adjacency(nodes, city_map.get("edges", []))
+    city_map.setdefault("runtime", {"edge_congestion": {}, "node_occupancy": {}, "time_min": None})
+    city_map["name_index"] = _build_name_index(nodes)
+    city_map["spatial_index"] = _build_spatial_index(nodes)
+    if not city_map.get("overlays"):
+        city_map["overlays"] = _build_overlays(nodes, city_map.get("bounds", {}))
+    city_map.setdefault("interiors", {})
+    return city_map
 
 
 def _compute_bounds(nodes):
@@ -543,17 +827,28 @@ def _build_tile_map(nodes, edges, river, metro_lines, bridges, width=160, height
         terrain_type = _category_to_terrain(node["category"])
         _paint_blob(terrain, tx, ty, terrain_type, radius=5 if node["kind"] == "hub" else 3)
 
-    for edge in edges:
+    # Road tiles, in priority order so heavier roads win when they overlap.
+    # Local first → collector overrides → arterial overrides → bridge wins.
+    road_priority = {"local": 1, "collector": 2, "road": 2, "arterial": 3, "bridge": 4}
+    edges_sorted = sorted(edges, key=lambda e: road_priority.get("bridge" if e.get("bridge") else e.get("road_type", "road"), 1))
+    for edge in edges_sorted:
         source = nodes.get(edge["source"])
         target = nodes.get(edge["target"])
         if not source or not target:
             continue
         start = project_to_tile(source["grid_x"], source["grid_y"], bounds, width, height)
         end = project_to_tile(target["grid_x"], target["grid_y"], bounds, width, height)
-        symbol = "bridge" if edge.get("bridge") else "road"
+        if edge.get("bridge"):
+            symbol = "bridge"
+        else:
+            symbol = edge.get("road_type", "road") if edge.get("road_type") in {"arterial", "collector", "local"} else "road"
         for col, row in _bresenham(start[0], start[1], end[0], end[1]):
             if 0 <= row < height and 0 <= col < width:
                 if terrain[row][col] == "water" and not edge.get("bridge"):
+                    continue
+                # Don't downgrade an already-painted heavier road.
+                cur = terrain[row][col]
+                if road_priority.get(cur, 0) > road_priority.get(symbol, 0):
                     continue
                 terrain[row][col] = symbol
 
@@ -595,7 +890,10 @@ def _build_tile_map(nodes, edges, river, metro_lines, bridges, width=160, height
 def _terrain_symbol(value):
     return {
         "ground": ".",
-        "road": "#",
+        "road": "#",       # generic road (legacy)
+        "arterial": "A",   # widest, asphalt
+        "collector": "C",  # medium
+        "local": "L",      # narrow, sand/dirt
         "bridge": "=",
         "water": "~",
         "forest": "*",
@@ -605,7 +903,9 @@ def _terrain_symbol(value):
         "medical": "m",
         "industry": "i",
         "government": "g",
-        "leisure": "l",
+        "leisure": "l",  # note: clashes with "local"; but in terrain a tile
+        # is either road OR landuse, never both, so this is OK as long as
+        # the road pass runs after the landuse paint (which it does).
         "transit": "t",
         "metro": "+",
         "mixed": "d",
@@ -678,6 +978,13 @@ def node_by_name(city_map, name):
     key = _slug(name)
     if key in nodes:
         return nodes[key]
+    # O(1) via the name index when available; fall back to a scan otherwise.
+    index = city_map.get("name_index")
+    if index:
+        node_id = index.get(key.lower())
+        if node_id and node_id in nodes:
+            return nodes[node_id]
+        return None
     for node in nodes.values():
         if node["name"] == key:
             return node
@@ -693,34 +1000,109 @@ def distance_between(city_map, origin, target):
 
 
 def shortest_path(city_map, origin, target):
+    """Return the route (list of node names) along the road network."""
+    return shortest_path_with_distance(city_map, origin, target)[0]
+
+
+def shortest_path_with_distance(city_map, origin, target):
+    """Dijkstra over the road graph.
+
+    Returns ``(route_names, network_distance_km)`` where the distance is the
+    sum of the *actual* edge lengths traversed (not the straight-line
+    distance).  Arterials get a mild preference and local streets a mild
+    penalty for ranking, but the returned distance reflects true road length.
+    """
     nodes = city_map.get("nodes", {})
     adjacency = city_map.get("adjacency", {})
     start = node_by_name(city_map, origin)
     goal = node_by_name(city_map, target)
     if not start or not goal:
-        return []
+        return [], 0.0
     if start["id"] == goal["id"]:
-        return [start["name"]]
-    pq = [(0.0, start["id"], [])]
+        return [start["name"]], 0.0
+    # Heap entries carry both the ranking cost (with road-class penalties) and
+    # the true accumulated distance, plus a counter for stable ordering.
+    counter = 0
+    pq = [(0.0, 0.0, counter, start["id"], [])]
     visited = set()
     while pq:
-        cost, node_id, trail = heapq.heappop(pq)
+        cost, real_dist, _, node_id, trail = heapq.heappop(pq)
         if node_id in visited:
             continue
         visited.add(node_id)
         next_trail = trail + [nodes[node_id]["name"]]
         if node_id == goal["id"]:
-            return next_trail
+            return next_trail, round(real_dist, 3)
         for edge in adjacency.get(node_id, []):
             if edge["node"] in visited:
                 continue
+            dist = float(edge["distance_km"])
             penalty = 0.0
             if edge.get("road_type") == "arterial":
                 penalty = -0.03
             elif edge.get("road_type") == "local":
                 penalty = 0.05
-            heapq.heappush(pq, (cost + float(edge["distance_km"]) + penalty, edge["node"], next_trail))
-    return [start["name"], goal["name"]]
+            counter += 1
+            heapq.heappush(
+                pq,
+                (cost + dist + penalty, real_dist + dist, counter, edge["node"], next_trail),
+            )
+    # Disconnected: fall back to a direct hop and straight-line distance.
+    return [start["name"], goal["name"]], round(_euclidean_distance_km(start, goal), 3)
+
+
+def path_distance_km(city_map, route):
+    """Sum the road-network length (km) of a route given as a list of names.
+
+    Falls back to straight-line distance for any consecutive pair that has no
+    direct edge (e.g. a synthesised origin→destination fallback route)."""
+    if not route or len(route) < 2:
+        return 0.0
+    adjacency = city_map.get("adjacency", {})
+    total = 0.0
+    for a_name, b_name in zip(route, route[1:]):
+        a = node_by_name(city_map, a_name)
+        b = node_by_name(city_map, b_name)
+        if not a or not b:
+            continue
+        leg = None
+        for edge in adjacency.get(a["id"], []):
+            if edge["node"] == b["id"]:
+                leg = float(edge["distance_km"])
+                break
+        total += leg if leg is not None else _euclidean_distance_km(a, b)
+    return round(total, 3)
+
+
+def _route_road_factor(city_map, route):
+    """Average road-class speed factor over the edges of *route* (default 1.0)."""
+    if not route or len(route) < 2:
+        return 1.0
+    adjacency = city_map.get("adjacency", {})
+    factors = []
+    for a_name, b_name in zip(route, route[1:]):
+        a = node_by_name(city_map, a_name)
+        b = node_by_name(city_map, b_name)
+        if not a or not b:
+            continue
+        for edge in adjacency.get(a["id"], []):
+            if edge["node"] == b["id"]:
+                factors.append(ROAD_TYPE_SPEED_FACTOR.get(edge.get("road_type", "road"), 1.0))
+                break
+    return sum(factors) / len(factors) if factors else 1.0
+
+
+def _route_congestion(city_map, route):
+    """Average runtime congestion multiplier over the edges of *route*.
+
+    Returns 1.0 when no congestion has been set (the common, free-flow case)."""
+    if not route or len(route) < 2:
+        return 1.0
+    congestion = city_map.get("runtime", {}).get("edge_congestion", {})
+    if not congestion:
+        return 1.0
+    factors = [get_edge_congestion(city_map, a, b) for a, b in zip(route, route[1:])]
+    return sum(factors) / len(factors) if factors else 1.0
 
 
 def choose_transport_mode(agent, city_map, origin, target, activity=None,
@@ -797,9 +1179,15 @@ def choose_transport_mode(agent, city_map, origin, target, activity=None,
     return mode, distance_km
 
 
-def estimate_travel_minutes(mode, distance_km):
+def estimate_travel_minutes(mode, distance_km, road_factor=1.0):
+    """Estimate trip duration in minutes.
+
+    *road_factor* scales the mode's base speed to reflect the road classes
+    traversed (>1 = faster arterials, <1 = slower local streets).  Defaults to
+    1.0 so existing callers are unaffected."""
     spec = TRANSPORT_MODES.get(mode, TRANSPORT_MODES["walk"])
-    travel = (max(0.05, float(distance_km)) / float(spec["speed_kmh"])) * 60.0
+    speed = float(spec["speed_kmh"]) * max(0.3, float(road_factor))
+    travel = (max(0.05, float(distance_km)) / speed) * 60.0
     return max(1, int(round(travel + float(spec["fixed_min"]))))
 
 
@@ -814,22 +1202,34 @@ def travel_plan(agent, city_map, origin, target, activity=None,
     weather : str or None
         Current weather condition key (rain/snow/hot/cold/clear).
     """
-    mode, distance_km = choose_transport_mode(
+    mode, straight_km = choose_transport_mode(
         agent, city_map, origin, target, activity=activity, weather=weather)
-    route = shortest_path(city_map, origin, target)
-    minutes = estimate_travel_minutes(mode, distance_km)
+    route, network_km = shortest_path_with_distance(city_map, origin, target)
+    # Prefer the real road-network distance; fall back to straight-line only if
+    # the graph yields nothing usable.
+    distance_km = network_km if network_km > 0 else straight_km
+    road_factor = _route_road_factor(city_map, route)
+    minutes = estimate_travel_minutes(mode, distance_km, road_factor=road_factor)
     is_rush = is_rush_hour(time_str) if time_str else False
     if is_rush:
         minutes = max(1, int(round(minutes * RUSH_HOUR_TIME_MULT)))
+    # Apply any dynamic per-edge congestion the upper layer has set.
+    congestion = _route_congestion(city_map, route)
+    if congestion and congestion != 1.0:
+        minutes = max(1, int(round(minutes * congestion)))
     cost = calc_transport_cost(mode, distance_km, rush_hour=is_rush)
     return {
         "origin": _slug(origin),
         "destination": _slug(target),
         "distance_km": round(distance_km, 3),
+        "straight_distance_km": round(straight_km, 3),
+        "network_distance_km": round(network_km, 3),
         "mode": mode,
         "travel_minutes": minutes,
         "travel_cost": round(cost, 2),
         "rush_hour": is_rush,
+        "congestion": round(congestion, 3),
+        "road_factor": round(road_factor, 3),
         "route": route,
     }
 
@@ -897,6 +1297,26 @@ def is_rush_hour(time_str):
 # SPATIAL QUERIES
 # ===================================================================
 
+def _candidate_nodes(city_map, origin, radius_km):
+    """(nid, node) pairs to test for a radius query.
+
+    Uses the spatial index to prune when present; otherwise yields all nodes.
+    Callers still apply the exact distance filter, so results are unchanged."""
+    nodes = city_map.get("nodes", {})
+    ids = _spatial_candidate_ids(city_map, origin, radius_km)
+    if ids is None:
+        return list(nodes.items())
+    out, seen = [], set()
+    for nid in ids:
+        if nid in seen:
+            continue
+        seen.add(nid)
+        node = nodes.get(nid)
+        if node is not None:
+            out.append((nid, node))
+    return out
+
+
 def nearby_nodes(city_map, node_id, radius_km=2.0):
     """Return all nodes within *radius_km* of *node_id*, sorted by distance.
 
@@ -907,7 +1327,7 @@ def nearby_nodes(city_map, node_id, radius_km=2.0):
     if not origin:
         return []
     results = []
-    for nid, node in nodes.items():
+    for nid, node in _candidate_nodes(city_map, origin, radius_km):
         if nid == origin["id"]:
             continue
         dist = _euclidean_distance_km(origin, node)
@@ -935,7 +1355,9 @@ def nearest_by_category(city_map, node_id, category, top_k=3):
         return []
     cat = category.lower().strip()
     candidates = []
-    for nid, node in nodes.items():
+    # 50 km radius comfortably covers any single-city map while still letting
+    # the spatial index prune; falls back to full scan when no index.
+    for nid, node in _candidate_nodes(city_map, origin, 50.0):
         if nid == origin["id"]:
             continue
         if node.get("category", "").lower() != cat:
@@ -1075,20 +1497,24 @@ def job_to_workplace_categories(job_text):
 
 
 def resolve_best_location(city_map, current_node_id, categories, top_k=5,
-                          max_radius_km=15.0, prefer_closer=True):
+                          max_radius_km=15.0, prefer_closer=True, rng=None):
     """Find the best location matching any of the given categories.
 
     Searches outward from *current_node_id*, preferring closer nodes.
     Returns a list of (node_id, distance_km) candidates.
+
+    *rng* may be a ``random.Random`` (or seed-bearing object) to make the
+    non-``prefer_closer`` weighted sampling reproducible; defaults to the
+    module ``random`` for backward compatibility.
     """
     nodes = city_map.get("nodes", {})
-    origin = nodes.get(_slug(current_node_id))
+    origin = nodes.get(_slug(current_node_id)) or node_by_name(city_map, current_node_id)
     if not origin:
         return []
 
     candidates = []
     cat_set = set(c.lower().strip() for c in categories)
-    for nid, node in nodes.items():
+    for nid, node in _candidate_nodes(city_map, origin, max_radius_km):
         if nid == origin["id"]:
             continue
         if node.get("category", "").lower() not in cat_set:
@@ -1102,7 +1528,316 @@ def resolve_best_location(city_map, current_node_id, categories, top_k=5,
     else:
         # Weighted random: closer nodes have higher weight
         import random as _rnd
-        _rnd.shuffle(candidates)
-        candidates.sort(key=lambda x: x[1] + _rnd.uniform(0, x[1] * 0.5))
+        rng = rng or _rnd
+        rng.shuffle(candidates)
+        candidates.sort(key=lambda x: x[1] + rng.uniform(0, x[1] * 0.5))
 
     return candidates[:top_k]
+
+
+# ===================================================================
+# DYNAMIC RUNTIME STATE (for the upper-layer simulation)
+# ===================================================================
+
+def _time_to_min(time_str):
+    """Parse ``"HH:MM"`` to minutes-from-midnight, or None."""
+    if not isinstance(time_str, str):
+        return None
+    parts = time_str.strip().split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, TypeError):
+        return None
+
+
+def _edge_key(a, b):
+    return "||".join(sorted([_slug(a), _slug(b)]))
+
+
+def _runtime(city_map):
+    return city_map.setdefault(
+        "runtime", {"edge_congestion": {}, "node_occupancy": {}, "time_min": None}
+    )
+
+
+def set_edge_congestion(city_map, a, b, factor):
+    """Set a travel-time multiplier on the edge between two nodes (>=0.1)."""
+    _runtime(city_map)["edge_congestion"][_edge_key(a, b)] = max(0.1, float(factor))
+
+
+def get_edge_congestion(city_map, a, b):
+    return float(_runtime(city_map)["edge_congestion"].get(_edge_key(a, b), 1.0))
+
+
+def clear_congestion(city_map):
+    _runtime(city_map)["edge_congestion"] = {}
+
+
+def set_node_occupancy(city_map, node_id, count):
+    _runtime(city_map)["node_occupancy"][_slug(node_id)] = max(0, int(count))
+
+
+def add_node_occupancy(city_map, node_id, delta=1):
+    """Increment (or decrement) a node's occupancy, clamped at 0. Returns new value."""
+    occ = _runtime(city_map)["node_occupancy"]
+    key = _slug(node_id)
+    occ[key] = max(0, occ.get(key, 0) + int(delta))
+    return occ[key]
+
+
+def get_node_occupancy(city_map, node_id):
+    return int(_runtime(city_map)["node_occupancy"].get(_slug(node_id), 0))
+
+
+def occupancy_ratio(city_map, node_id):
+    """Current occupancy / capacity for a node (0.0 when unknown)."""
+    node = node_by_name(city_map, node_id)
+    if not node:
+        return 0.0
+    cap = max(1, int(node.get("capacity", 1) or 1))
+    return round(get_node_occupancy(city_map, node_id) / cap, 3)
+
+
+def set_sim_time(city_map, time_str):
+    _runtime(city_map)["time_min"] = _time_to_min(time_str)
+
+
+def is_open(city_map, node_id, time_str):
+    """Whether a place is open at ``HH:MM``. Always-open when hours unset."""
+    node = node_by_name(city_map, node_id)
+    if not node:
+        return False
+    open_min = node.get("open_min")
+    close_min = node.get("close_min")
+    if open_min is None and close_min is None:
+        return True
+    t = _time_to_min(time_str)
+    if t is None:
+        return True
+    lo = 0 if open_min is None else int(open_min)
+    hi = 24 * 60 if close_min is None else int(close_min)
+    if hi <= lo:  # overnight window, e.g. 22:00–06:00
+        return t >= lo or t < hi
+    return lo <= t < hi
+
+
+# ===================================================================
+# VISUALIZATION OVERLAYS & EXPORTS
+# ===================================================================
+
+# Land-use symbol per category for the zone overlay (single chars, uppercase
+# so they never collide with the lowercase land-use marks in tile_map terrain).
+ZONE_SYMBOL = {
+    "residential": "R", "commerce": "C", "education": "E", "medical": "M",
+    "industry": "I", "government": "G", "leisure": "L", "transit": "T", "mixed": "X",
+}
+
+# Human-readable meaning of every tile_map terrain symbol, for legends.
+TERRAIN_LEGEND = {
+    ".": "ground", "#": "road", "A": "arterial", "C": "collector", "L": "local",
+    "=": "bridge", "~": "water", "*": "forest", "r": "residential", "c": "commerce",
+    "e": "education", "m": "medical", "i": "industry", "g": "government",
+    "l": "leisure", "t": "transit", "+": "metro", "d": "mixed",
+}
+
+
+def _grid_to_lnglat(grid_x, grid_y):
+    x_km = float(grid_x) * KM_PER_GRID_X
+    y_km = float(grid_y) * KM_PER_GRID_Y
+    return (round(BASE_LNG + x_km * LNG_PER_KM, 6), round(BASE_LAT + y_km * LAT_PER_KM, 6))
+
+
+def _build_overlays(nodes, bounds, width=72, height=48):
+    """Structured land-use + density rasters for richer visualization.
+
+    zone:    nearest-node category per tile → contiguous land-use regions
+             (a coarse Voronoi partition that reads like real districts).
+    density: built-density gradient mapped to 0..9 per tile, combining each
+             tile's nearest-node density (with distance fall-off) and a radial
+             lift toward the populated centroid.
+    Stored OUTSIDE tile_map so it never bloats the per-frame visualizer output.
+    """
+    if not nodes or not bounds:
+        return {"width": 0, "height": 0, "zone": [], "density": [], "bounds": bounds or {}}
+    node_list = list(nodes.values())
+    gxs = [float(n["grid_x"]) for n in node_list]
+    gys = [float(n["grid_y"]) for n in node_list]
+    cats = [ZONE_SYMBOL.get(n["category"], "X") for n in node_list]
+    dens = [float(n.get("density", 0.5)) for n in node_list]
+    min_x, max_x = bounds["min_x"], bounds["max_x"]
+    min_y, max_y = bounds["min_y"], bounds["max_y"]
+    span_x = max(1e-6, max_x - min_x)
+    span_y = max(1e-6, max_y - min_y)
+    cx = sum(gxs) / len(gxs)
+    cy = sum(gys) / len(gys)
+    max_r = (math.hypot(span_x, span_y) / 2.0) or 1.0
+    n = len(node_list)
+    zone_rows, density_rows = [], []
+    for row in range(height):
+        gy = min_y + (row / max(1, height - 1)) * span_y
+        zrow, drow = [], []
+        for col in range(width):
+            gx = min_x + (col / max(1, width - 1)) * span_x
+            best_i, best_d = 0, float("inf")
+            for i in range(n):
+                d = (gxs[i] - gx) ** 2 + (gys[i] - gy) ** 2
+                if d < best_d:
+                    best_d, best_i = d, i
+            zrow.append(cats[best_i])
+            falloff = math.exp(-math.sqrt(best_d) / 1.2)
+            radial = 1.0 - min(1.0, math.hypot(gx - cx, gy - cy) / max_r)
+            val = (dens[best_i] * 0.75 + 0.25) * falloff + 0.15 * radial
+            drow.append(str(max(0, min(9, int(round(val * 9))))))
+        zone_rows.append("".join(zrow))
+        density_rows.append("".join(drow))
+    return {
+        "width": width, "height": height,
+        "zone": zone_rows, "density": density_rows,
+        "legend": dict(ZONE_SYMBOL), "bounds": dict(bounds),
+    }
+
+
+def export_geojson(city_map):
+    """Export nodes / roads / metro / river as a GeoJSON FeatureCollection (WGS84)."""
+    features = []
+    nodes = city_map.get("nodes", {})
+    for node in nodes.values():
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [node.get("lng"), node.get("lat")]},
+            "properties": {
+                "id": node["id"], "name": node["name"], "kind": node.get("kind"),
+                "category": node.get("category"), "district": node.get("district"),
+                "popularity": node.get("popularity"), "capacity": node.get("capacity"),
+                "style": node.get("style", {}),
+            },
+        })
+    for edge in city_map.get("edges", []):
+        a = nodes.get(edge["source"])
+        b = nodes.get(edge["target"])
+        if not a or not b:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString",
+                         "coordinates": [[a["lng"], a["lat"]], [b["lng"], b["lat"]]]},
+            "properties": {"kind": "road", "road_type": edge.get("road_type"),
+                           "bridge": bool(edge.get("bridge"))},
+        })
+    for line in city_map.get("metro_lines", []):
+        coords = [[n["lng"], n["lat"]] for n in
+                  (nodes.get(s) for s in line.get("stops", [])) if n]
+        if len(coords) >= 2:
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {"kind": "metro", "line": line.get("name"),
+                               "color": line.get("color")},
+            })
+    river = city_map.get("river") or {}
+    bounds = city_map.get("bounds") or {}
+    if river.get("path") and bounds:
+        coords = [list(_grid_to_lnglat(gx, gy)) for gx, gy in _river_polyline(bounds, river)]
+        if len(coords) >= 2:
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {"kind": "river", "name": river.get("name"),
+                               "width": river.get("width")},
+            })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def build_visualization_payload(city_map):
+    """A single rich, load-once bundle for front-ends / web maps.
+
+    Deliberately heavier than the per-frame layout the live visualizer writes;
+    call once to drive a static or interactive map view."""
+    nodes = []
+    for node in city_map.get("nodes", {}).values():
+        nodes.append({
+            "id": node["id"], "name": node["name"], "kind": node.get("kind"),
+            "category": node.get("category"), "district": node.get("district"),
+            "grid_x": node.get("grid_x"), "grid_y": node.get("grid_y"),
+            "lat": node.get("lat"), "lng": node.get("lng"),
+            "popularity": node.get("popularity"), "density": node.get("density"),
+            "capacity": node.get("capacity"), "style": node.get("style", {}),
+        })
+    return {
+        "nodes": nodes,
+        "edges": city_map.get("edges", []),
+        "metro_lines": city_map.get("metro_lines", []),
+        "river": city_map.get("river", {}),
+        "bridges": city_map.get("bridges", []),
+        "tile_map": city_map.get("tile_map", {}),
+        "overlays": city_map.get("overlays", {}),
+        "terrain_legend": TERRAIN_LEGEND,
+        "category_style": CATEGORY_STYLE,
+        "bounds": city_map.get("bounds", {}),
+        "scale": city_map.get("scale", {}),
+        "geojson": export_geojson(city_map),
+    }
+
+
+# ===================================================================
+# SERIALIZATION (save / load without re-parsing the source spec)
+# ===================================================================
+
+_SERIALIZABLE_KEYS = (
+    "nodes", "edges", "metro_lines", "river", "bridges",
+    "tile_map", "bounds", "scale", "interiors", "runtime",
+)
+
+
+def serialize_city_map(city_map):
+    """Return a JSON-safe dict of the map's persistent state.
+
+    Derived structures (adjacency / indices / overlays) are omitted and rebuilt
+    on load; runtime congestion & occupancy ARE preserved."""
+    core = {k: city_map.get(k) for k in _SERIALIZABLE_KEYS if k in city_map}
+    return json.loads(json.dumps(core, ensure_ascii=False))
+
+
+def deserialize_city_map(data):
+    """Rebuild a fully-functional city_map from ``serialize_city_map`` output."""
+    city_map = dict(data or {})
+    city_map.pop("adjacency", None)  # force a clean rebuild
+    _attach_derived(city_map)
+    return city_map
+
+
+def save_city_map(city_map, path):
+    """Write a city_map to JSON. Returns the path."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(serialize_city_map(city_map), f, ensure_ascii=False, indent=2)
+    return path
+
+
+def load_city_map_json(path):
+    """Load a city_map previously written with ``save_city_map``."""
+    path = _resolve_existing_path(path)
+    with open(path, "r", encoding="utf-8") as f:
+        return deserialize_city_map(json.load(f))
+
+
+def load_city_map_cached(map_path, cache_path=None):
+    """Load a map, using a JSON cache beside the source when it is fresh.
+
+    Rebuilds from the source spec when no cache exists or the source is newer,
+    then refreshes the cache — speeds up repeated runs over the same map."""
+    src = _resolve_existing_path(map_path)
+    if cache_path is None:
+        cache_path = str(Path(src).with_suffix(".citymap.json"))
+    try:
+        if os.path.exists(cache_path) and os.path.getmtime(cache_path) >= os.path.getmtime(src):
+            return load_city_map_json(cache_path)
+    except OSError:
+        pass
+    city_map = load_city_map(src)
+    try:
+        save_city_map(city_map, cache_path)
+    except OSError:
+        pass
+    return city_map

@@ -66,6 +66,9 @@ class ExpMemoryConsistency(ExperimentRunner):
 
     def run(self) -> bool:
         """Run the memory consistency experiment."""
+        import os
+        import json
+
         self.experiment_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -83,22 +86,32 @@ class ExpMemoryConsistency(ExperimentRunner):
         phase1_dir = self.experiment_dir / "phase_1"
         phase1_dir.mkdir(parents=True, exist_ok=True)
 
-        phase1_env = {}
-        if self.config.get("delete_summaries"):
-            # Will delete summaries after phase 1
-            pass
+        phase1_config = {
+            "sim_days": 7,
+            "random_seed": self.default_seed,
+            "stateful": False,
+            "state_output_dir": str(phase1_dir / "state"),
+            "network_output_dir": str(phase1_dir / "network"),
+            "diary_output_dir": str(phase1_dir / "diaries"),
+            "log_dir": str(phase1_dir / "logs"),
+            "memory_dir": str(phase1_dir / "memory"),
+            "environment_output_dir": str(phase1_dir / "environment"),
+            "economy_output_dir": str(phase1_dir / "economy"),
+            "external_environment_service": {
+                "enabled": False
+            }
+        }
 
         cmd = [
             sys.executable,
             str(Path(__file__).parent.parent.parent.parent / "generative_city_sim.py"),
-            "run",
-            "--sim-days", "7",
-            "--seed", str(self.default_seed),
-            "--output-dir", str(phase1_dir)
+            "run"
         ]
 
         print(f"[EXP] Running Phase 1: days=7 seed={self.default_seed}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        env = os.environ.copy()
+        env["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(phase1_config)
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"[ERROR] Phase 1 failed: {result.stderr}", file=sys.stderr)
             return False
@@ -125,13 +138,25 @@ class ExpMemoryConsistency(ExperimentRunner):
         if self.config.get("inject_conflict"):
             self._inject_conflict_memory()
 
-        cmd[cmd.index("--sim-days")] = "--sim-days"
-        cmd[cmd.index("7")] = "7"
-        cmd[cmd.index("--output-dir"), cmd.index(str(phase1_dir))] = "--output-dir", str(phase2_dir)
-        cmd[cmd.index("--seed"), cmd.index(str(self.default_seed))] = "--seed", str(self.default_seed + 100)
+        phase2_config = {
+            "sim_days": 7,
+            "random_seed": self.default_seed + 100,
+            "stateful": False,
+            "state_output_dir": str(phase2_dir / "state"),
+            "network_output_dir": str(phase2_dir / "network"),
+            "diary_output_dir": str(phase2_dir / "diaries"),
+            "log_dir": str(phase2_dir / "logs"),
+            "memory_dir": str(phase2_dir / "memory"),
+            "environment_output_dir": str(phase2_dir / "environment"),
+            "economy_output_dir": str(phase2_dir / "economy"),
+            "external_environment_service": {
+                "enabled": False
+            }
+        }
 
         print(f"[EXP] Running Phase 2: days=7 seed={self.default_seed + 100}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        env["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(phase2_config)
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if result.returncode != 0:
             print(f"[ERROR] Phase 2 failed: {result.stderr}", file=sys.stderr)
             return False
