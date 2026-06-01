@@ -44,6 +44,11 @@ _LOG = get_logger("gaworld.sim.diary")
 DIARY_OUTPUT_DIR: str = CONFIG.get("diary_output_dir", "output/diaries")
 
 
+def _fos_fast_mode_cfg() -> dict[str, Any]:
+    cfg = CONFIG.get("fos_fast_mode", {}) if isinstance(CONFIG, dict) else {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
 # ---------------------------------------------------------------------------
 # Memory record append (used by daily_summary and other long-term writers).
 # ---------------------------------------------------------------------------
@@ -71,6 +76,10 @@ def _append_memory_record(
 # ---------------------------------------------------------------------------
 
 def daily_summary(agent: dict[str, Any], logs: str, day: int | None = None) -> str:
+    if bool(_fos_fast_mode_cfg().get("skip_daily_summary", False)):
+        memory = _compact_text(logs, max_chars=160) or "今天整体按当前节奏推进。"
+        _append_memory_record(agent, memory, entry_type="memory", day=day, time_str="end_of_day")
+        return memory
     prompt = f"""
 你是{agent['name']}。
 这是你今天经历的关键片段：
@@ -155,6 +164,15 @@ def generate_daily_diary(
     consolidation_text: str = "",
     intentions: Any = None,
 ) -> str:
+    if bool(_fos_fast_mode_cfg().get("skip_daily_diary", False)):
+        return _fallback_daily_diary(
+            agent,
+            day,
+            day_context=day_context,
+            day_memory=day_memory,
+            consolidation_text=consolidation_text,
+            intentions=intentions,
+        )
     episode_lines = _top_day_episode_lines(agent, day, max_items=4)
     intent_hint = intention_text(intentions or agent.get("intentions", {}))
     diary_date = ""

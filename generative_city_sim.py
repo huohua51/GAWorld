@@ -67,7 +67,7 @@ from gaworld.behavior.dynamic import (
     insert_activity_into_schedule as dynamic_insert_activity,
 )
 from gaworld.hooks import HookBus
-from gaworld.env.system import EnvironmentSystem, RemoteEnvironmentClient
+from environment import EnvironmentSystem, RemoteEnvironmentClient
 from gaworld.llm.providers import call_llm
 from gaworld.work.runtime import RealWorkRuntime
 from gaworld.work.ingest import summarise_for_outcome as _rw_summarise
@@ -2126,6 +2126,8 @@ def infer_event_effect(agent, event_desc, event_type="event"):
 from gaworld.sim._cognition import get_social_context, perception  # noqa: E402
 
 def planning(agent, perception_text, recall_context=None, decision_refs=None):
+    if bool((CONFIG.get("fos_fast_mode", {}) or {}).get("deterministic_cognition", False)):
+        return _fallback_plan_struct(perception_text)
     if not isinstance(recall_context, dict):
         recall_context = evoke_memory(agent, "planning", perception_text)
     memory_hint = recall_context.get("hint", "暂无重要经验")
@@ -2197,6 +2199,8 @@ def planning(agent, perception_text, recall_context=None, decision_refs=None):
     return parsed or _fallback_plan_struct(response)
 
 def reflection(agent, outcome, recall_context=None):
+    if bool((CONFIG.get("fos_fast_mode", {}) or {}).get("deterministic_cognition", False)):
+        return _fallback_reflection_struct(outcome)
     if not isinstance(recall_context, dict):
         recall_context = evoke_memory(agent, "reflection", outcome)
     memory_hint = recall_context.get("hint", "暂无重要经验")
