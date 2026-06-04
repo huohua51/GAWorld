@@ -7,11 +7,53 @@ from typing import Any
 
 def environment_settings() -> dict[str, Any]:
     return {
-        "external_environment_service": {
-            "enabled": False,
-            "base_url": "http://127.0.0.1:8765",
-            "timeout": 6,
-            "fallback_to_empty": True,
+        # Local physical perception (P0): wires the city map's per-node
+        # occupancy / opening-hours state — previously dead code — into the
+        # cognition loop so agents perceive their *current* surroundings.
+        "local_physical": {
+            "enabled": True,
+            # Crowding labels are derived from occupancy / capacity.
+            "crowd_busy_ratio": 0.6,
+            "crowd_packed_ratio": 0.9,
+            # Inject the local snapshot text into per-step perception context.
+            "inject_into_perception": True,
+            # P2 emergent anomaly: flag a location as anomalous when it is
+            # packed *and* occupancy jumped sharply versus the previous tick.
+            "crowd_anomaly_ratio": 0.9,
+            "crowd_anomaly_jump": 0.25,
+        },
+        # Anomaly modelling (P2): promotes "异常" to a first-class signal on
+        # top of the continuous ``severity``. Routine fluctuations (ordinary
+        # weather, small market moves) are not anomalies; extreme/shock/
+        # emergency events and high-severity events are.
+        # NB: the *reaction-side* escalation magnitudes (priority boost,
+        # non-resumable score) are fixed constants in ``behavior/dynamic.py``,
+        # which is intentionally decoupled from CONFIG; only the *detection*
+        # thresholds below are configurable here.
+        "anomaly": {
+            "enabled": True,
+            "severity_threshold": 0.65,
+            "intraday_threshold": 0.45,
+        },
+        # Same-day replanning (P3): when a *persistent* anomaly makes the
+        # current activity unworkable (venue closed, crowd surge, emergency),
+        # defer the disrupted slots in the affected window instead of only
+        # patching the single current step.
+        "replan": {
+            "enabled": True,
+            # How far ahead the disruption is assumed to persist (minutes).
+            "window_minutes": 120,
+            # Spacing used when re-placing deferred activities after the window.
+            "defer_gap_minutes": 30,
+        },
+        # Structured spatial learning (P4): sediment location-bound anomaly
+        # experiences into a reusable avoidance preference that later biases
+        # location choice. In-memory across a run; decays by recency.
+        "spatial_preferences": {
+            "enabled": True,
+            "anomaly_weight": 1.0,
+            "avoid_threshold": 1.5,
+            "half_life_days": 7.0,
         },
         # Distributed multi-machine simulation.
         # Run a relay server and let each node process its own local agent subset.

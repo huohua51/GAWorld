@@ -304,6 +304,85 @@ def _round_to_anchor(minutes: int, anchor_step: int = 30) -> int:
     return int(round(minutes / step) * step)
 
 
+# ---------------------------------------------------------------------------
+# Same-day replanning (P3).
+# ---------------------------------------------------------------------------
+
+def replan_affected_interval(
+    schedule: list[tuple[str, str]],
+    start_time: str,
+    end_time: str,
+    *,
+    is_affected,
+    relocate=None,
+    defer: bool = True,
+    defer_gap_minutes: int = 30,
+) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
+    """Rebuild only the schedule slots disrupted within ``[start, end)``.
+
+    Surgical by design — slots outside the affected window are untouched
+    (contrast with regenerating the whole day). For each affected slot:
+
+    * ``relocate`` (if given) swaps the activity in place — e.g. send the
+      agent to an alternative venue while keeping the time;
+    * otherwise, when ``defer`` is set, the activity is pushed to the
+      first free slot at/after ``end_time`` (spaced by ``defer_gap_minutes``);
+    * otherwise the slot is dropped.
+
+    Returns ``(new_schedule, changes)`` where ``changes`` is a list of
+    ``{"time","from","to","kind"}`` records describing what moved.
+    """
+    start_min = _time_str_to_minutes(start_time)
+    end_min = _time_str_to_minutes(end_time)
+    if not schedule or start_min is None or end_min is None or end_min <= start_min:
+        return list(schedule or []), []
+
+    gap = max(1, int(defer_gap_minutes))
+    kept: list[tuple[str, str]] = []
+    deferred: list[str] = []
+    changes: list[dict[str, Any]] = []
+
+    for t, act in schedule:
+        tmin = _time_str_to_minutes(t)
+        if tmin is None or not (start_min <= tmin < end_min) or not is_affected(t, act):
+            kept.append((t, act))
+            continue
+        if relocate is not None:
+            new_act = relocate(t, act)
+            if new_act and new_act != act:
+                kept.append((t, new_act))
+                changes.append({"time": t, "from": act, "to": new_act, "kind": "relocate"})
+            else:
+                kept.append((t, act))
+        elif defer:
+            deferred.append(act)
+            changes.append({"time": t, "from": act, "to": None, "kind": "defer"})
+        else:
+            changes.append({"time": t, "from": act, "to": None, "kind": "drop"})
+
+    # Re-place deferred activities at the first free grid slots after the window.
+    used = {m for m in (_time_str_to_minutes(t) for t, _ in kept) if m is not None}
+    cursor = end_min
+    for act in deferred:
+        while cursor in used and cursor < 24 * 60:
+            cursor += gap
+        if cursor >= 24 * 60:
+            # No room left in the day — drop and record it.
+            changes.append({"time": end_time, "from": act, "to": None, "kind": "drop_no_room"})
+            continue
+        new_time = _minutes_to_time_str(cursor)
+        kept.append((new_time, act))
+        for c in changes:
+            if c["kind"] == "defer" and c["from"] == act and c["to"] is None:
+                c["to"] = new_time
+                break
+        used.add(cursor)
+        cursor += gap
+
+    kept.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
+    return kept, changes
+
+
 def _align_daily_planning_start_time(
     schedule: list[tuple[str, str]],
     anchor_step: int = 30,

@@ -702,53 +702,90 @@ def _classify_personality(agent: Dict) -> str:
 
 
 def _classify_event_type(event: Dict) -> Tuple[str, str]:
-    """Classify an environment event into (category, sub_type)."""
+    """Classify an environment event into (category, sub_type).
+
+    Structured-first (P1): the ``EnvironmentSystem`` already tags every
+    event with ``type`` (natural/economic/political/technology),
+    ``topic`` and ``impact_tags``. We consult those before falling back
+    to brittle description-keyword matching, and we check emergencies
+    *first* so a ``natural``-typed earthquake is no longer masked as
+    ordinary weather (the previous ordering bug).
+    """
     ev_type = str(event.get("type", "")).lower()
+    topic = str(event.get("topic", "")).lower()
     desc = str(event.get("description", event.get("name", ""))).lower()
     severity = _f(event.get("severity", 0.3), 0.3)
 
-    if ev_type in ("weather", "natural") or _contains_any(desc, ["雨", "雪", "风", "高温", "暴风", "冰雹"]):
-        if _contains_any(desc, ["暴风", "台风", "暴雨"]):
-            return "weather", "storm"
-        if "雨" in desc:
-            return "weather", "rain"
-        if "雪" in desc:
-            return "weather", "snow"
-        if _contains_any(desc, ["高温", "热"]):
-            return "weather", "hot"
-        if _contains_any(desc, ["冷", "寒"]):
-            return "weather", "cold"
-        return "weather", "rain"
+    # 1. Emergencies first — highest stakes, must not be masked by other types.
+    if ev_type == "emergency" or _contains_any(desc, ["火灾", "爆炸", "起火"]):
+        if _contains_any(desc, ["地震", "震"]):
+            return "emergency", "earthquake"
+        if _contains_any(desc, ["洪水", "溃堤", "泥石流"]) or "洪" in desc:
+            return "emergency", "flood"
+        return "emergency", "fire"
+    if _contains_any(desc, ["地震"]):
+        return "emergency", "earthquake"
+    if _contains_any(desc, ["洪水", "溃堤", "泥石流"]):
+        return "emergency", "flood"
 
-    if _contains_any(desc, ["拥堵", "堵车", "交通", "封路", "施工"]):
+    # 2. Traffic — structured mobility signal or keywords.
+    if _contains_any(desc, ["拥堵", "堵车", "封路", "施工", "封闭"]) or (
+        topic == "traffic" and "mobility" in {str(t).lower() for t in (event.get("impact_tags") or [])}
+    ):
         if _contains_any(desc, ["事故"]):
             return "traffic", "accident"
         if _contains_any(desc, ["封路", "封闭"]):
             return "traffic", "road_closure"
         return "traffic", "congestion"
 
-    if _contains_any(desc, ["促销", "打折", "开业", "特价", "优惠"]):
+    # 3. Weather / natural — prefer structured type/topic over wording.
+    if topic == "weather" or ev_type in ("weather", "natural") or _contains_any(
+        desc, ["雨", "雪", "风", "高温", "暴风", "冰雹", "寒潮", "降温"]
+    ):
+        if _contains_any(desc, ["暴风", "台风", "暴雨", "雷暴", "强降雨"]):
+            return "weather", "storm"
+        if "雪" in desc:
+            return "weather", "snow"
+        if _contains_any(desc, ["高温", "酷热"]) or "热" in desc:
+            return "weather", "hot"
+        if _contains_any(desc, ["寒", "降温"]) or "冷" in desc:
+            return "weather", "cold"
+        return "weather", "rain"
+
+    # 4. Commercial.
+    if ev_type == "commercial" or _contains_any(desc, ["促销", "打折", "开业", "新开", "特价", "优惠"]):
         if _contains_any(desc, ["开业", "新开"]):
             return "commercial", "new_store"
         if _contains_any(desc, ["打折", "特价"]):
             return "commercial", "sale"
         return "commercial", "promotion"
 
-    if _contains_any(desc, ["新闻", "热搜", "突发", "头条"]):
-        if severity > 0.7:
-            return "news", "breaking"
-        return "news", "local"
-
-    if _contains_any(desc, ["火灾", "地震", "洪水", "爆炸"]):
-        if "火" in desc:
-            return "emergency", "fire"
-        if "震" in desc:
-            return "emergency", "earthquake"
-        if "洪" in desc:
-            return "emergency", "flood"
-        return "emergency", "fire"
+    # 5. Info-driven domains (economic / political / technology): route to
+    #    'news' with severity deciding breaking-vs-local. Previously these
+    #    silently fell through to the generic fallback at fixed priority.
+    if ev_type in ("economic", "political", "technology") or _contains_any(
+        desc, ["新闻", "热搜", "突发", "头条", "政策", "市场", "监管", "舆论"]
+    ):
+        return ("news", "breaking") if severity >= 0.7 else ("news", "local")
 
     return "news", "local"
+
+
+# Impact tags (set by EnvironmentSystem) → small additive priority boost.
+# Lets the generation-side semantics influence the reaction side instead of
+# being discarded. We add the single largest matching boost (no stacking).
+_IMPACT_TAG_PRIORITY_BOOST: Dict[str, float] = {
+    "mobility": 0.06,
+    "mobility_intent": 0.04,
+    "public_service": 0.05,
+    "stress": 0.05,
+}
+
+# Anomaly escalation (P2): events flagged ``anomaly`` by EnvironmentSystem
+# get a priority bump; a high anomaly score forces a non-resumable reaction
+# (you don't calmly resume your plan during a genuine anomaly).
+_ANOMALY_PRIORITY_BOOST = 0.15
+_ANOMALY_NON_RESUMABLE_SCORE = 0.8
 
 
 def generate_environment_interrupts(
@@ -767,6 +804,7 @@ def generate_environment_interrupts(
     for event in env_events:
         category, sub_type = _classify_event_type(event)
         severity = _f(event.get("severity", 0.3), 0.3)
+        tags = [str(t).lower() for t in (event.get("impact_tags") or [])]
 
         # Find matching response
         responses = _ENV_RESPONSE_MAP.get(category, [])
@@ -788,6 +826,18 @@ def generate_environment_interrupts(
         priority = base_pri * (0.5 + severity * 0.8)
         # Apply personality modifier
         priority *= p_mods.get(category, 1.0)
+        # Apply impact-tag boost (consume the structured signal, P1).
+        tag_boost = max((_IMPACT_TAG_PRIORITY_BOOST[t] for t in tags
+                         if t in _IMPACT_TAG_PRIORITY_BOOST), default=0.0)
+        priority += tag_boost
+        # Anomaly escalation (P2).
+        is_anomaly = bool(event.get("anomaly"))
+        anomaly_score = _f(event.get("anomaly_score", 0.0), 0.0)
+        if is_anomaly:
+            priority += _ANOMALY_PRIORITY_BOOST
+        resumable = category != "emergency" and not (
+            is_anomaly and anomaly_score >= _ANOMALY_NON_RESUMABLE_SCORE
+        )
 
         desc = str(event.get("description", event.get("name", ""))).strip()
         reason = f"{desc}——{act}" if desc else act
@@ -799,10 +849,82 @@ def generate_environment_interrupts(
             reason=reason,
             priority=_clip(priority, 0.10, 0.95),
             duration_minutes=dur,
-            resumable=category != "emergency",
-            mood_delta=-severity * 0.08 if category in ("emergency", "weather") else 0.0,
+            resumable=resumable,
+            mood_delta=-severity * 0.08 if category in ("emergency", "weather") or is_anomaly else 0.0,
             extra={"event_type": category, "sub_type": sub_type,
-                   "severity": round(severity, 2)},
+                   "severity": round(severity, 2), "impact_tags": tags,
+                   "anomaly": is_anomaly, "anomaly_score": round(anomaly_score, 2)},
+        ))
+
+    return candidates
+
+
+# =========================================================================
+# 4a. Local physical reactions (P1)
+# =========================================================================
+
+def generate_local_physical_interrupts(
+    agent: Dict,
+    local_physical: Optional[Dict] = None,
+    current_activity: str = "",
+) -> List[InterruptCandidate]:
+    """Turn the agent's *local* physical state into interrupt candidates.
+
+    Consumes the per-agent snapshot produced by
+    ``gaworld.world.local_physical`` (crowding / opening hours). Returns
+    an empty list when no snapshot is available or the agent is moving,
+    so the feature is naturally gated by whether P0 populated the data.
+    """
+    state = local_physical if isinstance(local_physical, dict) else (
+        agent.get("_local_physical") if isinstance(agent, dict) else None
+    )
+    if not isinstance(state, dict) or state.get("in_transit"):
+        return []
+
+    location = str(state.get("location") or "").strip()
+    if not location:
+        return []
+
+    candidates: List[InterruptCandidate] = []
+
+    # Venue closed: you cannot do the intended thing here → must relocate.
+    if state.get("is_open", True) is False:
+        candidates.append(InterruptCandidate(
+            source="environment",
+            kind="venue_closed",
+            activity="改去其他开门的地方",
+            reason=f"{location}此刻不在营业时间，得换个地方",
+            priority=0.55,
+            duration_minutes=20,
+            resumable=False,
+            mood_delta=-0.03,
+            extra={"event_type": "local_physical", "sub_type": "venue_closed",
+                   "location": location},
+        ))
+
+    # Overcrowding: discomfort scales with how packed it is. An emergent
+    # crowd *surge* (P2 anomaly) escalates priority and forces relocation.
+    crowding = str(state.get("crowding") or "")
+    ratio = _f(state.get("occupancy_ratio", 0.0), 0.0)
+    is_anomaly = bool(state.get("anomaly"))
+    if crowding == "非常拥挤" or is_anomaly:
+        candidates.append(InterruptCandidate(
+            source="environment",
+            kind="crowd_anomaly" if is_anomaly else "crowd_packed",
+            activity="尽快离开拥挤区域" if is_anomaly else "避开人群换个地方",
+            reason=(
+                f"{location}人流突然激增，想尽快离开" if is_anomaly
+                else f"{location}此刻非常拥挤，想换个清静点的地方"
+            ),
+            priority=_clip((0.55 if is_anomaly else 0.30) + ratio * 0.25,
+                           0.20, 0.80 if is_anomaly else 0.60),
+            duration_minutes=20,
+            resumable=not is_anomaly,
+            mood_delta=-0.07 if is_anomaly else -0.04,
+            extra={"event_type": "local_physical",
+                   "sub_type": "crowd_anomaly" if is_anomaly else "crowd_packed",
+                   "location": location, "occupancy_ratio": round(ratio, 2),
+                   "anomaly": is_anomaly},
         ))
 
     return candidates
@@ -1010,6 +1132,15 @@ def evaluate_step_dynamics(
         candidates.extend(cascades)
         for cc in cascades:
             cascade_events.append(cc.to_dict())
+
+    # --- 1c. Local physical reactions (P1): crowding / venue closed.
+    #     Reads the per-agent snapshot stored on the agent by P0; absent
+    #     that snapshot this yields nothing, so it's self-gating.
+    candidates.extend(
+        generate_local_physical_interrupts(
+            agent, agent.get("_local_physical"), current_activity=scheduled_activity,
+        )
+    )
 
     # --- 2. Social chain (co-location encounters) ---
     co_located = detect_co_located_agents(agent, all_agents, agents_by_id)

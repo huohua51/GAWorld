@@ -55,6 +55,17 @@ from gaworld.world.city_map import (
     area_price_level,
     calc_transport_cost,
     is_rush_hour,
+    set_sim_time,
+)
+from gaworld.world.local_physical import (
+    local_physical_state,
+    physical_state_text,
+    update_occupancy_from_agents,
+)
+from gaworld.memory.spatial_preferences import (
+    decay_preferences as decay_env_preferences,
+    record_anomaly_experience,
+    redirect_for_aversion,
 )
 from gaworld.distributed.comm import (
     DistributedRelayClient,
@@ -77,11 +88,13 @@ from gaworld.apps.visualizer import (
 )
 from gaworld.memory.experience import (
     append_agent_episode,
+    load_agent_env_preferences,
     load_agent_episodes,
     load_agent_habits,
     load_agent_intentions,
     load_agent_relationships,
     prune_and_decay_episodes,
+    save_agent_env_preferences,
     save_agent_habits,
     save_agent_intentions,
     save_agent_relationships,
@@ -589,6 +602,35 @@ INFO_SEEK_CONFIG = NEWS_CONFIG.get("info_seek", NEWS_CONFIG.get("curiosity_searc
 INFO_SEEK_ENABLED = bool(INFO_SEEK_CONFIG.get("enabled", True))
 INFO_SEEK_BASE_CHANCE = float(INFO_SEEK_CONFIG.get("base_daily_chance", 0.55))
 INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_CONFIG.get("max_searches_per_day", 3)))
+LOCAL_PHYSICAL_CONFIG = CONFIG.get("local_physical", {}) if isinstance(CONFIG, dict) else {}
+LOCAL_PHYSICAL_ENABLED = bool(LOCAL_PHYSICAL_CONFIG.get("enabled", True))
+LOCAL_PHYSICAL_INJECT = bool(LOCAL_PHYSICAL_CONFIG.get("inject_into_perception", True))
+LOCAL_PHYSICAL_BUSY_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_busy_ratio", 0.6))
+LOCAL_PHYSICAL_PACKED_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_packed_ratio", 0.9))
+LOCAL_PHYSICAL_ANOMALY_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_anomaly_ratio", 0.9))
+LOCAL_PHYSICAL_ANOMALY_JUMP = float(LOCAL_PHYSICAL_CONFIG.get("crowd_anomaly_jump", 0.25))
+REPLAN_CONFIG = CONFIG.get("replan", {}) if isinstance(CONFIG, dict) else {}
+REPLAN_ENABLED = bool(REPLAN_CONFIG.get("enabled", True))
+REPLAN_WINDOW_MINUTES = max(1, int(REPLAN_CONFIG.get("window_minutes", 120)))
+REPLAN_DEFER_GAP = max(1, int(REPLAN_CONFIG.get("defer_gap_minutes", 30)))
+SPATIAL_PREF_CONFIG = CONFIG.get("spatial_preferences", {}) if isinstance(CONFIG, dict) else {}
+SPATIAL_PREF_ENABLED = bool(SPATIAL_PREF_CONFIG.get("enabled", True))
+SPATIAL_PREF_WEIGHT = float(SPATIAL_PREF_CONFIG.get("anomaly_weight", 1.0))
+SPATIAL_PREF_THRESHOLD = float(SPATIAL_PREF_CONFIG.get("avoid_threshold", 1.5))
+SPATIAL_PREF_HALF_LIFE = float(SPATIAL_PREF_CONFIG.get("half_life_days", 7.0))
+
+
+def _env_weather_state(env_system) -> str:
+    """Best-effort read of the environment's current weather label."""
+    try:
+        state = env_system.export_runtime_state()
+        if isinstance(state, dict):
+            return str(state.get("weather_state", "") or "")
+    except Exception:  # noqa: BLE001 — remote client may lack this method
+        pass
+    return str(getattr(env_system, "_weather_state", "") or "")
+
+
 DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
 DAILY_PLAN_ANCHOR_MINUTES = max(1, int(DAILY_PLANNING_CONFIG.get("anchor_minutes", 30)))
 DAILY_PLAN_RANDOM_DELAY_MAX_MINUTES = max(0, int(DAILY_PLANNING_CONFIG.get("random_delay_max_minutes", 10)))
@@ -1281,6 +1323,7 @@ from gaworld.sim._schedule import (  # noqa: E402
     _fallback_reflection_struct,
     format_plan_text,
     format_reflection_text,
+    replan_affected_interval,
 )
 
 
@@ -2552,6 +2595,10 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
             seed_vector_db_from_memory(agent)
+            # P4: learned location-aversion persists across runs (independent
+            # of human-realism, so loaded outside that block).
+            if SPATIAL_PREF_ENABLED:
+                agent["env_preferences"] = load_agent_env_preferences(agent["id"])
             if HUMAN_REALISM_ENABLED:
                 agent["episodes"] = load_agent_episodes(agent["id"])
                 agent["habits"] = load_agent_habits(agent["id"])
@@ -2953,6 +3000,11 @@ def run_simulation():
             # Reset daily travel cost counter
             if "locations" in agent:
                 agent["locations"]["daily_travel_cost"] = 0.0
+            # P4: decay learned location-aversion by recency at each day start.
+            if SPATIAL_PREF_ENABLED:
+                decay_env_preferences(agent, day, half_life_days=SPATIAL_PREF_HALF_LIFE)
+                if STATEFUL:
+                    save_agent_env_preferences(agent["id"], agent.get("env_preferences", {}))
         hook_bus.emit(
             "on_day_start",
             day=day,
@@ -2978,6 +3030,11 @@ def run_simulation():
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
+            # P0: refresh the city map's physical state so agents can perceive
+            # their actual surroundings (crowding / opening hours) this tick.
+            if LOCAL_PHYSICAL_ENABLED and city_map:
+                set_sim_time(city_map, time_str)
+                update_occupancy_from_agents(city_map, agents)
             frame_steps = []
             if due_life_events:
                 append_jsonl(
@@ -3166,6 +3223,31 @@ def run_simulation():
                             else f"平台干预推荐：{feed_context}"
                         )
                         step_ctx["intervention_feed"] = intervention_feed
+                # P0: localized physical snapshot of the agent's *current*
+                # surroundings (crowding / open-closed / local weather).
+                # Stored on the agent so later behaviour stages can read it.
+                if LOCAL_PHYSICAL_ENABLED:
+                    local_physical = local_physical_state(
+                        city_map,
+                        agent,
+                        time_str=time_str,
+                        weather_state=_env_weather_state(env_system),
+                        busy_ratio=LOCAL_PHYSICAL_BUSY_RATIO,
+                        packed_ratio=LOCAL_PHYSICAL_PACKED_RATIO,
+                        anomaly_ratio=LOCAL_PHYSICAL_ANOMALY_RATIO,
+                        anomaly_jump=LOCAL_PHYSICAL_ANOMALY_JUMP,
+                    )
+                    agent["_local_physical"] = local_physical
+                    if LOCAL_PHYSICAL_INJECT:
+                        _lp_text = physical_state_text(local_physical)
+                        if _lp_text:
+                            step_env_context = (
+                                f"{step_env_context}\n身边的物理环境：{_lp_text}"
+                                if step_env_context
+                                else f"身边的物理环境：{_lp_text}"
+                            )
+                else:
+                    agent["_local_physical"] = {}
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
                 # --- Dynamic behaviour system (replaces old transient thought) ---
@@ -3290,7 +3372,64 @@ def run_simulation():
                     if updated and STATEFUL:
                         save_agent_actions(agent_id, actions[agent_id])
 
+                # P3: a *persistent* anomaly (non-resumable physical / emergency
+                # reaction) makes the disrupted activity unworkable for a while —
+                # defer its upcoming slots rather than only patching this step.
+                if REPLAN_ENABLED and changed and isinstance(_dyn_result, dict):
+                    _itr = _dyn_result.get("interrupt") or {}
+                    _extra = _itr.get("extra", {}) if isinstance(_itr, dict) else {}
+                    _persistent_anomaly = (
+                        isinstance(_itr, dict)
+                        and not _itr.get("resumable", True)
+                        and (bool(_extra.get("anomaly"))
+                             or _extra.get("event_type") in ("emergency", "local_physical"))
+                    )
+                    # P4: learn to avoid a *place* only for location-bound
+                    # anomalies (crowd surge / closed venue) — never for
+                    # city-wide macro anomalies, which aren't a place's fault.
+                    if (SPATIAL_PREF_ENABLED and _persistent_anomaly
+                            and _extra.get("event_type") == "local_physical"
+                            and _extra.get("location")):
+                        record_anomaly_experience(
+                            agent,
+                            location=str(_extra.get("location")),
+                            day=day,
+                            weight=SPATIAL_PREF_WEIGHT,
+                            reason=str(_itr.get("kind", "")),
+                            time_str=time_str,
+                        )
+                        if STATEFUL:
+                            save_agent_env_preferences(agent_id, agent.get("env_preferences", {}))
+                    _cur_min = _time_str_to_minutes(time_str)
+                    if _persistent_anomaly and scheduled_activity and _cur_min is not None:
+                        _sched_tuples = [
+                            (s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else tuple(s)
+                            for s in schedule_map.get(agent_id, [])
+                        ]
+                        _new_sched, _replan_changes = replan_affected_interval(
+                            _sched_tuples,
+                            time_str,
+                            _minutes_to_time_str(min(24 * 60 - 1, _cur_min + REPLAN_WINDOW_MINUTES)),
+                            is_affected=lambda t, a, _d=scheduled_activity: a == _d,
+                            defer=True,
+                            defer_gap_minutes=REPLAN_DEFER_GAP,
+                        )
+                        if _replan_changes:
+                            schedule_map[agent_id] = _new_sched
+                            _replan_log = (
+                                f"[Replan {time_str}] 因突发异常重排日程，"
+                                f"顺延 {len(_replan_changes)} 项（{scheduled_activity}）\n"
+                            )
+                            daily_logs[agent_id] += _replan_log
+                            append_agent_log(agent, _replan_log)
+
                 desired_location = resolve_location(agent, activity, time_str, city_map)
+                # P4: bias away from places the agent has learned to avoid.
+                if SPATIAL_PREF_ENABLED and desired_location:
+                    desired_location, _redirected = redirect_for_aversion(
+                        agent, city_map, desired_location, time_str,
+                        threshold=SPATIAL_PREF_THRESHOLD,
+                    )
                 movement = move_agent(
                     agent,
                     desired_location=desired_location,

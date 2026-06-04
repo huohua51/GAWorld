@@ -33,6 +33,10 @@ def _relationships_path(agent_id, cfg=None):
     return os.path.join(_memory_dir(cfg), f"agent_{agent_id}_relationships.json")
 
 
+def _env_preferences_path(agent_id, cfg=None):
+    return os.path.join(_memory_dir(cfg), f"agent_{agent_id}_env_preferences.json")
+
+
 def _load_json_dict(path):
     if not os.path.exists(path):
         return {}
@@ -164,3 +168,15 @@ def save_agent_relationships(agent_id, relationships, cfg=None):
     if not isinstance(relationships, dict):
         relationships = {}
     _save_json_dict(_relationships_path(agent_id, cfg=cfg), relationships)
+
+
+def load_agent_env_preferences(agent_id, cfg=None):
+    """Load the agent's learned location-aversion preferences (P4)."""
+    return _load_json_dict(_env_preferences_path(agent_id, cfg=cfg))
+
+
+def save_agent_env_preferences(agent_id, env_preferences, cfg=None):
+    """Persist the agent's learned location-aversion preferences (P4)."""
+    if not isinstance(env_preferences, dict):
+        env_preferences = {}
+    _save_json_dict(_env_preferences_path(agent_id, cfg=cfg), env_preferences)
