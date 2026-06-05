@@ -1,0 +1,2 @@
+day,agent_id,income,expense,net,balance,checking,savings,investment,housing_fund,wealth_drive,hourly_income,econ_security,engel_coefficient,macro_phase
+1,1,98.7805,257.3459,-158.5654,27736.07,6536.16,15063.09,6136.82,14931.06,0.643,48.12,0.6814,0.38,expansion

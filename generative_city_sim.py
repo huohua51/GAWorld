@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 import time
 import random
@@ -20,6 +21,9 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from config import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
 from gaworld.logging_setup import get_logger, LOG_MODE
+from gaworld.personal_twin.state import apply_daily_twin_update, build_initial_twin_state
+from gaworld.personal_twin.what_if import write_personal_what_if_report as _write_personal_what_if_report
+from gaworld.work.ab_fork_engine import ABForkEngine, get_engine
 
 _LOG = get_logger("gaworld.sim")
 
@@ -135,6 +139,7 @@ from experience_store import (
     save_agent_relationships,
 )
 from human_realism import (
+    apply_relationship_decay,
     build_context_key,
     build_daily_intentions,
     compute_episode_salience,
@@ -167,6 +172,7 @@ from memory_store import (
     load_agent_location_action_bias,
     load_agent_memory,
     load_agent_schedule,
+    load_agent_twin_state,
     load_recent_actions,
     load_recent_log_blocks,
     load_sim_state,
@@ -177,6 +183,7 @@ from memory_store import (
     save_agent_locations,
     save_agent_memory,
     save_agent_schedule,
+    save_agent_twin_state,
     save_sim_state,
     seed_vector_db_from_memory,
     vector_db_add_entry,
@@ -1391,6 +1398,8 @@ def _apply_life_event_state_effects(agent, events):
 _BASE_AGENT_IDS = _coerce_positive_int_list(CONFIG.get("agent_ids", []))
 DISTRIBUTED_CONFIG = CONFIG.get("distributed", {})
 DISTRIBUTED_ENABLED = bool(DISTRIBUTED_CONFIG.get("enabled", False))
+PERSONAL_TWIN_CONFIG = CONFIG.get("personal_twin", {})
+PERSONAL_TWIN_ENABLED = bool(PERSONAL_TWIN_CONFIG.get("enabled", False))
 _DISTRIBUTED_LOCAL_AGENT_IDS = _coerce_positive_int_list(
     DISTRIBUTED_CONFIG.get("local_agent_ids", [])
 )
@@ -1428,6 +1437,7 @@ VISUALIZATION_FLUSH_EVERY_FRAMES = max(
 INTERVENTION_CONFIG = CONFIG.get("intervention", {})
 INTERVENTION_ENABLED = bool(INTERVENTION_CONFIG.get("enabled", False))
 INTERVENTION_OUTPUT_DIR = INTERVENTION_CONFIG.get("output_dir", "output/intervention")
+OPENCLAW_CONFIG = CONFIG.get("openclaw", {})
 SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
@@ -1802,6 +1812,19 @@ def _cli_create_agent_from_social(url=None, file_path=None, text=None, name=None
 def build_agent(agent_id, df, city_map=None):
     row = df[df["id"] == agent_id].iloc[0]
     text = parse_profile(load_profile_from_md(agent_id))
+    public_profile = {
+        "summary": _compact_text(text.get("daily_life") or text.get("personality", ""), max_chars=180),
+        "status": "",
+        "focus": _compact_text(text.get("job", ""), max_chars=64),
+        "tags": [
+            value for value in (
+                _compact_text(text.get("job", ""), max_chars=24),
+                _compact_text(text.get("personality", ""), max_chars=24),
+                _compact_text(text.get("values", ""), max_chars=24),
+            )
+            if value
+        ][:3],
+    }
     agent = {
         "id": agent_id,
         **text,
@@ -1828,7 +1851,9 @@ def build_agent(agent_id, df, city_map=None):
             "intervention_reward": float(row.get("intervention_reward", 0.0)),
         },
         "memory": [],
-        "social_neighbors": []
+        "social_neighbors": [],
+        "public_profile": public_profile,
+        "twin_status": build_initial_twin_state({"public_profile": public_profile}, PERSONAL_TWIN_CONFIG),
     }
     if city_map is None:
         city_map = load_city_map(MAP_PATH)
@@ -2784,6 +2809,103 @@ def _activity_commitment_level(activity):
     return "low"
 
 
+def _compute_relationship_delta(before, after):
+    """Compute direction, magnitude, and stability of relationship changes."""
+    if not before and not after:
+        return {"trust_change": 0.0, "closeness_change": 0.0, "direction": "stable", "stability_score": 1.0, "changed_partners": []}
+
+    all_partners = set()
+    if before:
+        all_partners.update(str(k) for k in before.keys())
+    if after:
+        all_partners.update(str(k) for k in after.keys())
+
+    trust_delta_sum = 0.0
+    closeness_delta_sum = 0.0
+    changed = []
+    total = len(all_partners) or 1
+
+    for pid in all_partners:
+        b = before.get(str(pid), {}) if before else {}
+        a = after.get(str(pid), {}) if after else {}
+        b_trust = float(b.get("trust", 0.5) or 0.5)
+        a_trust = float(a.get("trust", 0.5) or 0.5)
+        b_close = float(b.get("closeness", 0.5) or 0.5)
+        a_close = float(a.get("closeness", 0.5) or 0.5)
+        trust_delta_sum += a_trust - b_trust
+        closeness_delta_sum += a_close - b_close
+        if abs(a_trust - b_trust) >= 0.008 or abs(a_close - b_close) >= 0.008:
+            changed.append(str(pid))
+
+    n = len(all_partners) or 1
+    trust_change = trust_delta_sum / n
+    closeness_change = closeness_delta_sum / n
+    direction = "stable"
+    if trust_change >= 0.008 or closeness_change >= 0.008:
+        direction = "improving"
+    elif trust_change <= -0.008 or closeness_change <= -0.008:
+        direction = "deteriorating"
+    stability_score = 1.0 - (len(changed) / n)
+
+    return {
+        "trust_change": round(trust_change, 4),
+        "closeness_change": round(closeness_change, 4),
+        "direction": direction,
+        "stability_score": round(stability_score, 4),
+        "changed_partners": changed,
+    }
+
+
+def _save_daily_network_snapshot(agents, variant_label="", day=1):
+    """Save daily relationship network snapshot for A/B analysis."""
+    import json
+    from collections import defaultdict
+
+    variant_dir = os.environ.get("GAWORLD_VARIANT_DIR", "")
+    if not variant_dir:
+        return
+    snap_dir = os.path.join(variant_dir, "network_snapshots")
+    os.makedirs(snap_dir, exist_ok=True)
+
+    nodes = []
+    edges = []
+    adj = defaultdict(list)
+    for a in agents:
+        aid = a["id"]
+        rels = a.get("relationships", {})
+        nodes.append({
+            "id": aid,
+            "name": a.get("name", str(aid)),
+            "trust": float(np.mean([float(r.get("trust", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "closeness": float(np.mean([float(r.get("closeness", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "relationship_count": len(rels),
+        })
+        for pid, rel in rels.items():
+            if int(pid) > aid:
+                edges.append({
+                    "source": aid,
+                    "target": int(pid),
+                    "trust": float(rel.get("trust", 0.5)),
+                    "closeness": float(rel.get("closeness", 0.5)),
+                    "friction": float(rel.get("friction", 0.5)),
+                })
+                adj[aid].append(int(pid))
+                adj[int(pid)].append(aid)
+
+    snapshot = {
+        "day": day,
+        "variant": variant_label,
+        "nodes": nodes,
+        "edges": edges,
+        "degree_distribution": {str(k): len(v) for k, v in adj.items()},
+    }
+
+    snap_path = os.path.join(snap_dir, f"day_{day}.json")
+    with open(snap_path, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+    print(f"  [snapshot] Network saved: {snap_path}")
+
+
 def _commitment_weight(level):
     behavior_cfg = HUMAN_REALISM_CONFIG.get("behavior", {}) if HUMAN_REALISM_ENABLED else {}
     weights = behavior_cfg.get("commitment_weights", {}) if isinstance(behavior_cfg, dict) else {}
@@ -2900,6 +3022,113 @@ def _social_relationship_snapshot(agent):
         "friction": float(np.mean([float(item.get("friction", 0.5)) for item in selected])),
         "support": float(np.mean([float(item.get("closeness", 0.5)) for item in selected])),
     }
+
+
+def _compute_relationship_delta(before, after):
+    """Compute direction, magnitude, and stability of relationship changes.
+
+    Returns dict with:
+      - trust_change: net change in trust (-1 to 1 scale, roughly)
+      - closeness_change: net change in closeness (-1 to 1)
+      - direction: "improving" | "deteriorating" | "stable"
+      - stability_score: 0-1, fraction of relationships that did NOT change
+      - changed_partners: list of partner IDs whose relationship changed
+    """
+    if not before and not after:
+        return {"trust_change": 0.0, "closeness_change": 0.0, "direction": "stable", "stability_score": 1.0, "changed_partners": []}
+
+    all_partners = set()
+    if before:
+        all_partners.update(str(k) for k in before.keys())
+    if after:
+        all_partners.update(str(k) for k in after.keys())
+
+    trust_delta_sum = 0.0
+    closeness_delta_sum = 0.0
+    changed = []
+    total = len(all_partners) or 1
+
+    for pid in all_partners:
+        b = before.get(str(pid), {}) if before else {}
+        a = after.get(str(pid), {}) if after else {}
+        b_trust = float(b.get("trust", 0.5) or 0.5)
+        a_trust = float(a.get("trust", 0.5) or 0.5)
+        b_close = float(b.get("closeness", 0.5) or 0.5)
+        a_close = float(a.get("closeness", 0.5) or 0.5)
+        trust_delta_sum += a_trust - b_trust
+        closeness_delta_sum += a_close - b_close
+        if abs(a_trust - b_trust) >= 0.008 or abs(a_close - b_close) >= 0.008:
+            changed.append(str(pid))
+
+    # Per-partner average delta (scale to roughly +/- 1)
+    n = len(all_partners) or 1
+    trust_change = trust_delta_sum / n
+    closeness_change = closeness_delta_sum / n
+    direction = "stable"
+    if trust_change >= 0.008 or closeness_change >= 0.008:
+        direction = "improving"
+    elif trust_change <= -0.008 or closeness_change <= -0.008:
+        direction = "deteriorating"
+    stability_score = 1.0 - (len(changed) / n)
+
+    return {
+        "trust_change": round(trust_change, 4),
+        "closeness_change": round(closeness_change, 4),
+        "direction": direction,
+        "stability_score": round(stability_score, 4),
+        "changed_partners": changed,
+    }
+
+
+def _save_daily_network_snapshot(agents, variant_label="", day=1):
+    """Save daily relationship network snapshot for A/B analysis."""
+    import json
+    from collections import defaultdict
+
+    variant_dir = os.environ.get("GAWORLD_VARIANT_DIR", "")
+    if not variant_dir:
+        return
+    snap_dir = os.path.join(variant_dir, "network_snapshots")
+    os.makedirs(snap_dir, exist_ok=True)
+
+    # Build adjacency + attributes
+    nodes = []
+    edges = []
+    adj = defaultdict(list)
+    for a in agents:
+        aid = a["id"]
+        rels = a.get("relationships", {})
+        nodes.append({
+            "id": aid,
+            "name": a.get("name", str(aid)),
+            "trust": float(np.mean([float(r.get("trust", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "closeness": float(np.mean([float(r.get("closeness", 0.5)) for r in rels.values()])) if rels else 0.5,
+            "relationship_count": len(rels),
+        })
+        for pid, rel in rels.items():
+            if int(pid) > aid:  # deduplicate edges
+                edges.append({
+                    "source": aid,
+                    "target": int(pid),
+                    "trust": float(rel.get("trust", 0.5)),
+                    "closeness": float(rel.get("closeness", 0.5)),
+                    "friction": float(rel.get("friction", 0.5)),
+                })
+                adj[aid].append(int(pid))
+                adj[int(pid)].append(aid)
+
+    snapshot = {
+        "day": day,
+        "variant": variant_label,
+        "nodes": nodes,
+        "edges": edges,
+        "degree_distribution": {str(k): len(v) for k, v in adj.items()},
+    }
+
+    snap_path = os.path.join(snap_dir, f"day_{day}.json")
+    with open(snap_path, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+    print(f"  [snapshot] Network saved: {snap_path}")
 
 
 def _current_emotion_text(agent):
@@ -4838,7 +5067,7 @@ def perception(agent, time_str, social_context, env_context, policy_event):
 """
     return call_llm(prompt, task="perception", agent_id=agent["id"])
 
-def planning(agent, perception_text, recall_context=None, decision_refs=None):
+def planning(agent, perception_text, recall_context=None, decision_refs=None, timestep=0):
     if not isinstance(recall_context, dict):
         recall_context = evoke_memory(agent, "planning", perception_text)
     memory_hint = recall_context.get("hint", "暂无重要经验")
@@ -4885,6 +5114,26 @@ def planning(agent, perception_text, recall_context=None, decision_refs=None):
         ),
     }
     persona_hint = _AVATAR_PERSONA.get(agent.get("id", -1), "")
+    refs["external_hint"] = external_hint
+
+    # Planning Fork A/B Experiment: check if we should fork this call
+    ab_config = CONFIG.get("ab_experiment", {})
+    if ab_config.get("enabled"):
+        engine = get_engine(ab_config)
+        if engine.should_fork():
+            comparison = engine.plan_with_fork(
+                agent=agent,
+                perception_text=perception_text,
+                recall_context=recall_context,
+                decision_refs=refs,
+                intent_hint=intent_hint,
+                optional_text=optional_text,
+                history_hint=history_hint,
+                call_llm_fn=call_llm,
+                timestep=timestep,
+            )
+            if comparison is not None:
+                return comparison.variant_a.parsed or _fallback_plan_struct(comparison.variant_a.raw_response)
     prompt = f"""
 你是{agent['name']}。{(" " + persona_hint) if persona_hint else ""}
 你的感知是：{perception_text}
@@ -5186,7 +5435,7 @@ def _daily_diary_path(agent_id, day, output_dir=None):
     return os.path.join(base_dir, f"agent_{int(agent_id)}", f"day_{int(day):03d}.md")
 
 
-def _top_day_episode_lines(agent, day, max_items=4):
+def _top_day_episode_lines(agent, day, max_items=8, clean=True):
     episodes = [
         ep for ep in agent.get("episodes", [])
         if int(ep.get("day", ep.get("created_at_day", 0)) or 0) == int(day)
@@ -5198,10 +5447,15 @@ def _top_day_episode_lines(agent, day, max_items=4):
     )[:max(1, int(max_items))]
     lines = []
     for ep in episodes:
-        piece = (
-            f"{ep.get('time', '')}，{ep.get('final_activity', '')}，做了{ep.get('action', '')}。"
-            f" 当时觉得：{ep.get('reflection', '')}"
-        ).strip()
+        if clean:
+            piece = (
+                f"{ep.get('time', '')}，{ep.get('final_activity', '')}，{ep.get('action', '')}。"
+            ).strip()
+        else:
+            piece = (
+                f"{ep.get('time', '')}，{ep.get('final_activity', '')}，做了{ep.get('action', '')}。"
+                f" 当时觉得：{ep.get('reflection', '')}"
+            ).strip()
         lines.append(_compact_text(piece, max_chars=140))
     return lines
 
@@ -5214,9 +5468,9 @@ def _fallback_daily_diary(agent, day, day_context=None, day_memory="", consolida
             for key in ("sim_date", "weekday_zh", "day_type_zh")
             if str(day_context.get(key, "")).strip()
         ).strip()
-    episode_lines = _top_day_episode_lines(agent, day, max_items=3)
+    episode_lines = _top_day_episode_lines(agent, day, max_items=3, clean=True)
     major = "今天整体比较平稳。" if not episode_lines else "；".join(episode_lines)
-    feelings = _compact_text(consolidation_text or day_memory or "今天的起伏让我更清楚自己在意什么。", max_chars=120)
+    feelings = _compact_text(day_memory or "今天的起伏让我更清楚自己在意什么。", max_chars=120)
     plan_text = intention_text(intentions or agent.get("intentions", {}))
     return (
         f"# {agent.get('name', 'Agent')} 的 Day {int(day)} 日记\n\n"
@@ -5231,7 +5485,7 @@ def _fallback_daily_diary(agent, day, day_context=None, day_memory="", consolida
 
 
 def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", consolidation_text="", intentions=None):
-    episode_lines = _top_day_episode_lines(agent, day, max_items=4)
+    episode_lines = _top_day_episode_lines(agent, day, max_items=8, clean=True)
     intent_hint = intention_text(intentions or agent.get("intentions", {}))
     diary_date = ""
     if isinstance(day_context, dict):
@@ -5240,33 +5494,67 @@ def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", cons
             for key in ("sim_date", "weekday_zh", "day_type_zh")
             if str(day_context.get(key, "")).strip()
         ).strip()
-    log_excerpt = _compact_text(logs, max_chars=1600)
+    log_excerpt = _compact_text(logs, max_chars=1200)
     prompt = f"""
-你是{agent.get('name', '某位居民')}，请以第一人称写一篇日记。
+你是{agent.get('name', '某位居民')}。今天是 Day {int(day)} {diary_date}，写一篇日记。
 
-日期：Day {int(day)} {diary_date}
-今天的重要经历：
+今天每个时段的重要经历：
 {json.dumps(episode_lines, ensure_ascii=False, indent=2)}
 
-今天的详细日志摘录：
+详细日志：
 {log_excerpt}
 
-今天形成的长期记忆：{day_memory}
-今天的经验整合：{consolidation_text}
-明天的行为意图：{intent_hint}
+全天总结：{day_memory}
 
-要求：
-1) 输出 markdown。
-2) 必须包含且只包含这三个二级标题：`## 今天主要发生的事情`、`## 今天的感想`、`## 明天的计划`。
-3) 语气像这个 agent 自己写的日记，聚焦今天最重要的几件事、真实感受、以及明天的打算。
-4) 不要写成流水账，也不要输出 JSON。
+明天打算：{intent_hint}
+
+写一篇完整的日记，包含三个部分：
+
+## 今天主要发生的事情
+（按时间线写出今天各个时段的具体事件，每个事件用一两句话描述。尽量覆盖多个时段，不要只写一两件事。）
+
+## 今天的感想
+（写今天最真实的感受、收获或反思）
+
+## 明天的计划
+（具体的打算）
+
+注意：用第一人称，写出具体事件细节，不要只写概述。
 """
     try:
         response = call_llm(prompt, task="daily_diary", agent_id=agent["id"]).strip()
     except (requests.RequestException, ValueError, RuntimeError) as exc:
         _LOG.warning("daily_diary LLM call failed for agent %s: %s", agent.get("id"), exc)
         response = ""
-    if not response or "## 今天主要发生的事情" not in response or "## 今天的感想" not in response or "## 明天的计划" not in response:
+    # Detect prompt echo: when the LLM returns the instruction prompt itself
+    # rather than the intended diary content (indicates model confusion or
+    # repeated context). Also require substantive content after headings.
+    if (
+        not response
+        or "The user asks" in response
+        or "The user is asking" in response
+        or "Thus we need" in response
+        or "We need to produce" in response
+        or "请以第一人称写一篇日记" in response and "你是" in response
+        or "user wants" in response and ("diary entry" in response or "日记" in response)
+        or "user wants the assistant" in response
+        or "output a JSON" in response.lower()
+        or "## 今天主要发生的事情" not in response
+        or "## 今天的感想" not in response
+        or "## 明天的计划" not in response
+    ):
+        return _fallback_daily_diary(
+            agent,
+            day,
+            day_context=day_context,
+            day_memory=day_memory,
+            consolidation_text=consolidation_text,
+            intentions=intentions,
+        )
+    # Require meaningful content length (not just headings with no body).
+    body_only = re.sub(r"^#{1,2}\s*[^ ]*.*$", "", response, flags=re.MULTILINE).strip()
+    if len(body_only) < 30:
+        _LOG.warning("daily_diary response too short for agent %s (%d chars), using fallback", agent.get("id"), len(body_only))
         return _fallback_daily_diary(
             agent,
             day,
@@ -5395,6 +5683,15 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
             seed_vector_db_from_memory(agent)
+            saved_twin_state = load_agent_twin_state(agent["id"]) if PERSONAL_TWIN_ENABLED else {}
+            if saved_twin_state:
+                agent["twin_status"] = saved_twin_state
+                if isinstance(saved_twin_state.get("public_summary"), str) and saved_twin_state.get("public_summary"):
+                    agent["public_profile"]["summary"] = saved_twin_state.get("public_summary", "")
+                if isinstance(saved_twin_state.get("current_public_status"), str):
+                    agent["public_profile"]["status"] = saved_twin_state.get("current_public_status", "")
+                if isinstance(saved_twin_state.get("tomorrow_focus"), str) and saved_twin_state.get("tomorrow_focus"):
+                    agent["public_profile"]["focus"] = saved_twin_state.get("tomorrow_focus", "")
             if HUMAN_REALISM_ENABLED:
                 agent["episodes"] = load_agent_episodes(agent["id"])
                 agent["habits"] = load_agent_habits(agent["id"])
@@ -5413,6 +5710,8 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = []
             reset_agent_memory(agent["id"])
+            if PERSONAL_TWIN_ENABLED:
+                agent["twin_status"] = build_initial_twin_state(agent, PERSONAL_TWIN_CONFIG)
             if HUMAN_REALISM_ENABLED:
                 agent["episodes"] = []
                 agent["habits"] = {}
@@ -5429,7 +5728,12 @@ def run_simulation():
                 agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
-    distributed_client = DistributedRelayClient(DISTRIBUTED_CONFIG)
+    distributed_client = DistributedRelayClient(
+        {
+            **dict(DISTRIBUTED_CONFIG or {}),
+            "personal_twin": PERSONAL_TWIN_CONFIG,
+        }
+    )
     if distributed_client.enabled:
         registered = distributed_client.register_agents(agents)
         directory = distributed_client.refresh_directory()
@@ -5816,6 +6120,12 @@ def run_simulation():
 
             distributed_inbox = {}
             if distributed_client.enabled:
+                if bool(OPENCLAW_CONFIG.get("push_tick_to_relay", True)):
+                    distributed_client.update_tick(
+                        day=day,
+                        time_str=time_str,
+                        background=f"{background_text} {env_context}".strip(),
+                    )
                 distributed_inbox = distributed_client.poll_messages(
                     local_agent_ids=[a["id"] for a in agents],
                     day=day,
@@ -6280,13 +6590,30 @@ def run_simulation():
                                 sim_time=time_str,
                             )
                 if HUMAN_REALISM_ENABLED:
+                    # Capture state before relationship updates
+                    relationships_before = dict(agent.get("relationships", {}))
                     partners = list(agent.get("_recent_social_partners", []))
+                    # Co-location encounter: add agents at the same location as potential social partners
+                    if resolved_location:
+                        colocated = [
+                            other_id for other_id, other in agents_by_id.items()
+                            if other_id != agent_id
+                            and other.get("locations", {}).get("current") == resolved_location
+                        ]
+                        for pid in colocated:
+                            if pid not in partners:
+                                partners.append(pid)
                     for sender_id in extract_sender_agent_ids(inbox_messages):
                         if sender_id not in partners:
                             partners.append(sender_id)
                     signal = infer_interaction_signal(refl_text)
                     for pid in partners:
                         relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
+                    # Capture post-relationship-update state for A/B logger
+                    step_ctx["relationships_after"] = dict(agent.get("relationships", {}))
+                    # Compute relationship_delta: direction + magnitude of change
+                    rel_delta = _compute_relationship_delta(relationships_before, step_ctx["relationships_after"])
+                    step_ctx["relationship_delta"] = rel_delta
                     state_after = dict(agent.get("state", {}))
                     delta = {}
                     for key, before_v in state_before.items():
@@ -6626,6 +6953,29 @@ def run_simulation():
             daily_logs[agent["id"]] += diary_log
             append_agent_log(agent, diary_log)
             print(f"📓 {agent['name']} 的日记已写入：{diary_path}")
+            if PERSONAL_TWIN_ENABLED and bool(PERSONAL_TWIN_CONFIG.get("daily_self_update", True)):
+                twin_state, public_summary = apply_daily_twin_update(
+                    agent,
+                    PERSONAL_TWIN_CONFIG,
+                    day=day,
+                    day_memory=mem,
+                    diary_text=diary_text,
+                    intentions_text=intention_text(agent.get("intentions", {})),
+                )
+                if STATEFUL:
+                    save_agent_twin_state(agent["id"], twin_state)
+                print(f"🪞 {agent['name']} 的个人孪生公开摘要：{public_summary}")
+
+        # Save daily relationship network snapshot
+        _save_daily_network_snapshot(agents, variant_label="", day=day)
+
+        # Save daily relationship network snapshot
+        _save_daily_network_snapshot(agents, variant_label="", day=day)
+
+        # Apply relationship decay for agents with no recent interaction
+        for agent in agents:
+            apply_relationship_decay(agent, day)
+
         hook_bus.emit(
             "on_day_end",
             day=day,
@@ -7236,6 +7586,7 @@ def _write_comparison_report(output_root, event_payload, rows):
     return report_md, metrics_csv
 
 
+
 def _cli_compare_event(args):
     event_payload = {
         "day": int(args.event_day),
@@ -7324,6 +7675,108 @@ def _cli_compare_event(args):
                 f"- {item['metric']}: baseline={item['baseline_final']:.4f}, "
                 f"event={item['event_final']:.4f}, delta={item['delta_final']:.4f}"
             )
+
+
+def _cli_personal_what_if(args):
+    scenario_title = str(args.scenario_title or f"what_if_agent_{int(args.agent_id)}").strip()
+    event_payload = {
+        "day": int(args.event_day),
+        "time": str(args.event_time),
+        "name": scenario_title,
+        "description": f"个人孪生 What-if 假设：{str(args.question).strip()}",
+    }
+    wrapper = argparse.Namespace(
+        event_day=event_payload["day"],
+        event_time=event_payload["time"],
+        event_name=event_payload["name"],
+        event_description=event_payload["description"],
+        sim_days=args.sim_days,
+        agent_ids=[int(args.agent_id)],
+        seed=int(args.seed),
+        llm_provider=args.llm_provider,
+        output_root=args.output_root,
+    )
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    slug = _sanitize_slug(scenario_title)
+    root = os.path.join(args.output_root, f"{ts}_{slug}")
+    baseline_dir = os.path.join(root, "baseline")
+    event_dir = os.path.join(root, "scenario")
+    os.makedirs(baseline_dir, exist_ok=True)
+    os.makedirs(event_dir, exist_ok=True)
+
+    baseline_overrides = _build_compare_overrides(
+        baseline_dir,
+        include_event=False,
+        event_payload=event_payload,
+        args=wrapper,
+    )
+    event_overrides = _build_compare_overrides(
+        event_dir,
+        include_event=True,
+        event_payload=event_payload,
+        args=wrapper,
+    )
+    script_path = os.path.abspath(__file__)
+    python_bin = sys.executable
+    base_env = os.environ.copy()
+    env_without = dict(base_env)
+    env_with = dict(base_env)
+    env_without["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(baseline_overrides, ensure_ascii=False)
+    env_with["GAWORLD_CONFIG_OVERRIDES"] = json.dumps(event_overrides, ensure_ascii=False)
+
+    reset_without_log = os.path.join(baseline_dir, "reset.log")
+    reset_with_log = os.path.join(event_dir, "reset.log")
+    rc = _run_cli_subprocess([python_bin, script_path, "reset"], env_without, reset_without_log)
+    if rc != 0:
+        raise RuntimeError(f"基线场景 reset 失败，日志：{reset_without_log}")
+    rc = _run_cli_subprocess([python_bin, script_path, "reset"], env_with, reset_with_log)
+    if rc != 0:
+        raise RuntimeError(f"What-if 场景 reset 失败，日志：{reset_with_log}")
+
+    run_without_log = os.path.join(baseline_dir, "run.log")
+    run_with_log = os.path.join(event_dir, "run.log")
+    proc_without, file_without = _launch_cli_subprocess(
+        [python_bin, script_path, "run"],
+        env_without,
+        run_without_log,
+    )
+    proc_with, file_with = _launch_cli_subprocess(
+        [python_bin, script_path, "run"],
+        env_with,
+        run_with_log,
+    )
+    code_without = proc_without.wait()
+    code_with = proc_with.wait()
+    file_without.close()
+    file_with.close()
+    if code_without != 0 or code_with != 0:
+        without_hint = _extract_run_failure_hint(run_without_log)
+        with_hint = _extract_run_failure_hint(run_with_log)
+        raise RuntimeError(
+            "个人 What-if 并行 simulation 运行失败。"
+            f"\n基线日志：{run_without_log}\n{without_hint}\n"
+            f"\n情景日志：{run_with_log}\n{with_hint}"
+        )
+
+    baseline_state_csv = os.path.join(baseline_overrides["state_output_dir"], "agent_state_history.csv")
+    event_state_csv = os.path.join(event_overrides["state_output_dir"], "agent_state_history.csv")
+    rows = _compose_comparison_rows(baseline_state_csv, event_state_csv)
+    report_md, metrics_csv = _write_comparison_report(root, event_payload, rows)
+    personal_report = _write_personal_what_if_report(
+        root,
+        question=args.question,
+        agent_id=args.agent_id,
+        event_payload=event_payload,
+        rows=rows,
+        baseline_dir=baseline_dir,
+        scenario_dir=event_dir,
+    )
+
+    print("\n✅ 个人 What-if simulation 完成")
+    print(f"输出目录: {root}")
+    print(f"通用报告: {report_md}")
+    print(f"个人报告: {personal_report}")
+    print(f"指标文件: {metrics_csv}")
 
 def _build_arg_parser():
     import argparse
@@ -7430,6 +7883,28 @@ def _build_arg_parser():
         "--output-root",
         default="output/comparisons",
         help="Output root for comparison artifacts",
+    )
+
+    personal_what_if = subparsers.add_parser(
+        "personal-what-if",
+        help="Run a personal-twin counterfactual simulation for one agent",
+    )
+    personal_what_if.add_argument("--agent-id", type=int, required=True, help="Target agent ID")
+    personal_what_if.add_argument("--question", required=True, help="What-if question in natural language")
+    personal_what_if.add_argument("--scenario-title", default=None, help="Optional scenario title")
+    personal_what_if.add_argument("--event-day", type=int, default=1, help="Injected scenario day index")
+    personal_what_if.add_argument("--event-time", default="09:00", help="Injected scenario time HH:MM")
+    personal_what_if.add_argument("--sim-days", type=int, default=None, help="Override simulation days")
+    personal_what_if.add_argument("--seed", type=int, default=42, help="Shared seed for both scenarios")
+    personal_what_if.add_argument(
+        "--llm-provider",
+        default=None,
+        help="Force both scenarios to use the same provider name",
+    )
+    personal_what_if.add_argument(
+        "--output-root",
+        default="output/personal_what_if",
+        help="Output root for personal what-if artifacts",
     )
 
     serve_viz = subparsers.add_parser(
@@ -7571,6 +8046,10 @@ def _main():
 
     if args.command == "compare-event":
         _cli_compare_event(args)
+        return
+
+    if args.command == "personal-what-if":
+        _cli_personal_what_if(args)
         return
 
     if args.command == "serve-viz":

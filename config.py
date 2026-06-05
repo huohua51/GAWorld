@@ -195,6 +195,17 @@ CONFIG = {
             "message_max_chars": 300,
         },
     },
+    # Personal twin runtime.
+    # Private memory and raw context stay local; only public social summaries
+    # are shared with the relay-backed social layer.
+    "personal_twin": {
+        "enabled": True,
+        "local_first": True,
+        "private_memory_policy": "local_only",
+        "share_social_summaries": True,
+        "daily_self_update": True,
+        "what_if_enabled": True,
+    },
     "environment_server": {
         "host": "0.0.0.0",
         "port": 8765,
@@ -571,6 +582,25 @@ CONFIG = {
         "external_hooks": {
             "webhook_url": "",
             "mcp_server": "",
+        },
+    },
+    # Planning Fork A/B Experiment.
+    # When enabled, each LLM planning call is forked into two variants:
+    #   Variant A: baseline (no Life History Context)
+    #   Variant B: LH Context + constrained personality injection
+    # Results are compared with statistical metrics to detect LH effect.
+    "ab_experiment": {
+        "enabled": False,
+        "sample_rate": 1.0,  # 0.0-1.0, proportion of planning calls that fork
+        "metrics_threshold": 0.05,  # p-value threshold for significance
+        "output_dir": "output/planning_fork",
+        "parallel_calls": True,  # run A/B LLM calls concurrently
+        "variant_b": {
+            "use_fewshot": True,
+            "fewshot_examples": 3,
+            "use_json_schema": True,
+            "use_chain_of_personality": True,
+            "personality_strength": "strong",  # strong | moderate | mild
         },
     },
 }

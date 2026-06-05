@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "phase": "expansion",
+  "phase_day_counter": 1,
+  "phase_duration": 117,
+  "inflation_rate": 0.025,
+  "unemployment_rate": 0.052,
+  "industry_conditions": {
+    "tech": 1.0,
+    "finance": 1.0,
+    "medical": 1.0,
+    "education": 1.0,
+    "service": 1.0,
+    "trade": 1.0,
+    "default": 1.0
+  },
+  "cumulative_inflation": 1.000068493150685
+}

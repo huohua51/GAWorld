@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GAWorld Console</title>
-  <meta name="description" content="GAWorld 本地仿真控制台" />
+  <title>GAWorld Twin Console</title>
+  <meta name="description" content="GAWorld 个人孪生与分布式社交控制台" />
   <link rel="stylesheet" href="/site/dashboard/styles.css" />
 </head>
 <body>
@@ -12,8 +12,8 @@
     <header class="masthead">
       <div class="masthead-copy">
         <p class="kicker">GAWorld Console</p>
-        <h1>仿真控制台</h1>
-        <p>配置、人物、运行、采访与记忆观察集中在一个本地面板中。</p>
+        <h1>个人孪生控制台</h1>
+        <p>本地分身、分布式社交、运行控制、访谈与记忆观察集中在一个面板中。</p>
       </div>
       <img src="/video/public/gaworld-graphical-abstract.png" alt="GAWorld abstract map" />
     </header>
@@ -86,8 +86,8 @@
                 <img id="selectedAgentAvatar" class="dashboard-avatar" alt="" />
               </div>
               <div>
-                <p class="kicker">Agent Profile</p>
-                <h2>人物设定</h2>
+                <p class="kicker">Twin Profile</p>
+                <h2>分身画像</h2>
               </div>
             </div>
             <select id="agentSelect"></select>
@@ -112,6 +112,39 @@
             <button id="interviewBtn" class="button primary">开始采访</button>
           </div>
           <pre id="interviewOutput" class="codebox">采访结果会显示在这里。</pre>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker">What-if</p>
+              <h2>个人反事实</h2>
+            </div>
+          </div>
+          <input id="whatIfTitleInput" class="event-title-input" placeholder="情景标题（可选）" />
+          <textarea id="whatIfQuestionInput" class="compact-editor" placeholder="例如：如果我明天不去上班而是准备面试，会怎样？"></textarea>
+          <div class="event-grid">
+            <label>
+              <span>Day</span>
+              <input id="whatIfDayInput" type="number" min="1" value="1" />
+            </label>
+            <label>
+              <span>Time</span>
+              <input id="whatIfTimeInput" value="09:00" />
+            </label>
+            <label>
+              <span>仿真天数</span>
+              <input id="whatIfSimDaysInput" type="number" min="1" value="2" />
+            </label>
+            <label>
+              <span>LLM Provider</span>
+              <input id="whatIfProviderInput" placeholder="留空=默认路由" />
+            </label>
+          </div>
+          <div class="button-row end">
+            <button id="runWhatIfBtn" class="button primary">运行 What-if</button>
+          </div>
+          <pre id="whatIfOutput" class="codebox">What-if 输出会显示在这里。</pre>
         </section>
 
         <section class="panel">
@@ -166,8 +199,8 @@
       <section class="panel">
         <div class="section-head">
           <div>
-            <p class="kicker">Memory</p>
-            <h2>记忆与习惯</h2>
+              <p class="kicker">Memory</p>
+              <h2>本地记忆与习惯</h2>
           </div>
           <button id="reloadMemoryBtn" class="button small">刷新记忆</button>
         </div>
@@ -189,6 +222,40 @@
         </div>
         <pre id="runLogBox" class="codebox run-log">暂无运行日志。</pre>
       </section>
+    </section>
+
+    <section class="panel distributed-panel">
+      <div class="section-head">
+        <div>
+          <p class="kicker">Distributed Social</p>
+          <h2>分布式虚拟社交</h2>
+        </div>
+        <div class="button-row">
+          <span id="distributedStatusBadge" class="status-badge">未连接</span>
+          <button id="reloadDistributedBtn" class="button small">刷新社交层</button>
+        </div>
+      </div>
+      <div class="social-meta">
+        <span id="distributedMetaLine">等待 relay snapshot。</span>
+      </div>
+      <div class="social-grid">
+        <article>
+          <h3>个人孪生状态</h3>
+          <pre id="personalTwinBox" class="codebox">暂无个人孪生状态。</pre>
+        </article>
+        <article>
+          <h3>连接中的分身</h3>
+          <pre id="distributedAgentsBox" class="codebox">暂无远程分身。</pre>
+        </article>
+        <article>
+          <h3>社交关系边</h3>
+          <pre id="distributedEdgesBox" class="codebox">暂无互动边。</pre>
+        </article>
+        <article>
+          <h3>最近跨节点消息</h3>
+          <pre id="distributedMessagesBox" class="codebox">暂无社交消息。</pre>
+        </article>
+      </div>
     </section>
   </main>
   <script src="/site/dashboard/app.js"></script>

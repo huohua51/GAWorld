@@ -160,6 +160,9 @@ addopts = [
     "-ra",
     "--strict-markers",
 ]
+markers = [
+    "integration: tests that require live LLM/Ollama endpoint",
+]
 filterwarnings = [
     "ignore::DeprecationWarning:matplotlib.*",
     "ignore::DeprecationWarning:pandas.*",

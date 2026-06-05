@@ -1,0 +1,26 @@
+{
+  "llm": {
+    "routing": {
+      "default": "ollama_qwen",
+      "tasks": {
+        "schedule": "ollama_qwen"
+      }
+    },
+    "providers": {
+      "ollama_qwen": {
+        "type": "ollama",
+        "url": "http://localhost:11434/api/generate",
+        "model": "qwen3:4b-instruct-2507-q4_K_M",
+        "timeout": 600
+      }
+    }
+  },
+  "sim_days": 1,
+  "seconds_per_day": 10,
+  "agent_ids": [
+    5,
+    52
+  ],
+  "simulate_realtime": false,
+  "time_step_minutes": null
+}

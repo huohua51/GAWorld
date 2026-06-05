@@ -1,0 +1,75 @@
+{
+  "agent_id": 1,
+  "name": "李泽宇",
+  "economy": {
+    "currency": "CNY",
+    "wealth_drive": 0.643,
+    "income_skill": 0.5275,
+    "risk_tolerance": 0.4,
+    "industry": "tech",
+    "gross_monthly_salary": 7540.87,
+    "net_monthly_salary": 6145.81,
+    "base_hourly_income": 42.85,
+    "hourly_income": 48.12,
+    "income_volatility": 0.25,
+    "income_target_daily": 337.46,
+    "monthly_tax": 0.0,
+    "monthly_si_total": 1395.06,
+    "monthly_si_breakdown": {
+      "pension": 603.27,
+      "medical": 150.82,
+      "unemployment": 37.7,
+      "housing_fund_individual": 603.27
+    },
+    "monthly_housing_fund": 1206.54,
+    "engel_coefficient": 0.38,
+    "savings_rate": 0.15,
+    "monthly_budget": {
+      "food": 1985.1,
+      "housing": 1200.62,
+      "transport": 493.08,
+      "clothing": 259.31,
+      "leisure": 399.31,
+      "education": 354.98,
+      "healthcare": 303.75,
+      "misc": 227.79
+    },
+    "monthly_expense_estimate": 5223.94,
+    "monthly_rent": 1282.03,
+    "accounts": {
+      "checking": 6536.16,
+      "savings": 15063.09,
+      "investment": 6136.82,
+      "housing_fund": 14931.06
+    },
+    "balance": 27736.07,
+    "portfolio_type": "moderate",
+    "portfolio_weights": {
+      "deposits": 0.4,
+      "funds": 0.4,
+      "stocks": 0.2
+    },
+    "investment_return_ytd": 0.0,
+    "initial_assets": {
+      "labor_savings": 27894.62,
+      "inheritance": 0.0,
+      "total": 27894.62
+    },
+    "daily_income": 98.78050920819948,
+    "daily_expense": 257.34594636206265,
+    "daily_expense_by_category": {
+      "food": 125.55293398052397,
+      "clothing": 0.0,
+      "housing": 55.82902,
+      "transport": 72.49291465758093,
+      "leisure": 0.0,
+      "education": 1.503273980735894,
+      "healthcare": 0.0,
+      "misc": 1.9678037432218405
+    },
+    "lifetime_income": 98.78050920819948,
+    "lifetime_expense": 257.34594636206265,
+    "last_location": "Financial District",
+    "shock_log": []
+  }
+}

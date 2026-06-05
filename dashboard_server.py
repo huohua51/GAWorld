@@ -8,6 +8,8 @@ import time
 import uuid
 from copy import deepcopy
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 from urllib.parse import parse_qs, unquote, urlparse
 
 from config import CONFIG
@@ -37,6 +39,21 @@ RUN_STATE = {
     "started_at": None,
     "log_path": RUN_LOG_PATH,
 }
+
+
+def _simulator_env(extra=None):
+    env = os.environ.copy()
+    pythonpath_items = [REPO_ROOT]
+    existing_pythonpath = str(env.get("PYTHONPATH", "")).strip()
+    if existing_pythonpath:
+        pythonpath_items.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_items)
+    env.setdefault("MPLCONFIGDIR", "/private/tmp")
+    env.setdefault("XDG_CACHE_HOME", "/private/tmp")
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            env[str(key)] = str(value)
+    return env
 
 
 def _deep_update(base, patch):
@@ -314,6 +331,7 @@ def _memory_payload(agent_id):
     schedule = _read_json_file(os.path.join(base, f"agent_{agent_id}_schedule.json"), {})
     habits = _read_json_file(os.path.join(base, f"agent_{agent_id}_habits.json"), {})
     intentions = _read_json_file(os.path.join(base, f"agent_{agent_id}_intentions.json"), {})
+    twin_state = _read_json_file(os.path.join(base, f"agent_{agent_id}_twin_state.json"), {})
     episodes = _tail_text(os.path.join(base, f"agent_{agent_id}_episodes.jsonl"), max_chars=24000)
     log_text = _tail_text(os.path.join(REPO_ROOT, "output", "logs", f"agent_{agent_id}.log"), max_chars=24000)
     return {
@@ -321,6 +339,7 @@ def _memory_payload(agent_id):
         "schedule": schedule,
         "habits": habits,
         "intentions": intentions,
+        "twin_state": twin_state,
         "episodes_tail": episodes,
         "log_tail": log_text,
     }
@@ -346,8 +365,7 @@ def _start_simulation(payload):
     if isinstance(payload.get("config"), dict):
         _save_config_patch(payload["config"])
     os.makedirs(os.path.dirname(RUN_LOG_PATH), exist_ok=True)
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
+    env = _simulator_env({"PYTHONUNBUFFERED": "1"})
     if payload.get("reset"):
         with open(RUN_LOG_PATH, "w", encoding="utf-8") as log_file:
             log_file.write(f"[dashboard] reset at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -406,7 +424,7 @@ def _interview_agent(payload):
     result = subprocess.run(
         command,
         cwd=REPO_ROOT,
-        env=os.environ.copy(),
+        env=_simulator_env(),
         capture_output=True,
         text=True,
         timeout=int(payload.get("timeout", 300)),
@@ -449,6 +467,86 @@ def _add_life_event(payload):
         "event": event,
         "events": list_life_events(CONFIG, include_consumed=True),
     }
+
+
+def _run_personal_what_if(payload):
+    agent_id = int(payload.get("agent_id"))
+    question = str(payload.get("question", "")).strip()
+    if agent_id <= 0 or not question:
+        raise ValueError("agent_id and question are required")
+    command = [
+        sys.executable,
+        os.path.join(REPO_ROOT, "generative_city_sim.py"),
+        "personal-what-if",
+        "--agent-id",
+        str(agent_id),
+        "--question",
+        question,
+    ]
+    if payload.get("scenario_title"):
+        command.extend(["--scenario-title", str(payload["scenario_title"]).strip()])
+    if payload.get("event_day") is not None:
+        command.extend(["--event-day", str(int(payload.get("event_day", 1)))])
+    if payload.get("event_time"):
+        command.extend(["--event-time", str(payload.get("event_time")).strip()])
+    if payload.get("sim_days") is not None:
+        command.extend(["--sim-days", str(int(payload.get("sim_days", 2)))])
+    if payload.get("llm_provider"):
+        command.extend(["--llm-provider", str(payload.get("llm_provider")).strip()])
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=_simulator_env(),
+        capture_output=True,
+        text=True,
+        timeout=int(payload.get("timeout", 1800)),
+    )
+    output = {
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+    for line in result.stdout.splitlines():
+        if line.startswith("输出目录:"):
+            output["output_root"] = line.split(":", 1)[1].strip()
+        elif line.startswith("个人报告:"):
+            output["personal_report"] = line.split(":", 1)[1].strip()
+        elif line.startswith("通用报告:"):
+            output["comparison_report"] = line.split(":", 1)[1].strip()
+    return output
+
+
+def _distributed_social_payload():
+    cfg = _effective_config()
+    distributed_cfg = cfg.get("distributed", {}) if isinstance(cfg.get("distributed"), dict) else {}
+    relay_cfg = distributed_cfg.get("relay", {}) if isinstance(distributed_cfg.get("relay"), dict) else {}
+    base_url = str(relay_cfg.get("base_url", "http://127.0.0.1:8877")).rstrip("/")
+    cluster = str(distributed_cfg.get("cluster", "default")).strip() or "default"
+    personal_twin_cfg = cfg.get("personal_twin", {}) if isinstance(cfg.get("personal_twin"), dict) else {}
+    result = {
+        "enabled": bool(distributed_cfg.get("enabled", False)),
+        "cluster": cluster,
+        "relay_base_url": base_url,
+        "personal_twin": {
+            "enabled": bool(personal_twin_cfg.get("enabled", False)),
+            "local_first": bool(personal_twin_cfg.get("local_first", False)),
+            "share_social_summaries": bool(personal_twin_cfg.get("share_social_summaries", False)),
+            "what_if_enabled": bool(personal_twin_cfg.get("what_if_enabled", False)),
+        },
+    }
+    if not result["enabled"]:
+        result["snapshot"] = {}
+        result["error"] = "distributed mode disabled"
+        return result
+    url = f"{base_url}/social/snapshot?cluster={cluster}&limit=18"
+    try:
+        with urlopen(url, timeout=2.5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        result["snapshot"] = payload if isinstance(payload, dict) else {}
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        result["snapshot"] = {}
+        result["error"] = str(exc)
+    return result
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -510,6 +608,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_todo_board_payload())
         if path == "/api/tests/status":
             return self._json_response(_test_status_payload())
+        if path == "/api/distributed/social":
+            return self._json_response(_distributed_social_payload())
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
@@ -535,6 +635,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_update_todo_item(payload))
         if path == "/api/todos/clear":
             return self._json_response(_save_todo_board([]))
+        if path == "/api/personal-what-if":
+            return self._json_response(_run_personal_what_if(payload))
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def do_GET(self):

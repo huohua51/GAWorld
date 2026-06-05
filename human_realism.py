@@ -102,6 +102,9 @@ def update_needs(agent, time_str, activity, cfg=None, changed=False, travel=None
     state["fatigue_debt"] = float(state.get("fatigue_debt", 0.20))
     state["self_control"] = float(state.get("self_control", 0.60))
     state["time_pressure"] = float(state.get("time_pressure", 0.25))
+    # Emotion state machine: states 0=happy, 1=calm, 2=anxious, 3=angry, 4=sad
+    state.setdefault("emotion", 1)
+    state["emotion"] = int(state.get("emotion", 1))
     text = str(activity or "")
     minutes = _time_str_to_minutes(time_str)
     work_like = _contains_any(
@@ -505,25 +508,113 @@ def relationship_update(agent, neighbor_id, interaction_signal, cfg):
             "obligation": 0.5,
             "friction": 0.5,
             "last_interaction_day": int(agent.get("current_day", 0)),
+            "phase": 1,  # 0=stranger, 1=acquaintance, 2=friend, 3=close, -1=adversary
         },
     )
     signal = str(interaction_signal or "neutral")
+
+    # Current phase
+    phase = int(item.get("phase", 1))
+    closeness = float(item.get("closeness", 0.5))
+
+    # Phase transition: closeness > 0.7 → phase up, < 0.3 → phase down
+    if closeness > 0.7 and phase < 3:
+        item["phase"] = phase + 1
+    elif closeness < 0.3 and phase > -1:
+        item["phase"] = phase - 1
+
+    # Acceleration multiplier: in "close" phase (3), changes are 2x
+    mult = 2.0 if phase >= 3 else 1.0
+
     if signal == "positive":
-        item["closeness"] = _clamp(float(item.get("closeness", 0.5)) + 0.03)
-        item["trust"] = _clamp(float(item.get("trust", 0.5)) + 0.02)
-        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.015)
-        item["friction"] = _clamp(float(item.get("friction", 0.5)) - 0.02)
+        item["closeness"] = _clamp(float(item.get("closeness", 0.5)) + 0.03 * mult)
+        item["trust"] = _clamp(float(item.get("trust", 0.5)) + 0.02 * mult)
+        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.015 * mult)
+        item["friction"] = _clamp(float(item.get("friction", 0.5)) - 0.02 * mult)
     elif signal == "negative":
-        item["closeness"] = _clamp(float(item.get("closeness", 0.5)) - 0.04)
-        item["trust"] = _clamp(float(item.get("trust", 0.5)) - 0.03)
-        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.01)
-        item["friction"] = _clamp(float(item.get("friction", 0.5)) + 0.05)
+        item["closeness"] = _clamp(float(item.get("closeness", 0.5)) - 0.04 * mult)
+        item["trust"] = _clamp(float(item.get("trust", 0.5)) - 0.03 * mult)
+        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.01 * mult)
+        item["friction"] = _clamp(float(item.get("friction", 0.5)) + 0.05 * mult)
     else:
-        item["closeness"] = _clamp(float(item.get("closeness", 0.5)) + 0.01)
-        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.015)
-        item["friction"] = _clamp(float(item.get("friction", 0.5)) - 0.005)
+        item["closeness"] = _clamp(float(item.get("closeness", 0.5)) + 0.01 * mult)
+        item["obligation"] = _clamp(float(item.get("obligation", 0.5)) + 0.015 * mult)
+        item["friction"] = _clamp(float(item.get("friction", 0.5)) - 0.005 * mult)
     item["last_interaction_day"] = int(agent.get("current_day", 0))
+
+    # Emotion state transition
+    _update_emotion_state(agent, signal)
+
     return item
+
+
+_EMOTION_NAMES = {0: "happy", 1: "calm", 2: "anxious", 3: "angry", 4: "sad"}
+
+def _update_emotion_state(agent, signal):
+    """Transition emotion state based on interaction signal and agent state."""
+    state = agent.setdefault("state", {})
+    current = int(state.get("emotion", 1))
+    energy = float(state.get("energy", 0.75))
+    fatigue = float(state.get("fatigue_debt", 0.20))
+    hunger = float(state.get("hunger", 0.25))
+
+    # Emotion transition rules
+    if signal == "positive":
+        # Positive interaction → happier, but not if already angry
+        if current == 3:  # angry → calm
+            new = 1
+        elif current == 4:  # sad → calm
+            new = 1
+        elif current == 2:  # anxious → calm
+            new = 1
+        else:
+            new = max(0, current - 1)  # move toward happy
+    elif signal == "negative":
+        # Negative interaction → more negative
+        if current == 0:  # happy → anxious
+            new = 2
+        elif current == 1:  # calm → anxious/angry
+            new = 3 if random.random() < 0.4 else 2
+        else:
+            new = min(4, current + 1)  # move toward sad/angry
+    else:
+        # Neutral: stay, but bad state drives decay
+        if energy < 0.3 or fatigue > 0.7 or hunger > 0.7:
+            if current < 2:  # drift toward anxious
+                new = current + 1
+            elif current > 2 and random.random() < 0.2:
+                new = current - 1
+            else:
+                new = current
+        else:
+            new = current  # stay
+
+    state["emotion"] = new
+
+
+def apply_relationship_decay(agent, current_day):
+    """Apply daily relationship decay for agents with no recent interaction.
+
+    If no interaction for > 1 day: closeness -= 5%, trust -= 5%
+    This prevents relationships from permanently staying high without interaction.
+    """
+    rels = agent.get("relationships", {})
+    for key, item in rels.items():
+        if not isinstance(item, dict):
+            continue
+        last_day = int(item.get("last_interaction_day", 0))
+        days_no_interact = current_day - last_day
+        if days_no_interact > 1:
+            decay = 0.05 * (days_no_interact - 1)  # 5% per missed day
+            item["closeness"] = _clamp(float(item.get("closeness", 0.5) - decay))
+            item["trust"] = _clamp(float(item.get("trust", 0.5) - decay * 0.5))  # trust decays slower
+            # Phase may drop if closeness falls below threshold
+            c = float(item.get("closeness", 0.5))
+            phase = int(item.get("phase", 1))
+            if c < 0.3 and phase > -1:
+                item["phase"] = phase - 1
+            elif c > 0.7 and phase < 3:
+                item["phase"] = phase + 1
 
 
 def relationship_weight(agent, neighbor_id):

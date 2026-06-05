@@ -1,0 +1,97 @@
+<h2>路线A：Phase 1 详细方案</h2>
+<p class="subtitle">渐进增强的第一步 — 数据可视化层</p>
+
+<div class="section">
+  <h3>图表库选型</h3>
+  <p class="subtitle" style="margin-top:4px">都是零构建步骤，CDN 直接引入</p>
+  <div class="options" style="grid-template-columns:1fr;max-width:100%">
+    <div class="option" data-choice="chartjs" onclick="toggleSelect(this)">
+      <div class="letter">1</div>
+      <div class="content">
+        <h3>Chart.js 🟢 推荐</h3>
+        <div style="font-size:12px;color:#555">
+          50KB gzip · 原生 JS API · 折线/柱状/雷达图都支持<br/>
+          直接 <span style="font-family:monospace;background:#eee;padding:0 4px">&lt;script src="cdn.js"&gt;</span> 引入，不需要构建工具<br/>
+          缺点：大数据量（>1000点）性能一般，但仪表板不会到那个量级
+        </div>
+      </div>
+    </div>
+    <div class="option" data-choice="uplot" onclick="toggleSelect(this)">
+      <div class="letter">2</div>
+      <div class="content">
+        <h3>uPlot</h3>
+        <div style="font-size:12px;color:#555">
+          30KB gzip · 极高性能 · 适合实时数据流<br/>
+          缺点：只擅长折线图/柱状图，雷达图、饼图需要手写
+        </div>
+      </div>
+    </div>
+    <div class="option" data-choice="echarts" onclick="toggleSelect(this)">
+      <div class="letter">3</div>
+      <div class="content">
+        <h3>ECharts</h3>
+        <div style="font-size:12px;color:#555">
+          功能最全（地图、关系图、桑基图）<br/>
+          缺点：300KB+ 较大，对简单场景过度
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>功能优先级</h3>
+  <div class="mockup" style="margin-top:8px">
+    <div class="mockup-body" style="padding:8px 12px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <tr style="border-bottom:1px solid #ddd">
+          <th style="text-align:left;padding:6px">优先级</th>
+          <th style="text-align:left;padding:6px">功能</th>
+          <th style="text-align:left;padding:6px">新 API</th>
+          <th style="text-align:left;padding:6px">前端改动</th>
+        </tr>
+        <tr style="border-bottom:1px solid #eee">
+          <td style="padding:6px"><span style="background:#13795b;color:white;padding:1px 8px;border-radius:4px">P0</span></td>
+          <td style="padding:6px">经济趋势折线图</td>
+          <td style="padding:6px">GET /api/economy/{id}</td>
+          <td style="padding:6px">+ 新 panel，插入 Chart.js</td>
+        </tr>
+        <tr style="border-bottom:1px solid #eee">
+          <td style="padding:6px"><span style="background:#13795b;color:white;padding:1px 8px;border-radius:4px">P0</span></td>
+          <td style="padding:6px">状态雷达图</td>
+          <td style="padding:6px">复用已有 /memory</td>
+          <td style="padding:6px">+ 雷达图组件</td>
+        </tr>
+        <tr style="border-bottom:1px solid #eee">
+          <td style="padding:6px"><span style="background:#385866;color:white;padding:1px 8px;border-radius:4px">P1</span></td>
+          <td style="padding:6px">多 agent 状态趋势对比</td>
+          <td style="padding:6px">GET /api/state-history</td>
+          <td style="padding:6px">+ 选择器 + 多线图</td>
+        </tr>
+        <tr>
+          <td style="padding:6px"><span style="background:#385866;color:white;padding:1px 8px;border-radius:4px">P1</span></td>
+          <td style="padding:6px">环境事件时间线</td>
+          <td style="padding:6px">GET /api/environment-events</td>
+          <td style="padding:6px">+ 时间线组件</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>目录改动</h3>
+  <div style="font-size:13px;line-height:1.8;background:#f5f5f5;padding:12px;border-radius:6px;font-family:monospace">
+    site/dashboard/<br/>
+    ├── index.html     # + Chart.js CDN + 新 panel 结构<br/>
+    ├── styles.css     # + 图表相关样式<br/>
+    ├── app.js         # + 经济图/雷达图渲染逻辑<br/>
+    └── charts.js      # 🆕 独立的图表渲染模块<br/>
+    <br/>
+    dashboard_server.py  # + 3-4 个新 API 端点
+  </div>
+</div>
+
+<div class="section" style="text-align:center;padding:12px 0">
+  <p class="subtitle">P0 功能做完后，仪表板直接从"能用"变成"好用"。看看方案，然后在终端告诉我你的想法。</p>
+</div>
