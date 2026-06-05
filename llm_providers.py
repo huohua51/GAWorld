@@ -433,7 +433,7 @@ class LLMRouter:
                     chain.append(name)
         return chain
 
-    def call(self, prompt, task=None, agent_id=None):
+    def call(self, prompt, task=None, agent_id=None, variant=None):
         chain = self._resolve_chain(task=task, agent_id=agent_id)
         if not chain or chain[0] not in self.providers:
             raise ValueError(f"Provider '{chain[0] if chain else ''}' not found in config.")
@@ -485,7 +485,7 @@ class LLMRouter:
 LLM_ROUTER = LLMRouter(CONFIG)
 
 
-def call_llm(prompt, task=None, agent_id=None):
+def call_llm(prompt, task=None, agent_id=None, variant=None):
     """Public helper for model calls used across the simulator.
 
     Each invocation:
@@ -493,5 +493,10 @@ def call_llm(prompt, task=None, agent_id=None):
     * runs through retry / backoff for transient errors,
     * is logged with provider, task, agent, prompt size, and latency,
     * raises the original :class:`requests` exception on hard failure.
+
+    The ``variant`` parameter is reserved for A/B experiment variants
+    ("A" = no LH Context, "B" = LH Context + personality injection).
+    It does not change routing behaviour; the ABForkEngine handles
+    prompt construction separately.
     """
-    return LLM_ROUTER.call(prompt, task=task, agent_id=agent_id)
+    return LLM_ROUTER.call(prompt, task=task, agent_id=agent_id, variant=variant)

@@ -1,0 +1,2 @@
+agent_id,currency,balance,checking,savings,investment,housing_fund,gross_monthly_salary,net_monthly_salary,monthly_tax,monthly_si_total,engel_coefficient,savings_rate,lifetime_income,lifetime_expense,wealth_drive,base_hourly_income,hourly_income,income_target_daily,portfolio_type,investment_return_ytd,initial_labor_savings,initial_inheritance,initial_assets_total
+1,CNY,27736.07,6536.16,15063.09,6136.82,14931.06,7540.87,6145.81,0.0,1395.06,0.38,0.15,98.78,257.35,0.643,42.85,48.12,337.46,moderate,0.0,27894.62,0.0,27894.62

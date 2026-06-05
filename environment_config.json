@@ -1,6 +1,6 @@
 {
   "external_environment_service": {
-    "enabled": true,
+    "enabled": false,
     "base_url": "http://127.0.0.1:8765",
     "timeout": 6,
     "fallback_to_empty": true
@@ -12,7 +12,7 @@
     "use_llm": true
   },
   "environment": {
-    "enabled": true,
+    "enabled": false,
     "event_chance": 0.6,
     "max_events_per_tick": 2,
     "natural_events": [
@@ -31,7 +31,7 @@
     ]
   },
   "external_environment": {
-    "enabled": true,
+    "enabled": false,
     "seed": 42,
     "max_events_per_tick": 3,
     "generator": {
@@ -44,12 +44,30 @@
       "daily_weather_chance": 0.95,
       "extreme_chance": 0.08,
       "weather_states": [
-        {"name": "晴朗", "weight": 0.28},
-        {"name": "多云", "weight": 0.24},
-        {"name": "小雨", "weight": 0.22},
-        {"name": "中雨", "weight": 0.12},
-        {"name": "高温", "weight": 0.08},
-        {"name": "寒潮", "weight": 0.06}
+        {
+          "name": "晴朗",
+          "weight": 0.28
+        },
+        {
+          "name": "多云",
+          "weight": 0.24
+        },
+        {
+          "name": "小雨",
+          "weight": 0.22
+        },
+        {
+          "name": "中雨",
+          "weight": 0.12
+        },
+        {
+          "name": "高温",
+          "weight": 0.08
+        },
+        {
+          "name": "寒潮",
+          "weight": 0.06
+        }
       ],
       "extreme_events": [
         "短时强降雨预警",

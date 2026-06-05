@@ -23,6 +23,7 @@ from gaworld.core.runner import parallel_map, resolve_max_workers
 from gaworld.logging_setup import get_logger, LOG_MODE
 from gaworld.personal_twin.state import apply_daily_twin_update, build_initial_twin_state
 from gaworld.personal_twin.what_if import write_personal_what_if_report as _write_personal_what_if_report
+from gaworld.work.ab_fork_engine import ABForkEngine, get_engine
 
 _LOG = get_logger("gaworld.sim")
 
@@ -5066,7 +5067,7 @@ def perception(agent, time_str, social_context, env_context, policy_event):
 """
     return call_llm(prompt, task="perception", agent_id=agent["id"])
 
-def planning(agent, perception_text, recall_context=None, decision_refs=None):
+def planning(agent, perception_text, recall_context=None, decision_refs=None, timestep=0):
     if not isinstance(recall_context, dict):
         recall_context = evoke_memory(agent, "planning", perception_text)
     memory_hint = recall_context.get("hint", "暂无重要经验")
@@ -5103,6 +5104,29 @@ def planning(agent, perception_text, recall_context=None, decision_refs=None):
     if refs.get("transient_thought"):
         optional_sections.append(f"临时念头：{format_transient_thought(refs.get('transient_thought'))}")
     optional_text = "\n".join(optional_sections) if optional_sections else "无其他与当前规划强相关的补充参考。"
+    refs["external_hint"] = external_hint
+
+    # Planning Fork A/B Experiment: check if we should fork this call
+    ab_config = CONFIG.get("ab_experiment", {})
+    if ab_config.get("enabled"):
+        engine = get_engine(ab_config)
+        if engine.should_fork():
+            comparison = engine.plan_with_fork(
+                agent=agent,
+                perception_text=perception_text,
+                recall_context=recall_context,
+                decision_refs=refs,
+                intent_hint=intent_hint,
+                optional_text=optional_text,
+                history_hint=history_hint,
+                call_llm_fn=call_llm,
+                timestep=timestep,
+            )
+            if comparison is not None:
+                # Return the A variant result as the "normal" result
+                # (B variant result is saved to disk by the engine)
+                return comparison.variant_a.parsed or _fallback_plan_struct(comparison.variant_a.raw_response)
+
     prompt = f"""
 你是{agent['name']}。
 你的感知是：{perception_text}
@@ -5404,7 +5428,7 @@ def _daily_diary_path(agent_id, day, output_dir=None):
     return os.path.join(base_dir, f"agent_{int(agent_id)}", f"day_{int(day):03d}.md")
 
 
-def _top_day_episode_lines(agent, day, max_items=4):
+def _top_day_episode_lines(agent, day, max_items=8, clean=True):
     episodes = [
         ep for ep in agent.get("episodes", [])
         if int(ep.get("day", ep.get("created_at_day", 0)) or 0) == int(day)
@@ -5416,10 +5440,15 @@ def _top_day_episode_lines(agent, day, max_items=4):
     )[:max(1, int(max_items))]
     lines = []
     for ep in episodes:
-        piece = (
-            f"{ep.get('time', '')}，{ep.get('final_activity', '')}，做了{ep.get('action', '')}。"
-            f" 当时觉得：{ep.get('reflection', '')}"
-        ).strip()
+        if clean:
+            piece = (
+                f"{ep.get('time', '')}，{ep.get('final_activity', '')}，{ep.get('action', '')}。"
+            ).strip()
+        else:
+            piece = (
+                f"{ep.get('time', '')}，{ep.get('final_activity', '')}，做了{ep.get('action', '')}。"
+                f" 当时觉得：{ep.get('reflection', '')}"
+            ).strip()
         lines.append(_compact_text(piece, max_chars=140))
     return lines
 
@@ -5432,9 +5461,9 @@ def _fallback_daily_diary(agent, day, day_context=None, day_memory="", consolida
             for key in ("sim_date", "weekday_zh", "day_type_zh")
             if str(day_context.get(key, "")).strip()
         ).strip()
-    episode_lines = _top_day_episode_lines(agent, day, max_items=3)
+    episode_lines = _top_day_episode_lines(agent, day, max_items=3, clean=True)
     major = "今天整体比较平稳。" if not episode_lines else "；".join(episode_lines)
-    feelings = _compact_text(consolidation_text or day_memory or "今天的起伏让我更清楚自己在意什么。", max_chars=120)
+    feelings = _compact_text(day_memory or "今天的起伏让我更清楚自己在意什么。", max_chars=120)
     plan_text = intention_text(intentions or agent.get("intentions", {}))
     return (
         f"# {agent.get('name', 'Agent')} 的 Day {int(day)} 日记\n\n"
@@ -5449,7 +5478,7 @@ def _fallback_daily_diary(agent, day, day_context=None, day_memory="", consolida
 
 
 def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", consolidation_text="", intentions=None):
-    episode_lines = _top_day_episode_lines(agent, day, max_items=4)
+    episode_lines = _top_day_episode_lines(agent, day, max_items=8, clean=True)
     intent_hint = intention_text(intentions or agent.get("intentions", {}))
     diary_date = ""
     if isinstance(day_context, dict):
@@ -5458,33 +5487,67 @@ def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", cons
             for key in ("sim_date", "weekday_zh", "day_type_zh")
             if str(day_context.get(key, "")).strip()
         ).strip()
-    log_excerpt = _compact_text(logs, max_chars=1600)
+    log_excerpt = _compact_text(logs, max_chars=1200)
     prompt = f"""
-你是{agent.get('name', '某位居民')}，请以第一人称写一篇日记。
+你是{agent.get('name', '某位居民')}。今天是 Day {int(day)} {diary_date}，写一篇日记。
 
-日期：Day {int(day)} {diary_date}
-今天的重要经历：
+今天每个时段的重要经历：
 {json.dumps(episode_lines, ensure_ascii=False, indent=2)}
 
-今天的详细日志摘录：
+详细日志：
 {log_excerpt}
 
-今天形成的长期记忆：{day_memory}
-今天的经验整合：{consolidation_text}
-明天的行为意图：{intent_hint}
+全天总结：{day_memory}
 
-要求：
-1) 输出 markdown。
-2) 必须包含且只包含这三个二级标题：`## 今天主要发生的事情`、`## 今天的感想`、`## 明天的计划`。
-3) 语气像这个 agent 自己写的日记，聚焦今天最重要的几件事、真实感受、以及明天的打算。
-4) 不要写成流水账，也不要输出 JSON。
+明天打算：{intent_hint}
+
+写一篇完整的日记，包含三个部分：
+
+## 今天主要发生的事情
+（按时间线写出今天各个时段的具体事件，每个事件用一两句话描述。尽量覆盖多个时段，不要只写一两件事。）
+
+## 今天的感想
+（写今天最真实的感受、收获或反思）
+
+## 明天的计划
+（具体的打算）
+
+注意：用第一人称，写出具体事件细节，不要只写概述。
 """
     try:
         response = call_llm(prompt, task="daily_diary", agent_id=agent["id"]).strip()
     except (requests.RequestException, ValueError, RuntimeError) as exc:
         _LOG.warning("daily_diary LLM call failed for agent %s: %s", agent.get("id"), exc)
         response = ""
-    if not response or "## 今天主要发生的事情" not in response or "## 今天的感想" not in response or "## 明天的计划" not in response:
+    # Detect prompt echo: when the LLM returns the instruction prompt itself
+    # rather than the intended diary content (indicates model confusion or
+    # repeated context). Also require substantive content after headings.
+    if (
+        not response
+        or "The user asks" in response
+        or "The user is asking" in response
+        or "Thus we need" in response
+        or "We need to produce" in response
+        or "请以第一人称写一篇日记" in response and "你是" in response
+        or "user wants" in response and ("diary entry" in response or "日记" in response)
+        or "user wants the assistant" in response
+        or "output a JSON" in response.lower()
+        or "## 今天主要发生的事情" not in response
+        or "## 今天的感想" not in response
+        or "## 明天的计划" not in response
+    ):
+        return _fallback_daily_diary(
+            agent,
+            day,
+            day_context=day_context,
+            day_memory=day_memory,
+            consolidation_text=consolidation_text,
+            intentions=intentions,
+        )
+    # Require meaningful content length (not just headings with no body).
+    body_only = re.sub(r"^#{1,2}\s*[^ ]*.*$", "", response, flags=re.MULTILINE).strip()
+    if len(body_only) < 30:
+        _LOG.warning("daily_diary response too short for agent %s (%d chars), using fallback", agent.get("id"), len(body_only))
         return _fallback_daily_diary(
             agent,
             day,
@@ -6520,6 +6583,8 @@ def run_simulation():
                                 sim_time=time_str,
                             )
                 if HUMAN_REALISM_ENABLED:
+                    # Capture state before relationship updates
+                    relationships_before = dict(agent.get("relationships", {}))
                     partners = list(agent.get("_recent_social_partners", []))
                     # Co-location encounter: add agents at the same location as potential social partners
                     if resolved_location:
@@ -6538,10 +6603,10 @@ def run_simulation():
                     for pid in partners:
                         relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
                     # Capture post-relationship-update state for A/B logger
-                    step_log["relationships_after"] = dict(agent.get("relationships", {}))
+                    step_ctx["relationships_after"] = dict(agent.get("relationships", {}))
                     # Compute relationship_delta: direction + magnitude of change
-                    rel_delta = _compute_relationship_delta(relationships_before, step_log["relationships_after"])
-                    step_log["relationship_delta"] = rel_delta
+                    rel_delta = _compute_relationship_delta(relationships_before, step_ctx["relationships_after"])
+                    step_ctx["relationship_delta"] = rel_delta
                     state_after = dict(agent.get("state", {}))
                     delta = {}
                     for key, before_v in state_before.items():

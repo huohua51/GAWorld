@@ -6,6 +6,15 @@ import generative_city_sim as sim
 
 
 class TestMemoryRecallAndReview(unittest.TestCase):
+    def setUp(self):
+        # Reset module-level constants that e2e_smoke may have mutated.
+        # Without this, tests that run after e2e_smoke in the suite see
+        # STATEFUL=False / HUMAN_REALISM_ENABLED=False inherited from
+        # e2e_smoke's CONFIG mutations, even after CONFIG is restored.
+        sim.STATEFUL = True
+        sim.HUMAN_REALISM_ENABLED = True
+        sim.HUMAN_REALISM_CONFIG = sim.CONFIG.get("human_realism", {})
+
     def test_negative_recall_discourages_repeated_bad_action(self):
         agent = {
             "id": 21,

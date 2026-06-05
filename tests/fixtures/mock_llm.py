@@ -227,6 +227,11 @@ class MockLLM:
         with self._lock:
             self._responses[task] = handler  # type: ignore[assignment]
 
+    def record_event(self, agent_id: int, event: str) -> None:
+        """Record a real-world event for an agent to be used in mock responses."""
+        with self._lock:
+            self._agent_events[agent_id].append(event)
+
     # ------------------------------------------------------------------
     # Inspection
     # ------------------------------------------------------------------
@@ -253,7 +258,155 @@ class MockLLM:
             response = self._responses.get(task or "", GENERIC_RESPONSE)
         if callable(response):
             return str(response(prompt, agent_id))
+
+        # Contextual mock generation based on prompt content for
+        # reflection/daily_diary when no explicit event list exists.
+        if task in ("reflection", "daily_diary") and isinstance(response, str):
+            # Extract meaningful details from the prompt to personalize response.
+            prompt_lower = prompt.lower()
+            outcome_text = self._extract_field(prompt, "刚刚发生的事情是", "发生")
+            activity_text = self._extract_field(prompt, "你是", "\n")
+            action_text = self._extract_field(prompt, "执行了", "]")
+
+            has_real_context = any(
+                p in prompt_lower
+                for p in ["building", "fire station", "home", "office", "hall", "square", "tower"]
+            )
+
+            if has_real_context and task == "reflection":
+                location = self._extract_location(prompt)
+                activity = self._extract_activity(prompt)
+                act = self._extract_action(prompt)
+                result = f"在{location}进行了{activity}" if location else f"执行了{activity}"
+                return json.dumps(
+                    {
+                        "result": result,
+                        "feeling": self._derive_feeling(prompt, activity),
+                        "lesson": self._derive_lesson(prompt, activity, action_text),
+                        "next_bias": "在类似场景中更加主动",
+                    },
+                    ensure_ascii=False,
+                )
+
+            if has_real_context and task == "daily_diary":
+                events = self._extract_diary_events(prompt)
+                return (
+                    f"## 今天主要发生的事情\n"
+                    f"{events}\n\n"
+                    f"## 今天的感想\n"
+                    f"今天的经历让我有了新的思考。\n\n"
+                    f"## 明天的计划\n"
+                    f"继续保持探索和学习的状态。"
+                )
+
         return str(response)
+
+    def _extract_field(self, text: str, start_marker: str, end_marker: str) -> str:
+        """Extract text between markers."""
+        idx = text.find(start_marker)
+        if idx == -1:
+            return ""
+        start = idx + len(start_marker)
+        end = text.find(end_marker, start)
+        if end == -1:
+            return text[start:].strip()
+        return text[start:end].strip()
+
+    def _extract_location(self, prompt: str) -> str:
+        """Extract location from reflection prompt."""
+        for loc in [
+            "Building C-02", "Riverside Tower", "Riverside Fire Station",
+            "City Hall", "Civic Square", "home", "office",
+        ]:
+            if loc in prompt:
+                return loc
+        # Extract from pattern "在【X】中"
+        idx = prompt.find("在【")
+        if idx != -1:
+            start = idx + 2
+            end = prompt.find("】", start)
+            if end != -1:
+                return prompt[start:end]
+        return ""
+
+    def _extract_activity(self, prompt: str) -> str:
+        """Extract activity from reflection prompt."""
+        for act in ["工作", "通勤", "午餐", "晚餐", "休闲", "起床洗漱", "阅读", "睡觉"]:
+            if act in prompt:
+                return act
+        idx = prompt.find("刚刚发生的事情是：")
+        if idx != -1:
+            segment = prompt[idx:idx+200]
+            for marker in ["中执行了【", "前往【"]:
+                m_idx = segment.find(marker)
+                if m_idx != -1:
+                    start = m_idx + len(marker)
+                    end = segment.find("】", start)
+                    if end != -1:
+                        return segment[start:end]
+        return ""
+
+    def _extract_action(self, prompt: str) -> str:
+        """Extract action verb from reflection prompt."""
+        for act in [
+            "开会", "写代码", "整理文档", "乘坐e-bike移动", "回家做饭",
+            "先拖一会儿再说", "先把眼前这件事往前推进一点",
+        ]:
+            if act in prompt:
+                return act
+        idx = prompt.find("中执行了【")
+        if idx != -1:
+            start = idx + len("中执行了【")
+            end = prompt.find("】", start)
+            if end != -1:
+                return prompt[start:end]
+        return ""
+
+    def _derive_feeling(self, prompt: str, activity: str) -> str:
+        """Derive feeling from activity context."""
+        if activity in ["工作", "开会"]:
+            return "在忙碌中感到充实"
+        if activity in ["通勤"]:
+            return "移动中有种过渡感"
+        if activity in ["午餐", "晚餐"]:
+            return "用餐时放松下来"
+        if activity in ["休闲", "阅读"]:
+            return "沉浸在轻松的时光里"
+        return "事情在平稳推进"
+
+    def _derive_lesson(self, prompt: str, activity: str, action_text: str) -> str:
+        """Derive lesson from action context."""
+        if action_text == "先拖一会儿再说，顺手刷会儿手机":
+            return "拖延会让时间变紧，下次要更果断"
+        if action_text == "先把眼前这件事往前推进一点":
+            return "小步推进比完美主义更有效"
+        if activity == "工作":
+            return "专注工作能带来实质性进展"
+        if activity == "通勤":
+            return "通勤时间是过渡，可以用来整理思路"
+        return "保持节奏比追求高峰更可持续"
+
+    def _extract_diary_events(self, prompt: str) -> str:
+        """Extract event lines for daily diary."""
+        events = []
+        # Extract time + activity patterns
+        import re
+        # Look for patterns like "07:30 起床洗漱" or "上午 工作"
+        time_activity = re.findall(r"(\d{2}:\d{2})\s+([^\n]{2,10})", prompt)
+        if time_activity:
+            for t, a in time_activity[-3:]:
+                events.append(f"{t}进行{a}")
+        if not events:
+            # Fallback: extract location mentions
+            for loc in [
+                "Riverside Fire Station", "Building C-02", "Riverside Tower",
+                "City Hall", "Civic Square",
+            ]:
+                if loc in prompt:
+                    events.append(f"在{loc}活动")
+        if not events:
+            events = ["处理了多项日常任务"]
+        return "；".join(events[-3:]) if events else "平稳的一天"
 
 
 @contextlib.contextmanager
