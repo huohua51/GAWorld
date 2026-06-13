@@ -56,7 +56,10 @@ Across days, the simulator accumulates:
 - Realistic personal economy simulation (tax, social insurance, investment, macro cycles)
 - Realistic location system with category-based spatial matching, transport cost calculation, rush-hour and weather effects, and commute memory
 - Dynamic behavior system: mood-driven spontaneous urges, social encounter chains, need-based interrupts, environment event cascades, and commitment-aware schedule interruption
+- Physical environment perception and reactive replanning: per-node crowding / opening-hours awareness, anomaly detection, same-day interval replanning, and learned location-avoidance preferences
 - Interest and skill-growth system: per-agent hobbies, planned skills, practice time, growth progress, and schedule/work-choice influence
+- Reusable Skill library: Markdown-based global and per-agent private skills, auto-distilled from experience and injected into cognition and work briefs
+- Real-work task system: agents browse a mock job market and produce real artifacts (HTML, Python, articles, lesson plans, research notes) matched to their job and skills
 - City map generation and route playback
 - Visualization trace export
 - Agent interview CLI
@@ -78,7 +81,10 @@ code.
 - `gaworld/llm/providers.py`: provider wrappers (Ollama / OpenAI-compatible / Anthropic-compatible) and the `LLM_ROUTER` dispatcher
 - `gaworld/memory/store.py`: agent memory, vector DB, schedule/action/location caches, log persistence
 - `gaworld/world/city_map.py`: graph, routes, transport costs, weather/rush-hour effects, category-based spatial queries
-- `gaworld/env/system.py`: in-sim `EnvironmentSystem` (weather, events, intervention feed) and `RemoteEnvironmentClient`
+- `gaworld/world/local_physical.py`: per-node occupancy / opening-hours snapshots, crowd-surge anomaly detection, perception injection
+- `gaworld/memory/spatial_preferences.py`: learned location-avoidance preferences with recency decay and redirection
+- `gaworld/skills/`: reusable Skill library (registry, Markdown schemas, prompt injection, experience-to-skill consolidation)
+- `gaworld/env/system.py`: in-sim `EnvironmentSystem` (weather, events, intervention feed, anomaly tagging) and `RemoteEnvironmentClient`
 - `gaworld/cognition/realism.py`: realism helpers — intentions, habits, relationship update/weight, memory consolidation
 - `gaworld/behavior/dynamic.py`: dynamic behavior system (InterruptEngine, SpontaneityEngine, social chains, environment-event cascades)
 - `gaworld/social/network.py`: schema migration, off-screen ghosts, role-aware decay, Dunbar tiers
@@ -261,6 +267,10 @@ Important fields:
 - `economy`: personal finance settings (tax brackets, social insurance rates, Engel curve, investment, macro cycle, shocks)
 - `interests`: per-agent hobby and skill-growth settings (enable switch, item cap, insert tendency, progress persistence)
 - `dynamic_behavior`: dynamic behavior system settings (enabled flag)
+- `environment.local_physical` / `environment.anomaly` / `environment.replan` / `environment.spatial_preferences`: physical-perception and reactive-replanning switches and thresholds
+- `skills`: reusable Skill library settings (global dir, cognition/work-brief injection, per-prompt cap)
+- `memory.skill_consolidation`: experience-to-Skill distillation settings (enabled, cadence, lookback, min episodes)
+- `real_work`: real-work task system (enable switch, market, concurrency, timeouts, adapters)
 - `intervention`: lightweight recommendation / exposure control and evaluation settings
 - `policy_events`: scheduled policy shocks
 - `distributed`: multi-machine communication settings
@@ -461,6 +471,93 @@ pushes agents to handle urgent tasks.
 When an interrupt wins, the system can insert the new activity into the schedule with resumable
 support — the original activity resumes after the interruption if there's room in the schedule.
 
+### Physical Environment Perception And Reactive Replanning
+
+`gaworld/world/local_physical.py` and `gaworld/memory/spatial_preferences.py` connect the city
+map's previously-unused per-node `occupancy` and `is_open` state to the cognition loop, so agents
+perceive and react to their *current* surroundings. The system is fully config-gated, purely
+rule-based (no extra LLM calls), and backward compatible — each layer degrades to a no-op when its
+data is absent. All switches live under `CONFIG["environment"]`.
+
+**Local Physical Perception (P0)**
+
+Each tick, node occupancy is recomputed from where agents actually are, and simulation time is
+written so opening-hours logic takes effect. Before each agent perceives, a snapshot of the current
+location (crowding level, open/closed, local weather, anomaly flag) is generated and optionally
+injected into the perception context as a "surrounding physical environment" line.
+
+**Structured Event Reaction (P1)**
+
+The dynamic-behavior classifier prefers structured signals (`type` / `topic` / `impact_tags`) over
+keyword guessing, and consumes `impact_tags` (mobility, stress, public_service, …) as interrupt-
+priority boosts. Local physical state becomes interrupt candidates too: crowding → "move somewhere
+less crowded", a closed venue → "go to another open place" (non-resumable, forces a relocation).
+
+**Anomaly As A First-Class Signal (P2)**
+
+`env/system.py` tags each event with `anomaly` / `anomaly_score`, representing a deviation from the
+norm — ordinary weather and small fluctuations are not anomalies; extreme, shock, emergency, and
+high-severity events are. Anomalies raise interrupt priority, can force non-resumable reactions, and
+have stronger mood effects. A local "crowd surge" (high occupancy that jumped sharply versus the
+previous tick) emerges as a `crowd_anomaly` interrupt.
+
+**Same-Day Replanning (P3)**
+
+`sim/_schedule.py` adds `replan_affected_interval`, which re-arranges only the affected contiguous
+window of the schedule (relocate / defer / drop) and leaves everything outside it untouched. When
+the winning interrupt is a persistent anomaly (a non-resumable physical/emergency reaction), the
+disrupted activities in the window are deferred past it, rather than only patching the single
+current step.
+
+**Structured Spatial Learning (P4)**
+
+`spatial_preferences.py` accumulates location-bound anomaly experiences (crowding, closures — not
+city-wide macro anomalies) into a per-location avoidance score, time-weighted and recency-decayed.
+Once a location's score crosses the threshold, `redirect_for_aversion` biases the agent toward a
+same-category alternative with a lower avoidance score. Preferences are persisted per agent to
+`output/memory/agent_<id>_env_preferences.json` (only when `stateful=True`) and survive across runs.
+
+Config blocks (`gaworld/settings/environment.py`): `local_physical`, `anomaly`, `replan`,
+`spatial_preferences`. Setting any block's `enabled` to `False` reverts that layer; the four
+switches are independent. See [`docs/physical_env_perception_changelog.md`](docs/physical_env_perception_changelog.md)
+for the full design and parameter table.
+
+### Reusable Skill Library
+
+Parallel to the interest/skill-growth system, `gaworld/skills/` gives agents reusable, well-formatted
+*skills* — an idea close to Claude Code's Skills. Each skill is a Markdown file with YAML
+frontmatter (`name` / `description` / `triggers` / body), from one of two sources:
+
+- **Global library** `data/skills/*.md` — hand-authored, attachable to any agent;
+- **Private library** `output/memory/agent_<id>_skills/*.md` — auto-distilled by an agent from its
+  own recent episodes. Off by default; enable with
+  `CONFIG["memory"]["skill_consolidation"]["enabled"] = True`, triggered every `every_days`
+  simulation days inside `run_daily_memory_lifecycle`.
+
+At runtime, skills are injected into the `perception` prompt and into the work brief's
+`【可用技能】` (available skills) block, shaping cognition and work artifacts. Attach a global skill
+to an agent:
+
+```python
+from gaworld.skills import SkillRegistry
+SkillRegistry().attach_to_agent(agent, "poster-layout-grid")
+```
+
+Full design and API: [`docs/SKILL_SYSTEM.md`](docs/SKILL_SYSTEM.md).
+
+### Real Work
+
+`gaworld/work/` lets residents do *real* work matched to their job / skills / interests — producing
+HTML pages, Python scripts (with optional pytest), Markdown articles, lesson plans, and research
+notes — and browse, claim, and settle jobs on a mock job-opportunity market. Capabilities are
+LLM-derived per occupation and cached; tasks run on a background `WorkerPool`; artifacts land under
+`output/work/agent_<id>/<task_id>/`.
+
+It is config-gated via `CONFIG["real_work"]["enabled"]` and integrates with the interest/skill-growth
+and Skill systems (planned skills widen capability matching; relevant skills are appended to each
+work brief). See [`docs/REAL_WORK_USAGE.md`](docs/REAL_WORK_USAGE.md) and
+[`docs/REAL_WORK_DESIGN.md`](docs/REAL_WORK_DESIGN.md).
+
 ### LLM Backends
 
 The project supports:
@@ -483,11 +580,14 @@ Generated artifacts are written under `output/`, including:
 - `output/memory/agent_<id>_episodes.jsonl`
 - `output/memory/agent_<id>_growth.json`
 - `output/memory/growth_profiles.json`
+- `output/memory/agent_<id>_env_preferences.json`
+- `output/memory/agent_<id>_skills/*.md`
 - `output/memory/vector_db.sqlite`
 - `output/economy/daily_ledger.csv`, `wealth_snapshot.csv`, `macro_state.json`
 - `output/economy/agents/agent_<id>_ledger.csv`, `agent_<id>_snapshot.json`
 - `output/environment/timeline.jsonl`
 - `output/intervention/intervention_metrics.csv`
+- `output/work/capabilities.json`, `queue.jsonl`, `market.jsonl`, `agent_<id>/<task_id>/`
 - `output/visualization/simulation_trace.json`
 - `output/visualization/latest_frame.json`
 - `output/network/`
@@ -503,5 +603,17 @@ Generated artifacts are written under `output/`, including:
 ## Additional Docs
 
 - [中文 README](./README.zh-CN.md)
+<<<<<<< Updated upstream
+- [Full Tutorial](./docs/TUTORIAL.v2.md) (complete — covers all features)
+- [Quickstart](./docs/TUTORIAL.md)
+=======
 - [Tutorial](./docs/TUTORIAL.md)
+- [User Tutorial](./docs/GAWORLD_USER_TUTORIAL.md)
+- [Skill System](./docs/SKILL_SYSTEM.md)
+- [Real Work — Usage](./docs/REAL_WORK_USAGE.md) · [Design](./docs/REAL_WORK_DESIGN.md)
+- [Physical Environment Perception & Reactive Replanning](./docs/physical_env_perception_changelog.md)
+- [Social Network — Design](./docs/SOCIAL_NETWORK_DESIGN.md) · [Tutorial](./docs/SOCIAL_NETWORK_TUTORIAL.md)
+- [Project Structure](./docs/PROJECT_STRUCTURE.md)
+>>>>>>> Stashed changes
 - [Repository Guidelines](./AGENTS.md)
+- [Changelog](./CHANGELOG.md)

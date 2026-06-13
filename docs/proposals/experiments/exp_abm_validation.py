@@ -85,39 +85,53 @@ class ExpABMValidation(ExperimentRunner):
             seed=self.default_seed
         )
 
-    def extract_transport_mode_data(self) -> Dict[str, float]:
-        """Extract transport mode share from simulation output."""
+    def _load_state_long(self) -> pd.DataFrame:
+        """Load state history CSV and pivot to wide format."""
         state_file = self.experiment_dir / "state" / "agent_state_history.csv"
         if not state_file.exists():
-            return {}
-
+            return pd.DataFrame()
         df = pd.read_csv(state_file)
+        df_wide = df.pivot_table(index=["agent_id", "step"], columns="metric", values="value")
+        df_wide = df_wide.reset_index()
+        return df_wide
+
+    def extract_transport_mode_data(self) -> Dict[str, float]:
+        """Extract transport mode share from agent environment logs."""
+        env_dir = self.experiment_dir / "environment"
+        if not env_dir.exists():
+            return {}
 
         mode_counts = {
             "bus": 0, "metro": 0, "taxi": 0,
             "car": 0, "bike_walk": 0, "other": 0
         }
 
-        for activity in df["activity"].dropna():
-            activity_lower = activity.lower()
-            if "公交" in activity or "bus" in activity_lower:
-                mode_counts["bus"] += 1
-            elif "地铁" in activity or "metro" in activity_lower:
-                mode_counts["metro"] += 1
-            elif "出租" in activity or "taxi" in activity_lower:
-                mode_counts["taxi"] += 1
-            elif "自驾" in activity or "car" in activity_lower:
-                mode_counts["car"] += 1
-            elif any(k in activity for k in ["步行", "自行车", "walk", "bike"]):
-                mode_counts["bike_walk"] += 1
-            else:
-                mode_counts["other"] += 1
+        for log_file in env_dir.glob("agent_*.log"):
+            try:
+                content = log_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
+            for line in content.split("\n"):
+                line_lower = line.lower()
+                if "公交" in line or "bus" in line_lower:
+                    mode_counts["bus"] += 1
+                elif "地铁" in line or "metro" in line_lower:
+                    mode_counts["metro"] += 1
+                elif "出租" in line or "taxi" in line_lower or "打车" in line:
+                    mode_counts["taxi"] += 1
+                elif "自驾" in line or "开车" in line or "car" in line_lower:
+                    mode_counts["car"] += 1
+                elif any(k in line for k in ["步行", "自行车", "walk", "bike", "骑行"]):
+                    mode_counts["bike_walk"] += 1
 
         total = sum(mode_counts.values())
-        return {k: v / total if total > 0 else 0 for k, v in mode_counts.items()}
+        if total == 0:
+            return {}
+        return {k: v / total for k, v in mode_counts.items()}
 
     def extract_engels_data(self) -> Dict[str, float]:
-        """Extract Engels coefficient data."""
+        """Extract Engels coefficient data from daily ledger."""
         economy_dir = self.experiment_dir / "economy"
         if not economy_dir.exists():
             return {}
@@ -128,7 +142,13 @@ class ExpABMValidation(ExperimentRunner):
 
         df = pd.read_csv(ledger_file)
 
+        if "engel_coefficient" in df.columns:
+            return {
+                "mean_engels": float(df["engel_coefficient"].mean()),
+                "std_engels": float(df["engel_coefficient"].std())
+            }
         if "food_expense" in df.columns and "total_consumption" in df.columns:
+            df = df.copy()
             df["engels"] = df["food_expense"] / df["total_consumption"]
             return {
                 "mean_engels": float(df["engels"].mean()),
@@ -156,18 +176,22 @@ class ExpABMValidation(ExperimentRunner):
         return {}
 
     def extract_emotion_data(self) -> Dict[str, float]:
-        """Extract emotion distribution data."""
+        """Extract emotion distribution data from state history (long format)."""
         state_file = self.experiment_dir / "state" / "agent_state_history.csv"
         if not state_file.exists():
             return {}
 
         df = pd.read_csv(state_file)
+        emotion_rows = df[df["metric"] == "emotion"]
+
+        if len(emotion_rows) == 0:
+            return {}
 
         return {
-            "mean": float(df["emotion"].mean()),
-            "std": float(df["emotion"].std()),
-            "min": float(df["emotion"].min()),
-            "max": float(df["emotion"].max())
+            "mean": float(emotion_rows["value"].mean()),
+            "std": float(emotion_rows["value"].std()),
+            "min": float(emotion_rows["value"].min()),
+            "max": float(emotion_rows["value"].max())
         }
 
     def compute_kl_divergence(self, p: Dict[str, float], q: Dict[str, float]) -> float:

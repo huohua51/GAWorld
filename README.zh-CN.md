@@ -53,7 +53,10 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 真实个人经济仿真（个税、五险一金、恩格尔系数消费、投资理财、宏观经济周期）
 - 真实位置系统：基于类别的空间匹配、出行成本计算、高峰时段和天气影响、通勤记忆
 - 动态行为系统：情绪驱动的即兴行为、社交偶遇链、需求中断、环境事件连锁反应、承诺度感知的日程中断
+- 物理环境感知与反应式重规划：节点级拥挤度 / 营业时间感知、异常检测、当日受影响区间重排、习得的地点规避偏好
 - 兴趣爱好与技能成长系统：为每个智能体生成兴趣、计划发展的技能、练习时间、成长进度，并影响日程、行动、工作和生活选择
+- 可复用 Skill 库：基于 Markdown 的全局 / 私有技能，可从经历自动提炼，并注入认知与工作 brief
+- 真实工作任务系统：智能体在 mock 工作市场浏览、接单，按职业与技能产出真实产物（HTML、Python、文章、教案、研究笔记）
 - 城市地图生成与轨迹回放
 - 可视化 trace 导出
 - 单智能体采访 CLI
@@ -75,13 +78,15 @@ GAWorld/
 │   ├── events/life.py             # 生命事件调度
 │   ├── io/                        # HTTP guard、头像生成、HTML 抽取
 │   ├── llm/providers.py           # LLM 提供商封装与路由
-│   ├── memory/                    # 记忆系统（store、experience、consolidation、decay）
+│   ├── memory/                    # 记忆系统（store、experience、consolidation、decay、spatial_preferences）
 │   ├── policy/intervention.py     # 干预指标与推荐
 │   ├── settings/                  # 分层配置（LLM、运行时、行为、经济、环境）
 │   ├── sim/                       # 仿真子模块（schedule、location、cognition、rag…）
+│   ├── skills/                    # 可复用 Skill 库（registry、Markdown schema、提示注入、经验提炼）
 │   ├── social/network.py          # 社交网络（衰减、Dunbar 分层、ghost 事件）
 │   ├── work/                      # 工作任务系统（queue、market、router、adapters）
 │   ├── world/city_map.py          # 城市地图（图结构、路线、出行成本、空间查询）
+│   ├── world/local_physical.py    # 局部物理感知（占用 / 营业快照、人流骤增异常、感知注入）
 │   ├── hooks.py                   # 生命周期钩子（HookBus）
 │   ├── interests.py               # 兴趣与成长画像
 │   └── logging_setup.py           # 日志配置
@@ -270,6 +275,10 @@ dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 - `economy`：个人财务配置（税率表、社保费率、恩格尔曲线、投资参数、宏观周期、冲击事件）
 - `interests`：兴趣爱好与技能成长配置（启用开关、成长项上限、日程插入倾向、进度持久化）
 - `dynamic_behavior`：动态行为系统配置（启用开关）
+- `environment.local_physical` / `environment.anomaly` / `environment.replan` / `environment.spatial_preferences`：物理感知与反应式重规划的开关与阈值
+- `skills`：可复用 Skill 库配置（全局目录、认知 / work brief 注入、单提示上限）
+- `memory.skill_consolidation`：经验 → Skill 提炼配置（启用、周期、回看天数、最少 episode 数）
+- `real_work`：真实工作任务系统（启用开关、市场、并发、超时、adapter）
 - `intervention`：轻量推荐 / 曝光控制和干预评估配置
 - `policy_events`：政策事件
 - `distributed`：多机通信配置
@@ -458,6 +467,58 @@ LLM 调用之前完成决策。
 当中断胜出时，系统可以将新活动插入到日程中并支持恢复——被中断的活动在插入活动结束后自动恢复，
 前提是日程中有足够的时间空隙。
 
+### 物理环境感知与反应式重规划
+
+`gaworld/world/local_physical.py` 与 `gaworld/memory/spatial_preferences.py` 把城市地图里早已
+定义却从未被调用的节点级 `occupancy`（占用）与 `is_open`（营业）状态接入认知循环，让智能体真正
+感知并反应**当下身边**的物理环境。该系统**全部配置门控、纯规则（无新增 LLM 调用）、向后兼容**——
+缺数据时每一层自动空转。所有开关位于 `CONFIG["environment"]`。
+
+**局部物理感知（P0）**
+
+每个 tick 从"谁在哪"重算节点占用，并写入仿真时间使营业判断生效。每个智能体感知前生成当前位置
+快照（拥挤度 / 是否营业 / 当地天气 / 异常标记），可选地以"身边的物理环境"片段注入感知上下文。
+
+**结构化事件反应（P1）**
+
+动态行为分类器优先读结构化信号（`type` / `topic` / `impact_tags`）而非关键词猜测，并把
+`impact_tags`（mobility、stress、public_service…）作为中断优先级加成。局部物理状态也转为中断
+候选：拥挤→"换个不那么挤的地方"，关门→"改去其他开门的地方"（不可恢复，必须换地点）。
+
+**异常作为一等公民（P2）**
+
+`env/system.py` 为每个事件打 `anomaly` / `anomaly_score`，代表对常态的偏离——日常天气与小波动
+不算异常，极端 / 突发 / 应急 / 高严重度事件才算。异常会提升中断优先级、可强制不可恢复反应、并有
+更强的情绪影响。局部"人流骤增"（占用率高且较上一 tick 跳变大）会涌现为 `crowd_anomaly` 中断。
+
+**当日重规划（P3）**
+
+`sim/_schedule.py` 新增 `replan_affected_interval`，只重排受影响的连续区间（改址 / 顺延 / 丢弃），
+窗口外不动。当胜出中断为持续性异常（不可恢复的物理 / 应急反应）时，把窗口内被打断的后续活动顺延
+到窗口之后，而非只修补当前单步。
+
+**结构化空间学习（P4）**
+
+`spatial_preferences.py` 把地点绑定的异常经历（拥挤、关门，不含全城宏观异常）累积为该地点的规避分，
+按时段加权、按时间衰减。规避分超阈值后，`redirect_for_aversion` 把智能体引导到同类、规避更低的
+替代地点。偏好按 agent 持久化到 `output/memory/agent_<id>_env_preferences.json`（仅 `stateful=True`
+时），跨运行保留。
+
+配置块（`gaworld/settings/environment.py`）：`local_physical`、`anomaly`、`replan`、
+`spatial_preferences`。把任一块的 `enabled` 设为 `False` 即可回退该层，四个开关相互独立。完整设计
+与参数表见 [`docs/physical_env_perception_changelog.md`](docs/physical_env_perception_changelog.md)。
+
+### 真实工作任务系统
+
+`gaworld/work/` 让居民根据职业 / 技能 / 兴趣去做**真实**的工作——产出 HTML 页面、Python 脚本
+（可带 pytest）、Markdown 文章、教案、研究笔记——并能在一个 mock 工作机会市场上浏览、接单、结算。
+职业能力由 LLM 按职业派生并缓存；任务在后台 `WorkerPool` 上运行；产物落在
+`output/work/agent_<id>/<task_id>/`。
+
+通过 `CONFIG["real_work"]["enabled"]` 配置门控，并与兴趣 / 技能成长系统、Skill 系统联动（计划发展
+的技能拓宽能力匹配面；相关 Skill 自动追加进每条 work brief）。详见
+[`docs/REAL_WORK_USAGE.md`](docs/REAL_WORK_USAGE.md) 与 [`docs/REAL_WORK_DESIGN.md`](docs/REAL_WORK_DESIGN.md)。
+
 ### LLM 后端
 
 项目支持：
@@ -480,11 +541,14 @@ LLM 调用之前完成决策。
 - `output/memory/agent_<id>_episodes.jsonl`
 - `output/memory/agent_<id>_growth.json`
 - `output/memory/growth_profiles.json`
+- `output/memory/agent_<id>_env_preferences.json`
+- `output/memory/agent_<id>_skills/*.md`
 - `output/memory/vector_db.sqlite`
 - `output/economy/daily_ledger.csv`、`wealth_snapshot.csv`、`macro_state.json`
 - `output/economy/agents/agent_<id>_ledger.csv`、`agent_<id>_snapshot.json`
 - `output/environment/timeline.jsonl`
 - `output/intervention/intervention_metrics.csv`
+- `output/work/capabilities.json`、`queue.jsonl`、`market.jsonl`、`agent_<id>/<task_id>/`
 - `output/visualization/simulation_trace.json`
 - `output/visualization/latest_frame.json`
 - `output/network/`
@@ -500,6 +564,18 @@ LLM 调用之前完成决策。
 ## 更多文档
 
 - [English README](./README.md)
-- [用户教程](./docs/TUTORIAL.md)
+<<<<<<< Updated upstream
+- [完整教程（含全部特性）](./docs/TUTORIAL.v2.md)
+- [快速上手教程](./docs/TUTORIAL.md)
 - [仓库规范](./AGENTS.md)
+=======
+- [用户教程](./docs/TUTORIAL.md)
+- [完整使用教程](./docs/GAWORLD_USER_TUTORIAL.md)
+>>>>>>> Stashed changes
 - [Skill 系统设计与使用](./docs/SKILL_SYSTEM.md)
+- [真实工作系统 — 使用](./docs/REAL_WORK_USAGE.md) · [设计](./docs/REAL_WORK_DESIGN.md)
+- [物理环境感知与反应式重规划](./docs/physical_env_perception_changelog.md)
+- [社交网络 — 设计](./docs/SOCIAL_NETWORK_DESIGN.md) · [教程](./docs/SOCIAL_NETWORK_TUTORIAL.md)
+- [项目结构](./docs/PROJECT_STRUCTURE.md)
+- [仓库规范](./AGENTS.md)
+- [更新日志](./CHANGELOG.md)

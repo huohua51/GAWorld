@@ -120,6 +120,16 @@ class ExpEmotionContagion(ExperimentRunner):
             env_vars=env_vars if env_vars else None
         )
 
+    def _load_state_long(self, state_file: Path) -> pd.DataFrame:
+        """Load state history CSV (long format: agent_id, step, metric, value)."""
+        df = pd.read_csv(state_file)
+        # Pivot to wide format: one column per metric for easier analysis
+        df_wide = df.pivot_table(index=["agent_id", "step"], columns="metric", values="value")
+        df_wide = df_wide.reset_index()
+        # Convert step to approximate day (assuming 96 steps/day based on 15-min slots)
+        df_wide["day"] = (df_wide["step"] // 96) + 1
+        return df_wide
+
     def analyze(self) -> Dict[str, Any]:
         """Analyze emotion contagion results."""
         state_file = self.experiment_dir / "state" / "agent_state_history.csv"
@@ -127,7 +137,7 @@ class ExpEmotionContagion(ExperimentRunner):
         if not state_file.exists():
             return {"error": "State file not found", "path": str(state_file)}
 
-        df = pd.read_csv(state_file)
+        df = self._load_state_long(state_file)
 
         # Calculate daily emotion statistics
         daily_stats = df.groupby("day").agg({
@@ -172,7 +182,7 @@ class ExpEmotionContagion(ExperimentRunner):
         if not state_file.exists():
             return {"error": "State file not found"}
 
-        df = pd.read_csv(state_file)
+        df = self._load_state_long(state_file)
         seed_agents = self.config.get("emotion_seed", {}).get("seed_agents", [])
 
         if not seed_agents:

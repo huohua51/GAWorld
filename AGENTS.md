@@ -78,79 +78,104 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-05-26 5:05am GMT+2
+# [GAWorld] recent context, 2026-06-13 1:39pm GMT+8
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (12,479t read) | 2,882,786t work | 100% savings
+Stats: 50 obs (23,304t read) | 0t work
 
-### May 18, 2026
-529 8:51p ⚖️ Second experiment with NeurIPS paper output
-531 8:52p 🟣 Second Experiment Running with NIPS Paper Generation
-526 " ✅ Polarization Experiment Metrics Updating
-533 9:02p 🔴 Fixed missing treatment attribute in analyze_experiment()
-528 " 🔵 GAWorld polarization experiments running in parallel
-530 9:12p 🟣 Polarization experiment running dual conditions
-532 9:23p 🔵 Polarization Experiment Running with Dual Conditions
-### May 19, 2026
-534 3:13a 🟣 Created NeurIPS-format paper for polarization experiment
-535 6:20p 🔵 Skills marketplace contains oba/superpowers collection
-536 " ✅ Installed obra/superpowers@brainstorming skill globally
-537 " ✅ Installed remaining 5 obra/superpowers skills globally
-538 6:21p ✅ Installed systematic-debugging skill
-539 " ✅ Installed writing-plans skill
-540 " ✅ Installed requesting-code-review skill
-541 6:22p ✅ Completed obra/superpowers collection - all 6 skills installed
-542 " 🟣 Planning multi-agent research team for Experiment 3
-543 " 🔵 GAWorld project contains 9 experiment modules
-544 6:40p 🔵 GAWorld research vision documented in ideas.md
-545 " 🔵 GAWorld unified experiment runner framework discovered
-546 " 🔵 Exp_emotion_contagion selected as experiment for multi-agent team
-547 7:07p ⚖️ Simulation duration reduced from 150 to 50 days
-548 " 🟣 Multi-agent research team specification created
-549 7:08p 🟣 Multi-agent research team implementation plan created
-550 7:19p 🔵 generative_city_sim.py requires subcommand syntax
-551 " 🔵 generative_city_sim.py requires subcommand syntax
-552 " 🟣 Multi-agent research team architecture designed for GAWorld experiments
-553 7:33p 🔵 50-day macro economy simulation is actively running
-554 7:36p 🔵 Simulation runs full 24-hour day cycles per simulation day
-555 7:41p 🔵 50-day simulation process has stopped
-556 7:52p ⚖️ User chose 3-day simulation test to verify base simulator functionality
-557 8:13p ⚖️ User chose to run 3-day simulation in background with nohup
-558 8:14p 🟣 Multi-agent research team launched with exp_polarization data
-559 8:16p 🔵 多智能体研究团队完成exp_polarization实验
-560 " 🔵 exp_macro_economy后台仿真正在运行
-### May 20, 2026
-S180 Multi-agent research team for GAWorld Experiment 4 (exp_network_evolution) (May 20 at 4:25 AM)
-### May 24, 2026
-S181 Multi-agent research team for GAWorld Experiment 4 (exp_network_evolution) (May 24 at 8:14 PM)
-S184 Multi-agent research team completing GAWorld Experiment 4 (exp_network_evolution) - network evolution analysis (May 24 at 8:15 PM)
-S185 Multi-agent research team completing GAWorld Experiment 4 (exp_network_evolution) - network evolution analysis with 4 agents (May 24 at 8:16 PM)
-S182 Multi-agent research pipeline for GAWorld exp_network_evolution - Paper Writer completed outline, Data Analyst analyzing results (May 24 at 8:16 PM)
-S183 GAWorld multi-agent research pipeline: Paper Writer outline done, Data Analyst analyzing network metrics (May 24 at 8:16 PM)
-S186 Multi-agent research team for GAWorld exp_network_evolution - verifying experiment output files (May 24 at 8:16 PM)
-S187 构建多智能体研究小组完成实验4的网络演化分析 (May 24 at 8:16 PM)
-602 8:17p 🟣 Multi-agent research team architecture for experiment 4
-603 8:18p 🔵 agent_5_schedule.json file missing from natural_evolution experiment
-604 8:20p 🔵 exp_network_evolution.py and generative_city_sim.py running concurrently
-605 8:25p 🔵 natural_evolution experiment actively writing agent memory files
-607 " 🟣 Multi-agent research team framework for experiment 4
-606 " 🔵 exp_network_evolution.py running with active agent log updates
-608 8:37p 🔵 Multi-agent experiment 4 execution in progress
-612 " 🔵 Network analysis completed for natural_evolution experiment
-613 " 🔵 Log parsing bug: [InitLocation] lines contain empty home/work fields
-### May 25, 2026
-611 3:49a 🔴 日志解析修复成功
-S188 多智能体研究小组完成实验4初步网络分析 (May 25 at 3:49 AM)
-616 3:57a 🔵 Simulation process still running at PID 30636
-617 4:00a 🔵 Simulation DID run Day 1 with actual interactions—earlier analysis missed them
-618 4:01a 🔵 Simulation stalled at Day 1 despite process still running
-620 " 🟣 Paper draft written for network_evolution experiment
-621 " 🟣 Chinese academic paper expansion requested at ~8000 characters
-S189 多智能体研究小组完成exp_network_evolution实验（网络演化+同质性分析） (May 25 at 4:01 AM)
-622 " 🟣 Chinese academic paper completed at ~8500 characters
+### Jun 6, 2026
+836 12:49a 🔵 Job training subsidy policy comparison report details
+837 " 🔵 Network evolution natural_evolution experiment configuration
+838 " 🔵 Macro economy wellbeing dynamics: 3-day agent study findings
+839 " 🔵 Memory consistency experiment: 4 treatments designed, Phase 2 stalled in 3 of 4
+846 12:51a 🔵 Polarization diversity intervention produced null/inverse result
+847 " 🔵 Medical reform policy effect is near-zero (weakest of all 4 policies)
+848 " 🔵 Policy intervention strength ranking from comparison CSVs
+849 " 🔵 Network evolution natural_evolution interrupted at Day 1 with sparse network
+850 " 🔵 Memory consistency comparative study details: agent 34 (徐桂兰) as test subject
+851 " 🔵 Transport behavior rain weather effects quantified
+852 12:52a 🔵 Misinformation intervention reward buffering quantified
+853 " 🔵 Polarization experiment state file confirms 9.0% stance variance reduction and +3.6% polarization increase
+854 " 🔵 EXP-VAL-001 ABM validation framework: real-world Hangzhou benchmarks
+855 " 🔵 EXP-EMO-001 emotion contagion: 4 treatments with seeding design
+856 " 🔵 Unified runner ExperimentRegistry: 9 experiments with planned treatments and durations
+857 " 🔵 EXP-INFO-001 misinfo proposal: H1-H4 hypotheses and experimental design
+860 " ⚖️ Primary session pivots from retrospective summary to executing EXP-EMO-001 and EXP-VAL-001
+S258 总结已运行的GAWorld仿真实验，生成结构化markdown报告（研究问题、设计、运行、结果、发现），供后续分析与撰写参考 (Jun 6 at 12:52 AM)
+S260 Continue execution of two unrun experiments (EXP-EMO-001 emotion contagion, EXP-VAL-001 ABM validation) per user request "继续完成两个尚未运行的实验" (Jun 6 at 12:55 AM)
+S261 完成两个未运行的实验 (EXP-EMO-001 情绪传染 + EXP-VAL-001 ABM验证) (Jun 6 at 1:25 AM)
+861 1:26a 🟣 EXP-EMO-001 and EXP-VAL-001 launched as background tasks (3-day smoke tests)
+862 " 🔵 Observer harness appears to re-feed identical tool sequences 9 seconds apart
+863 1:34a 🔵 REFERENCE_BENCHMARKS is a module-level dict in exp_abm_validation.py
+864 " 🔵 EXP-EMO-001 control background task bmz7pqjrl still running, no output after 12s
+865 " 🔵 EXP-EMO-001 seed_agents target out-of-range agent IDs in TREATMENTS config
+866 1:38a 🔴 EXP-EMO-001 control background task hung for 5+ minutes with empty output
+867 1:39a 🔵 Both experiments are producing real output despite empty stdout
+868 " 🔵 State CSV output is gated behind per-step flush, not directory creation
+870 " 🔵 Primary session has path bug: looking for timeline.jsonl in logs/ but it lives in environment/
+871 " 🔴 EXP-VAL-001 failed: LLM API returned HTTP 500 with "new_sensitive" content filter
+872 " 🔵 EXP-VAL-001 silently degrades on missing economy_module and generate_agent_rag_seed
+873 " 🔵 LLM provider configuration: only 1 provider, no fallback chain
+869 1:40a 🔵 Per-agent logs exist but environment/timeline.jsonl is empty
+874 1:50a 🔴 Primary session fixed state-CSV schema mismatch in both experiment analyzers
+875 " 🔵 Transport mode data source: environment/agent_*.log not state/agent_state_history.csv
+876 1:51a 🔵 Primary session confirmed 17 prior experiments produced state/agent_state_history.csv files
+877 " 🔴 Primary session discovered ledger uses engel_coefficient (alternative spelling), not engels_coefficient
+879 " 🔴 Emotion contagion simulation stalled at Day 1 08:32 for 10+ minutes
+878 1:52a 🔵 Emotion contagion simulation is alive: Day 1 timeline has 4 events with rich detail
+880 2:01a ⚖️ Primary session killed the stalled emotion contagion run after 28:49
+881 " 🔵 hangzhou_agents_state_init.csv uses WIDE format with BOM; runtime state CSV is LONG format
+882 " ⚖️ Primary session pivots to EXP-VAL-001 after killing EXP-EMO-001
+883 2:03a 🟣 Primary session launched master run: all 4 EMO treatments + ABM validation in single task bzeah2mry
+884 " 🔵 Cleanup script wipes prior partial results before relaunch
+S263 继续等待 - 持续监控 bzeah2mry 后台仿真任务, 回应"进展如何"进度检查 (Jun 6 at 2:04 AM)
+S264 持续监控 bzeah2mry 仿真任务, 多次轮询检查状态, 决定进入 20 分钟轮询模式 (ScheduleWakeup) (Jun 6 at 7:48 AM)
+S262 进展如何 - 检查 EXP-EMO-001 (4 treatments) 和 EXP-VAL-001 的运行状态 (Jun 6 at 7:48 AM)
+S265 持续监控 bzeah2mry, 诊断 SSL 重试循环导致仿真拖慢, 主会话向用户提出 4 个选项 (Jun 6 at 7:59 AM)
+S267 用户决策"重试" — 主会话准备重跑实验, 复检 bzeah2mry 状态确认需要新启动 (Jun 6 at 8:00 AM)
+885 9:09a 🔵 LLM API DNS resolution failure killed all experiment runs
+S266 实验全面失败 — 所有 5 个仿真 (4 EMO + 1 ABM) 因 DNS 故障无法完成, 主会话向用户报告状态并提供重跑脚本 (Jun 6 at 9:09 AM)
+886 " 🔵 All experiments produced zero state CSVs before DNS failure
+887 10:39a 🔵 Network restored; cleanup triggered automatic directory recreation
+888 " ✅ Parallel background tasks launched for retry with reduced days
+889 10:40a ✅ 4 parallel Python processes running for EMO+ABM retry
+891 " ✅ EMO control treatment advancing — Day 1 00:28 in 11 minutes wall-clock
+892 " 🔵 Timeline writes throttled to ~hourly sim time, agent logs are per-action
+890 " 🔵 LLM calls now succeeding — agent preferences being generated
+893 10:50a ✅ Both experiments advancing — EMO at Day 1 08:32, ABM at 2 timeline entries
+S268 用户"重试"决策后, 主会话成功启动两个并行 bgtask, EMO 推进到 Day 1 08:32, ABM 启动并产出 timeline 数据 (Jun 6 at 10:58 AM)
+**Investigated**: - 网络恢复确认: curl https://api.minimaxi.com 返回 404 HTML 而非 DNS 错误
+    - 清理策略: 先 import-based 删除 (recreate 副作用), 再 pure-shutil 二次清理成功
+    - 重试策略: 启动两个并行 bgtask bzidxzfmr (EMO 4 treatments, days=5) + bhvlxcm54 (ABM validation, days=7)
+    - 进程数: 4 个 generative_city_sim 进程 (2 父 bgtask + 2 子 simulation)
+    - EMO control 进度: 00:28 → 08:32 (8h 4min 模拟时间), 3 行 timeline
+    - ABM validation 进度: 2 行 timeline 启动
+    - 4 个 EMO treatment 目录: 只有 control/ 在运行
 
-Access 2883k tokens of past work via get_observations([IDs]) or mem-search skill.
+**Learned**: - **网络恢复后 LLM API 真实可用**: agent_1.log 输出结构化偏好数据 (编程技能 priority 0.68, 运动 priority 0.60) 证明 API 返回有效内容
+    - **Timeline 写入与 agent log 写入节奏不同**: agent log 持续更新, timeline 约每小时模拟时间才刷一次 (throttled)
+    - **Timeline 与 agent log 的 mtime 差异**: 揭示 timeline writer 全局锁/批量 flush 行为
+    - **推进速度估算**: 8h 模拟时间 / ~3-4 min wall-clock ≈ 120x realtime (比 bzeah2mry 估算的 0.39x 显著更好)
+    - **降低天数有效**: 5 天 vs 原 14 天, 7 天 vs 原 30 天, 大幅减少暴露在 API 风险下的时间窗口
+    - **并行策略有效**: EMO 和 ABM 同步推进, 互不阻塞
+    - **状态 CSV 仍在等待**: state/ 目录尚未生成, 需要每个 treatment 完成才会落盘
+    - **Timeline throttling rate**: ~1 entry per ~30-60 sim minutes, 跟 bzeah2mry run 的 101 entries / 4 days 一致
+
+**Completed**: - 网络健康检查 ✅
+    - 旧失败结果清理 ✅
+    - 重试命令准备 (5-7 天简化版) ✅
+    - 两个并行 bgtask 启动并运行中 ✅
+    - EMO control 推进至 Day 1 08:32 (3 行 timeline)
+    - ABM validation 启动并产出 2 行 timeline
+    - 实时监控机制建立 (timeline + agent log + 进程数)
+
+**Next Steps**: - 继续等待 EMO control 跑完 Day 1 → Day 5 (预计 45 min - 1.5h)
+    - 完成后 4 个 EMO treatment 顺序执行 (control → happy → sad → sparse)
+    - ABM validation 7 天并行进行
+    - 每 5-10 分钟检查 timeline 进度
+    - 关注: 是否有新的网络中断, 是否有 step_history 持久化触发
+    - 最终: 跑 compare_treatments() + generate_report()
 </claude-mem-context>
