@@ -155,13 +155,31 @@ def track_a_macro_fit(output_dir: Path) -> dict:
 
 
 # ── Track C ──────────────────────────────────────────────────────────────────
-def _delta_mean(metrics_csv: Path, metric: str):
+# A1: score on the POST-EVENT effect (delta_final), not delta_mean. delta_mean
+# averages over the whole run incl. pre-event steps and dilutes the signal 5-7x
+# (see IMPROVEMENT_PLAN.md R1). delta_mean is kept only as a reference field.
+EFFECT_COL = "delta_final"
+
+
+def _event_effect(metrics_csv: Path, metric: str) -> dict | None:
+    """Return {effect, delta_final, delta_mean} for a metric, or None if absent.
+
+    `effect` is delta_final (post-event); falls back to delta_mean if the column
+    is missing (older outputs).
+    """
     for r in read_csv_rows(metrics_csv):
-        if r.get("metric") == metric:
+        if r.get("metric") != metric:
+            continue
+        def _get(col):
             try:
-                return float(r["delta_mean"])
+                return float(r[col])
             except (KeyError, ValueError):
                 return None
+        final, mean = _get("delta_final"), _get("delta_mean")
+        effect = final if final is not None else mean
+        if effect is None:
+            return None
+        return {"effect": effect, "delta_final": final, "delta_mean": mean}
     return None
 
 
@@ -171,32 +189,37 @@ def _metrics_path(src: Path) -> Path:
 
 
 def track_c_causal(sign_sources: dict[str, Path], placebo_dir: Path | None,
-                   det_a: Path | None, det_b: Path | None) -> dict:
-    """Causal validity: sign-correctness + placebo + determinism.
+                   det_a: Path | None, det_b: Path | None,
+                   incomplete: list[Path] | None = None) -> dict:
+    """Causal validity: sign-correctness (post-event) + placebo + determinism.
 
     sign_sources maps a sign-test name -> comparison dir (or metrics csv).
     """
     out = {"track": "C", "status": "ok"}
 
-    # C1 — known-sign
+    # C1 — known-sign, scored on the post-event effect (delta_final; A1)
     sign_results = []
     for t in SIGN_TESTS:
         src = sign_sources.get(t["name"])
         mcsv = _metrics_path(src) if src else None
-        delta = _delta_mean(mcsv, t["metric"]) if mcsv and mcsv.exists() else None
+        eff = _event_effect(mcsv, t["metric"]) if mcsv and mcsv.exists() else None
+        delta = eff["effect"] if eff else None
         ok = delta is not None and (delta * t["sign"] > 0)
         sign_results.append({**{k: t[k] for k in ("name", "metric", "sign", "why")},
-                             "delta_mean": delta, "correct": ok})
-    n_eval = sum(1 for r in sign_results if r["delta_mean"] is not None)
+                             "delta": delta,
+                             "delta_final": eff["delta_final"] if eff else None,
+                             "delta_mean": eff["delta_mean"] if eff else None,
+                             "correct": ok})
+    n_eval = sum(1 for r in sign_results if r["delta"] is not None)
     n_ok = sum(1 for r in sign_results if r["correct"])
     sign_score = (n_ok / n_eval) if n_eval else 0.0
-    out["sign"] = {"score": round(sign_score, 4), "n_eval": n_eval,
-                   "n_correct": n_ok, "tests": sign_results}
+    out["sign"] = {"score": round(sign_score, 4), "n_eval": n_eval, "n_correct": n_ok,
+                   "effect_col": EFFECT_COL, "tests": sign_results}
 
-    # C2 — placebo / null event
+    # C2 — placebo / null event (post-event effect)
     if placebo_dir and (placebo_dir / "comparison_metrics.csv").exists():
         rows = read_csv_rows(placebo_dir / "comparison_metrics.csv")
-        deltas = _floats(rows, "delta_mean")
+        deltas = _floats(rows, EFFECT_COL) or _floats(rows, "delta_mean")
         within = [abs(d) < PLACEBO_EPS for d in deltas]
         placebo_score = (sum(within) / len(within)) if within else 0.0
         worst = max((abs(d) for d in deltas), default=0.0)
@@ -204,27 +227,36 @@ def track_c_causal(sign_sources: dict[str, Path], placebo_dir: Path | None,
                           "n_metrics": len(deltas), "max_abs_delta": round(worst, 4)}
     else:
         placebo_score = None
-        out["placebo"] = {"score": None, "note": "no placebo comparison provided"}
+        out["placebo"] = {"score": None, "note": "no completed placebo comparison"}
 
-    # C3 — determinism (same seed, two baseline runs → identical trajectory)
+    # C3 — determinism (tri-state: ok / fail / unassessed; A4)
     if det_a and det_b and det_a.exists() and det_b.exists():
         det_score, n = _determinism_score(det_a, det_b)
-        out["determinism"] = {"score": round(det_score, 6), "n_points": n}
+        det_status = "ok" if det_score >= 1.0 - 1e-12 else "fail"
+        out["determinism"] = {"score": round(det_score, 6), "n_points": n, "status": det_status}
     else:
         det_score = None
-        out["determinism"] = {"score": None, "note": "no baseline pair provided"}
+        out["determinism"] = {"score": None, "status": "unassessed",
+                              "note": "no baseline pair provided"}
 
-    # aggregate (weights from design doc §2 Track C)
-    parts, weights = [], []
-    parts.append(sign_score);                weights.append(0.5)
+    # A5 — runs that matched a keyword but never produced comparison_metrics.csv
+    if incomplete:
+        out["incomplete"] = [p.name for p in incomplete]
+
+    # aggregate: weighted mean of available sub-scores, then coverage discount (A3)
+    parts, weights = [sign_score], [0.5]
     if placebo_score is not None:
-        parts.append(placebo_score);         weights.append(0.25)
+        parts.append(placebo_score); weights.append(0.25)
     if det_score is not None:
-        parts.append(det_score);             weights.append(0.25)
-    score = sum(p * w for p, w in zip(parts, weights)) / sum(weights)
-    out["score"] = round(score, 4)
-    out["pass"] = (sign_score >= 0.75) and (placebo_score is None or placebo_score >= 0.8)
-    out["gate_determinism_ok"] = (det_score is None) or (det_score >= 1.0 - 1e-12)
+        parts.append(det_score); weights.append(0.25)
+    base = sum(p * w for p, w in zip(parts, weights)) / sum(weights)
+    coverage = n_eval / len(SIGN_TESTS)
+    out["coverage"] = round(coverage, 4)
+    out["score_uncovered"] = round(base, 4)        # before coverage discount
+    out["score"] = round(base * coverage, 4)        # coverage-discounted (A3)
+    out["pass"] = (sign_score >= 0.75) and (placebo_score is None or placebo_score >= 0.8) \
+        and (coverage >= 0.75)
+    out["det_status"] = out["determinism"]["status"]
     return out
 
 
@@ -246,23 +278,33 @@ def _determinism_score(a: Path, b: Path) -> tuple[float, int]:
     return match / len(keys), len(keys)
 
 
-def resolve_from_comparisons(root: Path) -> tuple[dict[str, Path], Path | None]:
-    """Classify existing comparison dirs by keyword; newest match per key wins."""
+def resolve_from_comparisons(
+        root: Path) -> tuple[dict[str, Path], Path | None, list[Path]]:
+    """Classify existing comparison dirs by keyword; newest match per key wins.
+
+    Also returns `incomplete`: dirs that match a keyword but never produced
+    comparison_metrics.csv (interrupted runs; A5).
+    """
     sign_sources: dict[str, Path] = {}
     placebo: Path | None = None
+    incomplete: list[Path] = []
     if not root.exists():
-        return sign_sources, placebo
-    dirs = sorted((p for p in root.iterdir()
-                   if p.is_dir() and (p / "comparison_metrics.csv").exists()),
-                  key=lambda p: p.stat().st_mtime)
-    for d in dirs:  # newer dirs come later and overwrite older matches
+        return sign_sources, placebo, incomplete
+    keyword_sets = [*INTERVENTION_KEYWORDS.values(), PLACEBO_KEYWORDS]
+    for d in sorted((p for p in root.iterdir() if p.is_dir()),
+                    key=lambda p: p.stat().st_mtime):  # newer overwrites older
         nm = d.name.lower()
+        matched = any(any(k.lower() in nm for k in kws) for kws in keyword_sets)
+        if not (d / "comparison_metrics.csv").exists():
+            if matched:
+                incomplete.append(d)
+            continue
         for key, kws in INTERVENTION_KEYWORDS.items():
             if any(k.lower() in nm for k in kws):
                 sign_sources[key] = d
         if any(k.lower() in nm for k in PLACEBO_KEYWORDS):
             placebo = d
-    return sign_sources, placebo
+    return sign_sources, placebo, incomplete
 
 
 def _run_compare_event(name: str, desc: str, days: int, seed: int,
@@ -310,9 +352,10 @@ def build_scorecard(tracks: dict) -> dict:
                    if isinstance(v, dict) and v.get("status") == "ok"}
     composite = (statistics.fmean([v["score"] for v in implemented.values()])
                  if implemented else None)
-    # trust gate: determinism failure poisons the whole card
-    c = tracks.get("C", {})
-    trust = "OK" if c.get("gate_determinism_ok", True) else "UNTRUSTWORTHY"
+    # trust gate (A4, tri-state): determinism failure poisons the card;
+    # never-tested determinism is UNVERIFIED, not a free OK.
+    det_status = tracks.get("C", {}).get("det_status")  # ok / fail / unassessed / None
+    trust = {"fail": "UNTRUSTWORTHY", "ok": "OK"}.get(det_status, "UNVERIFIED")
     passed = [k for k, v in implemented.items() if v.get("pass")]
     headline = (min(passed, key=lambda k: implemented[k]["score"])
                 if passed else None)
@@ -346,11 +389,13 @@ def render_scorecard_md(sc: dict) -> str:
     if c.get("status") == "ok":  # coverage transparency: a 1.0 from 1/4 tests is not full validation
         sign = c.get("sign", {})
         plc = c.get("placebo", {}).get("score")
-        det = c.get("determinism", {}).get("score")
-        L += ["", f"- Track C 覆盖度: 符号 {sign.get('n_correct')}/{sign.get('n_eval')} "
-                  f"(共 {len(SIGN_TESTS)} 项已配置) · 安慰剂 "
-                  f"{'未评估' if plc is None else plc} · 确定性 "
-                  f"{'未评估' if det is None else det}"]
+        det_status = c.get("determinism", {}).get("status", "未评估")
+        L += ["", f"- Track C: 符号 {sign.get('n_correct')}/{sign.get('n_eval')} 正确"
+                  f"（覆盖 {c.get('coverage')}，按 `{sign.get('effect_col')}` 事件后效应）"
+                  f" · 安慰剂 {'未评估' if plc is None else plc}"
+                  f" · 确定性 {det_status}"]
+        if c.get("incomplete"):
+            L.append(f"- ⚠️ 运行未完成（缺 comparison_metrics.csv）: {', '.join(c['incomplete'])}")
     return "\n".join(L) + "\n"
 
 
@@ -393,25 +438,31 @@ def _report_track_a(t: dict) -> tuple[list[str], list[str]]:
 def _report_track_c(t: dict) -> tuple[list[str], list[str]]:
     lines, recs = [], []
     sign = t.get("sign", {})
-    lines.append(f"符号覆盖：{sign.get('n_correct')}/{sign.get('n_eval')}"
-                 f"（共 {len(SIGN_TESTS)} 项配置）。")
+    lines.append(f"符号 {sign.get('n_correct')}/{sign.get('n_eval')} 正确"
+                 f"（覆盖 {t.get('coverage')}，按 `{sign.get('effect_col')}` 事件后效应）。")
     failed = []
     for r in sign.get("tests", []):
-        if r["delta_mean"] is None:
+        if r["delta"] is None:
             lines.append(f"- `{r['name']}/{r['metric']}`: 无对应运行（未评估）")
         else:
             mark = "✓" if r["correct"] else "✗"
             arrow = "↑" if r["sign"] > 0 else "↓"
-            lines.append(f"- `{r['name']}/{r['metric']}`: Δ={r['delta_mean']:+.4f} 期望{arrow} {mark}")
+            ref = "" if r["delta_mean"] is None else f"（delta_mean {r['delta_mean']:+.4f}）"
+            lines.append(f"- `{r['name']}/{r['metric']}`: Δ={r['delta']:+.4f} 期望{arrow} {mark}{ref}")
             if not r["correct"]:
                 failed.append(r)
+    if t.get("incomplete"):
+        lines.append(f"- ⚠️ 运行未完成: {', '.join(t['incomplete'])}")
+        recs.append(f"补跑未完成的对照（{', '.join(t['incomplete'])}）：重跑 compare-event "
+                    "直到生成 comparison_metrics.csv。")
     if failed:
-        mx = max(abs(r["delta_mean"]) for r in failed)
+        mx = max(abs(r["delta"]) for r in failed)
         if mx < PLACEBO_EPS:
             recs.append(f"失败项效应量极小（|Δ|≤{mx:.3f}，与安慰剂同量级）→ 符号由噪声主导，"
                         "不是『方向反了』。经济类干预改用 ≥30 天仿真，并加显著性检验（跨 seed/agent）。")
         else:
-            recs.append(f"失败项效应明显（|Δ|max={mx:.3f}）却方向相反 → 检查事件→指标的因果接线是否接反。")
+            recs.append(f"失败项效应明显（|Δ|max={mx:.3f}）却方向相反 → 检查事件→指标因果接线是否接反"
+                        "（如裁员事件是否真正触发 economy 的收入冲击，而非仅注入感知文本）。")
     if sign.get("n_eval", 0) < len(SIGN_TESTS):
         recs.append(f"符号覆盖不足（{sign.get('n_eval')}/{len(SIGN_TESTS)}）：用 `--run` 补跑缺失干预。")
     plc = t.get("placebo", {}).get("score")
@@ -514,9 +565,10 @@ def make_synthetic(root: Path) -> dict:
 def _write_metrics(path: Path, deltas: list[tuple[str, float]]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["metric", "baseline_mean", "event_mean", "delta_mean"])
-        for m, d in deltas:
-            w.writerow([m, 0.5, 0.5 + d, d])
+        w.writerow(["metric", "baseline_final", "event_final", "delta_final",
+                    "baseline_mean", "event_mean", "delta_mean"])
+        for m, d in deltas:  # synthetic: delta_final == delta_mean == d
+            w.writerow([m, 0.5, 0.5 + d, d, 0.5, 0.5 + d, d])
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -565,14 +617,15 @@ def main() -> int:
                                               args.det_a, args.det_b)
         else:
             root = args.comparisons_root or COMPARISONS_OUT  # default: scan output/comparisons
-            ss, auto_placebo = resolve_from_comparisons(root)
+            ss, auto_placebo, incomplete = resolve_from_comparisons(root)
             placebo = args.placebo_dir or auto_placebo
-            if not ss and placebo is None:
+            if not ss and placebo is None and not incomplete:
                 tracks["C"] = {"track": "C", "status": "n/a",
                                "note": f"在 {root} 未找到可匹配的 comparison 运行; "
                                        "用 --run 实跑或先生成 compare-event 结果"}
             else:
-                tracks["C"] = track_c_causal(ss, placebo, args.det_a, args.det_b)
+                tracks["C"] = track_c_causal(ss, placebo, args.det_a, args.det_b,
+                                             incomplete=incomplete)
     tracks.setdefault("B", {"status": "n/a", "note": "未实现 (v0.3)"})
     tracks.setdefault("D", {"status": "n/a", "note": "未实现 (v0.4)"})
     tracks.setdefault("E", {"status": "n/a", "note": "确定性见 Track C; 成本未实现 (v0.2)"})

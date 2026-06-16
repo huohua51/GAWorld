@@ -173,6 +173,9 @@ DEFAULT_ECONOMY_CONFIG = {
         "enabled": True,
         # Per-agent daily probability of each shock type
         "layoff_base_prob": 0.001,
+        # When a layoff-type policy/environment event is active today, raise each
+        # agent's layoff probability to at least this (event -> economy bridge).
+        "event_layoff_prob": 0.6,
         "raise_base_prob": 0.008,
         "medical_emergency_prob": 0.0005,
         "medical_cost_range": (2000.0, 50000.0),
@@ -698,9 +701,41 @@ def _macro_expense_multiplier(macro_state, cfg):
 # 8. SHOCK EVENTS
 # ---------------------------------------------------------------------------
 
-def _check_daily_shocks(agent, econ, cfg, macro_state):
-    """Check and apply daily random economic shocks.
+# Keywords that mark a policy/environment event as a layoff shock.
+_LAYOFF_EVENT_KEYWORDS = ("裁员", "失业", "layoff")
 
+
+def _active_event_layoff(context):
+    """True if a policy event scheduled for today matches a layoff keyword.
+
+    Bridges the perception-only event channel (config["policy_events"]) to the
+    economy shock system: an injected '裁员/layoff' event should actually cut
+    income, not merely appear in the agent's perception text.
+    """
+    if not isinstance(context, dict):
+        return False
+    day = context.get("day")
+    config = context.get("config", {})
+    events = config.get("policy_events", []) if isinstance(config, dict) else []
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        try:
+            if int(e.get("day", -1)) != int(day):
+                continue
+        except (TypeError, ValueError):
+            continue
+        text = f"{e.get('name', '')} {e.get('description', '')}".lower()
+        if any(k.lower() in text for k in _LAYOFF_EVENT_KEYWORDS):
+            return True
+    return False
+
+
+def _check_daily_shocks(agent, econ, cfg, macro_state, event_layoff=False):
+    """Check and apply daily economic shocks.
+
+    `event_layoff=True` forces an elevated layoff probability because a
+    layoff-type event is active today (see _active_event_layoff).
     Returns list of shock event dicts (may be empty).
     """
     shocks_cfg = cfg.get("shocks", {})
@@ -720,6 +755,11 @@ def _check_daily_shocks(agent, econ, cfg, macro_state):
     state = agent.get("state", {}) if isinstance(agent, dict) else {}
     econ_sec = _to_float(state.get("econ_security", 0.5), 0.5)
     layoff_prob *= (1.2 - 0.4 * econ_sec)
+    # Event-driven layoff: a 裁员/layoff event today floors the probability so
+    # affected agents actually take an income hit (not just perception text).
+    if event_layoff and not econ.get("_layoff_days_remaining", 0):
+        layoff_prob = max(layoff_prob,
+                          _to_float(shocks_cfg.get("event_layoff_prob", 0.6), 0.6))
 
     if random.random() < layoff_prob:
         # Layoff: income drops significantly for a period
@@ -733,6 +773,7 @@ def _check_daily_shocks(agent, econ, cfg, macro_state):
             "type": "layoff",
             "income_cut_pct": round(income_cut * 100, 1),
             "recovery_days": econ["_layoff_days_remaining"],
+            "trigger": "event" if event_layoff else "random",
         })
 
     # --- Raise / promotion ---
@@ -1270,6 +1311,9 @@ def on_day_start(context):
     _advance_macro_cycle(macro_state, cfg)
     runtime["sim_day_counter"] = runtime.get("sim_day_counter", 0) + 1
 
+    # Is a layoff-type policy event active today? (event -> economy bridge)
+    event_layoff = _active_event_layoff(context)
+
     for agent in context.get("agents", []):
         econ = agent.get("economy", {})
         if not isinstance(econ, dict):
@@ -1305,7 +1349,7 @@ def on_day_start(context):
             _record_expense(econ, "housing", utilities * expense_mult)
 
         # Check shock events
-        shocks = _check_daily_shocks(agent, econ, cfg, macro_state)
+        shocks = _check_daily_shocks(agent, econ, cfg, macro_state, event_layoff=event_layoff)
         if shocks:
             econ.setdefault("shock_log", []).extend(shocks)
 

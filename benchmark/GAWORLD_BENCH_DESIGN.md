@@ -1,6 +1,6 @@
 # GAWorld-Bench 设计文档
 
-**版本**：v0.1 ·  **日期**：2026-06-06 ·  **状态**：草案（Track A + Track C 已实现 harness）
+**版本**：v0.1.1 ·  **日期**：2026-06-15 ·  **状态**：Track A + Track C 已实现 harness（A1/A3/A4/A5 已落地）
 
 ---
 
@@ -95,16 +95,22 @@ Park et al. 生成式智能体的 believability 评估、计算社会科学的 s
 
 `sign_score = 符号正确的干预数 / 总数`。
 
+> **v0.1.1 关键修正（A1）**：符号检验按**事件后效应 `delta_final`** 打分，**不再用 `delta_mean`**。
+> `delta_mean` 对整段仿真（含事件前）求平均，会把信号稀释 5–7 倍（实测 traffic 的 `mobility_intent`：
+> `delta_mean +0.0068` vs `delta_final +0.3368`，49×）。`delta_mean` 仅作参考列保留。
+
 **C2 安慰剂 / 空事件测试**（少有人做，但能戳穿"任何扰动都被讲成故事"）：
-注入一个无意义事件（如"市图书馆闭馆时间微调 10 分钟"），期望所有指标 `|delta_mean| < ε`（默认 ε=0.05）。
+注入一个无意义事件（如"市图书馆闭馆时间微调 10 分钟"），期望所有指标 `|delta_final| < ε`（默认 ε=0.05）。
 `placebo_score = 通过的指标占比`。
 
 **C3 控制有效性 / 确定性**：同 seed 跑两次 baseline，对照轨迹应逐 step 完全一致（浮点容差 1e-9）。
-`determinism_score = 一致的 (agent,step,metric) 占比`。
+`determinism_score = 一致的 (agent,step,metric) 占比`。三态：`ok`（=1.0）/ `fail`（<1.0）/ `unassessed`（未提供 baseline 对）。
 
-**评分**：`score_C = 0.5·sign_score + 0.25·placebo_score + 0.25·determinism_score`。
-**Pass 门槛**：`sign_score ≥ 0.75` **且** `placebo_score ≥ 0.8`。
-**Gate**：`determinism_score < 1.0` 时整张 scorecard 标记 `UNTRUSTWORTHY`（见 §4）。
+**评分**：`score_C = (0.5·sign + 0.25·placebo + 0.25·det) × coverage`，
+其中 `coverage = n_eval / 已配置项数`（A3 覆盖度折扣，防止只跑 1 项却看似满分）。
+**Pass 门槛**：`sign_score ≥ 0.75` **且** `placebo_score ≥ 0.8` **且** `coverage ≥ 0.75`。
+**Gate**（A4，三态）：`det=fail → UNTRUSTWORTHY`；`det=unassessed → UNVERIFIED`（不再白送 OK）；`det=ok → OK`。
+**A5**：匹配到关键词但缺 `comparison_metrics.csv` 的运行标记为"未完成"并在报告提示重跑。
 
 ### Track D — 可信度与人设一致性
 
@@ -143,17 +149,17 @@ GAWorld-Bench Scorecard
   Track B  Stylized-facts    n/a    (未实现)
   Track C  因果反事实         0.xx   [PASS/FAIL]   ⭐
   Track D  可信度一致性       n/a    (未实现)
-  Track E  可复现/成本        gate   [OK/UNTRUSTWORTHY]
+  Track E  可复现/成本        gate   [OK/UNVERIFIED/UNTRUSTWORTHY]
   ----------------------------------------------------
-  Headline: <weakest passing track>  ·  Trust gate: OK/UNTRUSTWORTHY
+  Headline: <weakest passing track>  ·  Trust gate: OK/UNVERIFIED/UNTRUSTWORTHY
 ```
 
 聚合规则：
 
 - **不计算单一总分。** 默认展示分项 + 雷达图。
 - 可选 `composite = mean(已实现 track 的 score)`，仅用于追踪趋势，并始终附"弱证据"注记。
-- **Trust gate**：任一 gate（确定性、解析失败率）失败 → 整张表 `UNTRUSTWORTHY`，
-  上层分数仅供参考。
+- **Trust gate（三态）**：确定性 `fail` → `UNTRUSTWORTHY`；从未测试 → `UNVERIFIED`（不白送 OK）；
+  `ok` → `OK`。门槛失败时上层分数仅供参考。
 - **Headline = 最弱的已通过 track**（木桶原理）：报告短板而非平均。
 
 ---
@@ -246,8 +252,9 @@ python gaworld_bench.py --all --run --days 3 --seed 42
 
 ## 7. 路线图
 
-- **v0.1（本次）**：Track A（真实锚点 + schema 修正）、Track C（符号 + 安慰剂 + 确定性）、scorecard 聚合、合成模式。
-- **v0.2**：Track E 成本/失败率解析、跨 seed 跑批与 CV。
+- **v0.1**：Track A（真实锚点 + schema 修正）、Track C（符号 + 安慰剂 + 确定性）、scorecard 聚合、合成模式。
+- **v0.1.1（已落地）**：A1 事件后效应 `delta_final`、A3 覆盖度折扣、A4 确定性三态 gate（UNVERIFIED）、A5 未完成运行检测、每次运行自动报告。
+- **v0.2**：A2 跨 seed 显著性/置信区间、Track E 成本/失败率解析、CV。
 - **v0.3**：Track B stylized-facts 判据（接 emotion_contagion / network_evolution）。
 - **v0.4**：Track D LLM-judge 评分卡（接 interview / memory_consistency）。
 

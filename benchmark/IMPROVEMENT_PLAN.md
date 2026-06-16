@@ -5,6 +5,12 @@
 **范围**：本计划同时覆盖两条工作流——① benchmark 方法学修正，② 模型/仿真修正。
 两者必须分开：上次的"失败"里有一部分是 **benchmark 配置/度量的假象**，不是模型缺陷。先修方法学，再据此定位模型。
 
+> **执行状态（2026-06-15 更新）**：
+> ✅ **A1 / A3 / A4 / A5 已实现并验证**（见 `gaworld_bench.py`，设计文档 v0.1.1）。
+> 改用 `delta_final` 后 Track C 由 0.25→0.50（符号 2/4：traffic、tax 转正确；layoff 仍反向且 |Δ|≈0.13–0.19）。trust gate 现为 **UNVERIFIED**（确定性未测）。
+> ✅ **B1 已实现并验证**：在 `gaworld/economy/finance.py` 加了事件→经济冲击桥（`_active_event_layoff` + `_check_daily_shocks(event_layoff=...)` + `on_day_start` 接线 + `shocks.event_layoff_prob` 配置）。裁员事件现在**真正削减受影响 agent 收入**（之前只注入感知文本）。测试 `tests/test_event_economy_shock.py`（6 例全过），既有 30 例经济测试不回归。**注**：`econ_security` 是慢 EMA、`stress` 由行为层更新——二者在更长仿真（B2）才会跟随，本次只证明了缺失的因果链（事件→收入冲击）已接通。
+> ⏳ 待办：**A2**（跨 seed 显著性）、**B2**（≥30 天重跑验证 layoff 符号翻正）、**B3/B4**（Track A）。
+
 ---
 
 ## 0. 结论先行（TL;DR）

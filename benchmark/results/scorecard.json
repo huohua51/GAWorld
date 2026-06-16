@@ -1,7 +1,7 @@
 {
-  "generated": "2026-06-07T12:06:55",
-  "trust_gate": "OK",
-  "composite_hint": 0.3175,
+  "generated": "2026-06-15T00:58:15",
+  "trust_gate": "UNVERIFIED",
+  "composite_hint": 0.4425,
   "headline_track": null,
   "tracks": {
     "A": {
@@ -31,15 +31,18 @@
       "track": "C",
       "status": "ok",
       "sign": {
-        "score": 0.25,
+        "score": 0.5,
         "n_eval": 4,
-        "n_correct": 1,
+        "n_correct": 2,
+        "effect_col": "delta_final",
         "tests": [
           {
             "name": "traffic_restriction",
             "metric": "mobility_intent",
             "sign": 1,
             "why": "限行→出行摩擦上升→流动意愿上升",
+            "delta": 0.3367721709501239,
+            "delta_final": 0.3367721709501239,
             "delta_mean": 0.006816445170920282,
             "correct": true
           },
@@ -48,6 +51,8 @@
             "metric": "econ_security",
             "sign": -1,
             "why": "裁员→收入骤降→经济安全感下降",
+            "delta": 0.133008693307404,
+            "delta_final": 0.133008693307404,
             "delta_mean": 0.019573677264325906,
             "correct": false
           },
@@ -56,6 +61,8 @@
             "metric": "stress",
             "sign": 1,
             "why": "裁员→压力上升",
+            "delta": -0.19199639751733327,
+            "delta_final": -0.19199639751733327,
             "delta_mean": -0.03293028666376002,
             "correct": false
           },
@@ -64,22 +71,32 @@
             "metric": "econ_security",
             "sign": 1,
             "why": "减税→可支配收入上升→经济安全感上升",
+            "delta": 0.020140241063553277,
+            "delta_final": 0.020140241063553277,
             "delta_mean": -0.008559226379740603,
-            "correct": false
+            "correct": true
           }
         ]
       },
       "placebo": {
         "score": null,
-        "note": "no placebo comparison provided"
+        "note": "no completed placebo comparison"
       },
       "determinism": {
         "score": null,
+        "status": "unassessed",
         "note": "no baseline pair provided"
       },
-      "score": 0.25,
+      "incomplete": [
+        "20260215_230503_临时交通限行",
+        "20260606_103918_临时交通限行",
+        "20260606_113627_图书馆闭馆时间微调"
+      ],
+      "coverage": 1.0,
+      "score_uncovered": 0.5,
+      "score": 0.5,
       "pass": false,
-      "gate_determinism_ok": true
+      "det_status": "unassessed"
     },
     "B": {
       "status": "n/a",
