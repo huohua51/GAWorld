@@ -3179,6 +3179,20 @@ def run_simulation():
                     append_agent_log(agent, header + routine_text + "\n")
                     daily_routine_logged[agent_id] = True
                 if time_str in info_schedule.get(agent_id, set()):
+                    scheduled_keywords = None
+                    if INFO_SEEK_CONFIG.get("contextual_keywords", True):
+                        _ctx = assemble_curiosity_context(
+                            agent,
+                            scheduled_activity=get_activity_for_time(schedule_map[agent_id], time_str),
+                            recent_events=[
+                                _format_external_env_event(ev) for ev in (env_events or [])
+                            ],
+                            day=day,
+                            time_str=time_str,
+                        )
+                        scheduled_keywords = propose_contextual_keywords(
+                            agent, _ctx, config=INFO_SEEK_CONFIG
+                        ) or None
                     _, info_log, result_url, query = info_seek_and_store(
                         agent,
                         day=day,
@@ -3188,6 +3202,7 @@ def run_simulation():
                         preferred_sites=preferred_sites_map.get(agent_id, []),
                         seen_urls=daily_info_seen[agent_id],
                         used_queries=daily_query_seen[agent_id],
+                        keywords=scheduled_keywords,
                         config=INFO_SEEK_CONFIG,
                     )
                     if query:
