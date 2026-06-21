@@ -51,3 +51,49 @@ def assemble_curiosity_context(
         "day": day,
         "time_str": time_str,
     }
+
+
+def should_seek_knowledge(
+    agent: dict[str, Any],
+    context: dict[str, Any],
+    *,
+    budget_left: int,
+    config: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """Cheap heuristic gate. Returns ``(trigger?, reason)``.
+
+    A hard condition must hold first (fresh event / high stress / high
+    estimated curiosity / salient growth focus); then a single
+    ``trigger_chance_on_event`` dice roll smooths the frequency.
+    """
+    cfg = (config or {}).get("event_driven", {}) or {}
+    if not cfg.get("enabled", True):
+        return False, ""
+    if budget_left <= 0:
+        return False, ""
+
+    stress_threshold = float(cfg.get("stress_threshold", 0.6))
+    curiosity_threshold = float(cfg.get("curiosity_threshold", 0.6))
+
+    reason = ""
+    if context.get("recent_events"):
+        reason = "event"
+    elif float(context.get("state", {}).get("stress", 0.5)) >= stress_threshold:
+        reason = "stress"
+    elif _curiosity_score(agent) >= curiosity_threshold:
+        reason = "curiosity"
+    elif context.get("growth_focus"):
+        reason = "growth"
+    if not reason:
+        return False, ""
+
+    chance = float(cfg.get("trigger_chance_on_event", 0.5))
+    if random.random() > chance:
+        return False, ""
+    return True, reason
+
+
+def _curiosity_score(agent: dict[str, Any]) -> float:
+    """Reuse the existing curiosity estimator from the news module."""
+    from gaworld.sim._news import _estimate_curiosity
+    return _estimate_curiosity(agent)

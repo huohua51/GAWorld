@@ -1,3 +1,4 @@
+import random
 import unittest
 
 from gaworld.sim import _curiosity
@@ -38,6 +39,74 @@ class TestAssembleContext(unittest.TestCase):
         self.assertIn("理财", ctx["growth_focus"])
         self.assertEqual(ctx["day"], 2)
         self.assertEqual(ctx["time_str"], "12:30")
+
+
+class TestShouldSeekKnowledge(unittest.TestCase):
+    CONFIG = {
+        "event_driven": {
+            "enabled": True,
+            "stress_threshold": 0.6,
+            "curiosity_threshold": 0.6,
+            "trigger_chance_on_event": 0.5,
+        }
+    }
+
+    def _ctx(self, **over):
+        base = {
+            "activity": "跑单途中",
+            "recent_events": [],
+            "state": {"stress": 0.3, "econ_security": 0.5},
+            "growth_focus": [],
+            "day": 1,
+            "time_str": "10:00",
+        }
+        base.update(over)
+        return base
+
+    def test_no_trigger_when_disabled(self):
+        cfg = {"event_driven": {"enabled": False}}
+        ok, reason = _curiosity.should_seek_knowledge(
+            _agent(), self._ctx(recent_events=["x"]), budget_left=5, config=cfg
+        )
+        self.assertFalse(ok)
+
+    def test_no_trigger_when_budget_exhausted(self):
+        ok, _ = _curiosity.should_seek_knowledge(
+            _agent(), self._ctx(recent_events=["x"]), budget_left=0, config=self.CONFIG
+        )
+        self.assertFalse(ok)
+
+    def test_no_trigger_when_no_hard_condition(self):
+        # stress low, no events, no growth focus, low curiosity -> no hard condition
+        agent = _agent()
+        agent["state"]["platform_dependence"] = 0.1
+        agent["state"]["risk_preference"] = 0.1
+        ok, _ = _curiosity.should_seek_knowledge(
+            agent, self._ctx(state={"stress": 0.1, "econ_security": 0.5}, growth_focus=[]),
+            budget_left=5, config=self.CONFIG,
+        )
+        self.assertFalse(ok)
+
+    def test_event_triggers_when_dice_low(self):
+        random.seed(0)
+        # With trigger_chance 1.0 a hard condition (fresh event) always fires.
+        cfg = {"event_driven": {"enabled": True, "stress_threshold": 0.6,
+                                "curiosity_threshold": 0.6, "trigger_chance_on_event": 1.0}}
+        ok, reason = _curiosity.should_seek_knowledge(
+            _agent(), self._ctx(recent_events=["平台调整配送费"]), budget_left=5, config=cfg
+        )
+        self.assertTrue(ok)
+        self.assertEqual(reason, "event")
+
+    def test_high_stress_is_hard_condition(self):
+        cfg = {"event_driven": {"enabled": True, "stress_threshold": 0.6,
+                                "curiosity_threshold": 0.6, "trigger_chance_on_event": 1.0}}
+        ok, reason = _curiosity.should_seek_knowledge(
+            _agent(), self._ctx(state={"stress": 0.8, "econ_security": 0.4}),
+            budget_left=5, config=cfg,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(reason, "stress")
 
 
 if __name__ == "__main__":
