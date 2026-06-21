@@ -178,5 +178,21 @@ class TestNewsKeywordsParam(unittest.TestCase):
         self.assertEqual(target["url"], "https://ex.com/a")
 
 
+from gaworld.settings import behavior as _behavior_settings
+
+
+class TestConfigDefaults(unittest.TestCase):
+    def test_info_seek_has_curiosity_keys(self):
+        cfg = _behavior_settings.news_settings()["news"]["info_seek"]
+        self.assertTrue(cfg["contextual_keywords"])
+        self.assertEqual(cfg["contextual_max_keywords"], 3)
+        ev = cfg["event_driven"]
+        self.assertTrue(ev["enabled"])
+        self.assertEqual(ev["max_extra_seeks_per_day"], 2)
+        self.assertAlmostEqual(ev["stress_threshold"], 0.6)
+        self.assertAlmostEqual(ev["curiosity_threshold"], 0.6)
+        self.assertAlmostEqual(ev["trigger_chance_on_event"], 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

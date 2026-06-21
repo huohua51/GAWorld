@@ -32,6 +32,15 @@ def news_settings() -> dict[str, Any]:
                 "content_max_chars": 2000,
                 "memory_excerpt_chars": 700,
                 "user_agent": "GAWorld/1.0",
+                "contextual_keywords": True,
+                "contextual_max_keywords": 3,
+                "event_driven": {
+                    "enabled": True,
+                    "max_extra_seeks_per_day": 2,
+                    "stress_threshold": 0.6,
+                    "curiosity_threshold": 0.6,
+                    "trigger_chance_on_event": 0.5,
+                },
             },
         },
     }
