@@ -150,5 +150,33 @@ class TestProposeKeywords(unittest.TestCase):
         self.assertTrue(kws)
 
 
+from gaworld.sim import _news
+
+
+class TestNewsKeywordsParam(unittest.TestCase):
+    def test_choose_info_target_uses_keywords_for_web_search(self):
+        captured = {}
+
+        def fake_web_search(query, config=None):
+            captured["query"] = query
+            return "google", [{"url": "https://ex.com/a", "title": "标题", "snippet": "片段内容"}]
+
+        def fake_excerpt(url, **kw):
+            return "这是抓取到的正文内容，足够长用于记忆。"
+
+        with patch.object(_news, "web_search", side_effect=fake_web_search), \
+             patch.object(_news, "fetch_news_excerpt", side_effect=fake_excerpt):
+            target = _news._choose_info_target(
+                agent=_agent(),
+                news_cache=[],
+                news_sources=[],
+                preferred_sites=[],
+                keywords=["配送费规则 最新", "骑手收入 政策"],
+            )
+        self.assertEqual(target["mode"], "web_search")
+        self.assertEqual(captured["query"], "配送费规则 最新 骑手收入 政策")
+        self.assertEqual(target["url"], "https://ex.com/a")
+
+
 if __name__ == "__main__":
     unittest.main()

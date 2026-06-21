@@ -372,12 +372,25 @@ def _choose_info_target(
     seen_urls: set[str] | None = None,
     used_queries: set[str] | None = None,
     config: dict[str, Any] | None = None,
+    keywords: list[str] | None = None,
 ) -> dict[str, Any] | None:
     config = config or {}
     seen_urls = seen_urls or set()
     used_queries = used_queries or set()
     direct_visit_ratio = float(config.get("prefer_source_visit_ratio", 0.55))
     interests = _extract_interest_keywords(agent)
+
+    if keywords:
+        query = " ".join(str(k).strip() for k in keywords if str(k).strip())
+        if query:
+            return _web_search_target(
+                agent=agent,
+                query=query,
+                interests=interests,
+                preferred_sites=preferred_sites,
+                seen_urls=seen_urls,
+                config=config,
+            )
 
     preferred_cache = []
     for item in news_cache or []:
@@ -442,10 +455,30 @@ def _choose_info_target(
     query = _build_search_query(agent, used_queries=used_queries)
     if preferred_sites and random.random() < 0.85:
         query = f"{query} site:{random.choice(preferred_sites)}"
+    return _web_search_target(
+        agent=agent,
+        query=query,
+        interests=interests,
+        preferred_sites=preferred_sites,
+        seen_urls=seen_urls,
+        config=config,
+    )
+
+
+def _web_search_target(
+    *,
+    agent: dict[str, Any],
+    query: str,
+    interests: list[str],
+    preferred_sites: list[str],
+    seen_urls: set[str] | None,
+    config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    config = config or {}
+    seen_urls = seen_urls or set()
     engine, results = web_search(query, config=config)
     if not results:
         return None
-
     ranked = []
     timeout = int(config.get("content_timeout", config.get("timeout", 8)))
     max_chars = int(config.get("content_max_chars", 2000))
@@ -493,6 +526,7 @@ def info_seek_and_store(
     preferred_sites: list[str] | None = None,
     seen_urls: set[str] | None = None,
     used_queries: set[str] | None = None,
+    keywords: list[str] | None = None,
     config: dict[str, Any] | None = None,
 ) -> tuple[str | None, str | None, str, str]:
     config = config or {}
@@ -504,6 +538,7 @@ def info_seek_and_store(
         seen_urls=seen_urls or set(),
         used_queries=used_queries or set(),
         config=config,
+        keywords=keywords,
     )
     if not target:
         return None, None, "", ""
