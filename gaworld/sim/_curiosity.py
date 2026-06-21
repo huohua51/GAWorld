@@ -97,3 +97,73 @@ def _curiosity_score(agent: dict[str, Any]) -> float:
     """Reuse the existing curiosity estimator from the news module."""
     from gaworld.sim._news import _estimate_curiosity
     return _estimate_curiosity(agent)
+
+
+_KEYWORD_PROMPT = """你是{name}，正在生活和工作中。请根据你当前的处境，提出你此刻最想上网查证/了解的搜索关键词。
+
+当前活动：{activity}
+最近发生的事：{events}
+当前状态：压力={stress:.2f}，经济安全感={econ:.2f}
+你正在发展的兴趣/技能：{growth}
+
+要求：
+1) 输出 1-{max_items} 个中文搜索关键词，每个 4-16 字，像真实搜索框里会输入的词。
+2) 关键词要贴合“你当前的处境”，不要泛泛而谈。
+3) 仅输出 JSON 字符串数组，不要输出其他文字。"""
+
+
+def propose_contextual_keywords(
+    agent: dict[str, Any],
+    context: dict[str, Any],
+    *,
+    config: dict[str, Any] | None = None,
+) -> list[str]:
+    """LLM-propose contextual search keywords; fall back to the template builder."""
+    cfg = config or {}
+    max_items = max(1, int(cfg.get("contextual_max_keywords", 3)))
+    prompt = _KEYWORD_PROMPT.format(
+        name=agent.get("name", "该居民"),
+        activity=context.get("activity") or "日常活动",
+        events="；".join(context.get("recent_events", [])) or "无特别事件",
+        stress=float(context.get("state", {}).get("stress", 0.5)),
+        econ=float(context.get("state", {}).get("econ_security", 0.5)),
+        growth="、".join(context.get("growth_focus", [])) or "无",
+        max_items=max_items,
+    )
+    try:
+        response = _llm_providers.call_llm(
+            prompt, task="curiosity_keywords", agent_id=agent.get("id")
+        )
+    except Exception:  # pragma: no cover - defensive; fall back to template
+        response = ""
+
+    keywords = _parse_keywords(response, max_items=max_items)
+    if keywords:
+        return keywords
+    return _fallback_keywords(agent, max_items=max_items)
+
+
+def _parse_keywords(text: str, *, max_items: int) -> list[str]:
+    blob = _extract_json_array_block(text or "")
+    if not blob:
+        return []
+    try:
+        raw = json.loads(blob)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        cleaned = _sanitize_extra_text(str(item), max_chars=32)
+        if cleaned and cleaned not in out:
+            out.append(cleaned)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _fallback_keywords(agent: dict[str, Any], *, max_items: int) -> list[str]:
+    from gaworld.sim._news import _build_search_query
+    query = _build_search_query(agent)
+    return [query] if query else []

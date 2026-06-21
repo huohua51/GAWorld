@@ -109,5 +109,46 @@ class TestShouldSeekKnowledge(unittest.TestCase):
         self.assertEqual(reason, "stress")
 
 
+from unittest.mock import patch
+from gaworld.llm import providers as _providers
+
+
+class TestProposeKeywords(unittest.TestCase):
+    def _ctx(self):
+        return {
+            "activity": "跑单途中",
+            "recent_events": ["平台调整了配送费规则"],
+            "state": {"stress": 0.7, "econ_security": 0.4},
+            "growth_focus": ["理财"],
+            "day": 2,
+            "time_str": "12:30",
+        }
+
+    def test_parses_json_array(self):
+        with patch.object(_providers, "call_llm",
+                          return_value='["配送费规则 最新", "骑手收入 政策"]'):
+            kws = _curiosity.propose_contextual_keywords(_agent(), self._ctx(), config={})
+        self.assertEqual(kws, ["配送费规则 最新", "骑手收入 政策"])
+
+    def test_respects_max(self):
+        cfg = {"contextual_max_keywords": 1}
+        with patch.object(_providers, "call_llm",
+                          return_value='["a 最新", "b 政策", "c 趋势"]'):
+            kws = _curiosity.propose_contextual_keywords(_agent(), self._ctx(), config=cfg)
+        self.assertEqual(len(kws), 1)
+
+    def test_garbage_falls_back_to_template(self):
+        with patch.object(_providers, "call_llm", return_value="抱歉我不知道"):
+            kws = _curiosity.propose_contextual_keywords(_agent(), self._ctx(), config={})
+        # Fallback returns a non-empty template query string list.
+        self.assertTrue(kws)
+        self.assertIsInstance(kws[0], str)
+
+    def test_llm_exception_falls_back(self):
+        with patch.object(_providers, "call_llm", side_effect=RuntimeError("boom")):
+            kws = _curiosity.propose_contextual_keywords(_agent(), self._ctx(), config={})
+        self.assertTrue(kws)
+
+
 if __name__ == "__main__":
     unittest.main()
