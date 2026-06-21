@@ -286,6 +286,11 @@ from gaworld.sim._news import (  # noqa: E402
     search_web_and_store,
     read_news_and_store,
 )
+from gaworld.sim._curiosity import (  # noqa: E402
+    assemble_curiosity_context,
+    should_seek_knowledge,
+    propose_contextual_keywords,
+)
 
 
 def reset_simulation():
@@ -602,6 +607,75 @@ INFO_SEEK_CONFIG = NEWS_CONFIG.get("info_seek", NEWS_CONFIG.get("curiosity_searc
 INFO_SEEK_ENABLED = bool(INFO_SEEK_CONFIG.get("enabled", True))
 INFO_SEEK_BASE_CHANCE = float(INFO_SEEK_CONFIG.get("base_daily_chance", 0.55))
 INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_CONFIG.get("max_searches_per_day", 3)))
+
+
+def _maybe_curiosity_seek(
+    agent,
+    *,
+    day,
+    time_str,
+    scheduled_activity,
+    recent_events,
+    news_cache,
+    news_sources,
+    preferred_sites,
+    seen_urls,
+    used_queries,
+    curiosity_budget,
+    config,
+    daily_logs=None,
+):
+    """Event-driven contextual seek. Returns True if a seek fired.
+
+    Writes nothing itself beyond delegating to ``info_seek_and_store``;
+    decrements the per-agent daily budget on a real fire.
+    """
+    if not config.get("contextual_keywords", True):
+        return False
+    agent_id = agent["id"]
+    budget_left = int(curiosity_budget.get(agent_id, 0))
+    context = assemble_curiosity_context(
+        agent,
+        scheduled_activity=scheduled_activity or "",
+        recent_events=recent_events or [],
+        day=day,
+        time_str=time_str,
+    )
+    trigger, _reason = should_seek_knowledge(
+        agent, context, budget_left=budget_left, config=config
+    )
+    if not trigger:
+        return False
+    keywords = propose_contextual_keywords(agent, context, config=config)
+    if not keywords:
+        return False
+    memory_entry, info_log, result_url, query = info_seek_and_store(
+        agent,
+        day=day,
+        time_str=time_str,
+        news_cache=news_cache,
+        news_sources=news_sources,
+        preferred_sites=preferred_sites,
+        seen_urls=seen_urls,
+        used_queries=used_queries,
+        keywords=keywords,
+        config=config,
+    )
+    if query:
+        used_queries.add(query)
+    if result_url:
+        seen_urls.add(result_url)
+    if not memory_entry:
+        return False
+    curiosity_budget[agent_id] = budget_left - 1
+    if info_log:
+        print(info_log)
+        if daily_logs is not None:
+            daily_logs[agent_id] += info_log
+        append_agent_log(agent, info_log)
+    return True
+
+
 LOCAL_PHYSICAL_CONFIG = CONFIG.get("local_physical", {}) if isinstance(CONFIG, dict) else {}
 LOCAL_PHYSICAL_ENABLED = bool(LOCAL_PHYSICAL_CONFIG.get("enabled", True))
 LOCAL_PHYSICAL_INJECT = bool(LOCAL_PHYSICAL_CONFIG.get("inject_into_perception", True))
@@ -2969,6 +3043,7 @@ def run_simulation():
         timeline = build_master_timeline(daily_schedules, TIME_STEP_MINUTES)
         sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
         info_schedule = {}
+        curiosity_budget = {}
         daily_info_seen = defaultdict(set)
         daily_query_seen = defaultdict(set)
         preferred_sites_map = {}
@@ -2984,6 +3059,8 @@ def run_simulation():
                 preferred_sites_map[agent_id] = preferred_sites
                 agent["preferred_info_sites"] = preferred_sites
                 curiosity = _estimate_curiosity(agent)
+                ev_cfg = INFO_SEEK_CONFIG.get("event_driven", {})
+                curiosity_budget[agent["id"]] = int(ev_cfg.get("max_extra_seeks_per_day", 2))
                 if not INFO_SEEK_ENABLED:
                     continue
                 daily_chance = min(0.98, INFO_SEEK_BASE_CHANCE * curiosity + 0.05)
@@ -3121,6 +3198,23 @@ def run_simulation():
                         print(info_log)
                         daily_logs[agent_id] += info_log
                         append_agent_log(agent, info_log)
+                _maybe_curiosity_seek(
+                    agent,
+                    day=day,
+                    time_str=time_str,
+                    scheduled_activity=get_activity_for_time(schedule_map[agent_id], time_str),
+                    recent_events=[
+                        _format_external_env_event(ev) for ev in (env_events or [])
+                    ],
+                    news_cache=news_cache,
+                    news_sources=news_sources,
+                    preferred_sites=preferred_sites_map.get(agent_id, []),
+                    seen_urls=daily_info_seen[agent_id],
+                    used_queries=daily_query_seen[agent_id],
+                    curiosity_budget=curiosity_budget,
+                    config=INFO_SEEK_CONFIG,
+                    daily_logs=daily_logs,
+                )
                 if env_events:
                     for ev in env_events:
                         vector_db_add_entry(
