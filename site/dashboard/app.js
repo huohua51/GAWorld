@@ -199,7 +199,7 @@ function fillProviderSelect(select, providers, selected) {
 async function saveConfig() {
   await api("/api/config", { method: "POST", body: JSON.stringify(configPayloadFromForm()) });
   await loadConfig();
-  message("配置已写入 dashboard_config.json");
+  message(__("config.saved"));
 }
 
 async function loadAgents() {
@@ -251,20 +251,20 @@ function applyLifeEventTemplate() {
 function renderLifeEvents() {
   const events = state.lifeEvents || [];
   if (!events.length) {
-    els.lifeEventListBox.textContent = "暂无人生事件。";
+    els.lifeEventListBox.textContent = __("life_event.none");
     return;
   }
   els.lifeEventListBox.textContent = events.slice().reverse().map((event) => {
-    const target = (event.agent_ids || []).length ? `#${event.agent_ids.join(",#")}` : "所有 Agent";
+    const target = (event.agent_ids || []).length ? `#${event.agent_ids.join(",#")}` : __("agent.all");
     const when = event.schedule_mode === "immediate"
-      ? "下一时间步"
-      : `Day ${event.day || "?"} ${event.time || "当前时间"}`;
+      ? __("life_event.immediate")
+      : __f("life_event.scheduled_fmt", {day: event.day || "?", time: event.time || __("life_event.current_time")});
     const status = event.status === "consumed"
-      ? `已触发 Day ${event.triggered_day || "?"} ${event.triggered_time || ""}`.trim()
-      : "待触发";
+      ? __f("life_event.triggered_at", {day: event.triggered_day || "?", time: event.triggered_time || ""})
+      : __("life_event.pending");
     return [
-      `[${status}] ${event.title || "人生事件"}`,
-      `目标：${target} · 触发：${when} · 强度：${Number(event.severity || 0).toFixed(2)}`,
+      `[${status}] ${event.title || __("life_event.event_prefix")}`,
+      __f("life_event.detail", {target: target, when: when, severity: Number(event.severity || 0).toFixed(2)}),
       event.description || "",
     ].join("\n");
   }).join("\n\n");
@@ -296,7 +296,7 @@ async function addLifeEvent() {
   const result = await api("/api/life-events", { method: "POST", body: JSON.stringify(payload) });
   state.lifeEvents = result.events || [];
   renderLifeEvents();
-  message("人生事件已加入队列");
+  message(__("life_event.queued"));
 }
 
 async function loadProfile() {
@@ -312,7 +312,7 @@ async function saveProfile() {
     body: JSON.stringify({ text: els.profileEditor.value }),
   });
   await loadAgents();
-  message("Profile 已保存");
+  message(__("common.saved"));
 }
 
 async function loadMemory() {
@@ -324,12 +324,12 @@ async function loadMemory() {
     habits: payload.habits || {},
     intentions: payload.intentions || {},
   }, null, 2);
-  els.episodesBox.textContent = payload.episodes_tail || "暂无 episode。";
-  els.agentLogBox.textContent = payload.log_tail || "暂无 agent 日志。";
+  els.episodesBox.textContent = payload.episodes_tail || __("memory.no_episodes");
+  els.agentLogBox.textContent = payload.log_tail || __("memory.no_agent_log");
 }
 
 async function runSimulation(reset = false) {
-  message("正在启动仿真...");
+  message(__("sim.starting"));
   const payload = { reset, config: configPayloadFromForm() };
   await api("/api/run/start", { method: "POST", body: JSON.stringify(payload) });
   await refreshStatus();
@@ -342,9 +342,9 @@ async function stopSimulation() {
 
 async function refreshStatus() {
   const status = await api("/api/run/status");
-  els.runStatusBadge.textContent = status.running ? "运行中" : status.returncode == null ? "未运行" : `已结束 ${status.returncode}`;
+  els.runStatusBadge.textContent = status.running ? __("sim.running") : status.returncode == null ? __("sim.not_run") : __("sim.finished") + " " + status.returncode;
   els.runStatusBadge.className = `status-badge ${status.running ? "running" : status.returncode === 0 ? "done" : status.returncode ? "error" : ""}`;
-  els.runLogBox.textContent = status.log_tail || "暂无运行日志。";
+  els.runLogBox.textContent = status.log_tail || __("run_log.no_log");
   if (status.running) loadTrace(false).catch(() => {});
 }
 
@@ -358,7 +358,7 @@ async function loadTrace(showErrors = true) {
     renderTrace();
   } catch (error) {
     if (showErrors) {
-      els.traceStatus.textContent = `轨迹读取失败: ${error.message}`;
+      els.traceStatus.textContent = __("trace.load_failed") + ": " + error.message;
       drawEmptyMap();
     }
   }
@@ -378,7 +378,7 @@ function renderTrace() {
   }
   renderSelectedAgentAvatar();
   els.frameTitle.textContent = `Day ${frame.day} · ${frame.time}`;
-  els.traceStatus.textContent = `${frames.length} 帧 · ${state.trace.meta && state.trace.meta.finished ? "已完成" : "写入中"}`;
+  els.traceStatus.textContent = __f("trace.status", {count: frames.length, status: state.trace.meta && state.trace.meta.finished ? __("trace.completed") : __("trace.writing")});
   els.timelineSlider.max = String(Math.max(0, frames.length - 1));
   els.timelineSlider.value = String(state.frameIndex);
   els.timelineLabel.textContent = `${frame.date || ""} ${frame.weekday || ""} ${frame.time || ""}`.trim();
@@ -392,10 +392,10 @@ function drawEmptyMap() {
   ctx.fillRect(0, 0, els.mapCanvas.width, els.mapCanvas.height);
   ctx.fillStyle = "#385866";
   ctx.font = "24px Georgia";
-  ctx.fillText("等待 simulation_trace.json", 40, 56);
-  els.frameTitle.textContent = "未加载轨迹";
-  els.timelineLabel.textContent = "暂无帧";
-  els.latestFrameBox.textContent = "暂无当前帧。";
+  ctx.fillText(__("trace.waiting"), 40, 56);
+  els.frameTitle.textContent = __("trace.not_loaded");
+  els.timelineLabel.textContent = __("trace.no_frames");
+  els.latestFrameBox.textContent = __("trace.no_current_frame");
 }
 
 function drawMap(frame) {
@@ -459,7 +459,7 @@ function drawMap(frame) {
 
 async function interview() {
   if (!state.selectedAgentId) return;
-  els.interviewOutput.textContent = "采访运行中...";
+  els.interviewOutput.textContent = __("interview.running");
   const questions = els.interviewQuestions.value.split("\n").map((line) => line.trim()).filter(Boolean);
   const payload = {
     agent_id: state.selectedAgentId,
@@ -467,7 +467,7 @@ async function interview() {
     questions,
   };
   const result = await api("/api/interview", { method: "POST", body: JSON.stringify(payload) });
-  els.interviewOutput.textContent = [result.stdout, result.stderr].filter(Boolean).join("\n") || `returncode=${result.returncode}`;
+  els.interviewOutput.textContent = [result.stdout, result.stderr].filter(Boolean).join("\n") || __f("interview.no_result", {code: result.returncode});
 }
 
 function bindEvents() {
@@ -521,5 +521,14 @@ async function init() {
     loadLifeEvents().catch(() => {});
   }, 2500);
 }
+
+// Re-render dynamic UI when language changes
+window.addEventListener("locale-changed", function () {
+  refreshStatus().catch(() => {});
+  loadTrace(false).catch(() => {});
+  loadLifeEvents().catch(() => {});
+  loadMemory().catch(() => {});
+  renderTrace();
+});
 
 init().catch((error) => message(error.message, "error"));
