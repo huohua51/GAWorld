@@ -327,6 +327,508 @@ def _current_trace_frame():
     return {}
 
 
+def _metrics_state():
+    """Return personal state history from output/state/agent_state_history.csv."""
+    import csv
+    state_path = os.path.join(REPO_ROOT, "output", "state", "agent_state_history.csv")
+    if not os.path.exists(state_path):
+        return {"agents": [], "metrics": [], "data": []}
+    rows = []
+    agents = set()
+    metrics = set()
+    with open(state_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append({
+                "agent_id": int(row["agent_id"]),
+                "step": int(row["step"]),
+                "metric": row["metric"],
+                "value": float(row["value"]),
+            })
+            agents.add(int(row["agent_id"]))
+            metrics.add(row["metric"])
+    return {
+        "agents": sorted(agents),
+        "metrics": sorted(metrics),
+        "data": rows,
+    }
+
+
+def _metrics_economy_daily():
+    """Return daily ledger from output/economy/daily_ledger.csv."""
+    import csv
+    ledger_path = os.path.join(REPO_ROOT, "output", "economy", "daily_ledger.csv")
+    if not os.path.exists(ledger_path):
+        return {"agents": [], "columns": [], "data": []}
+    rows = []
+    agents = set()
+    columns = []
+    with open(ledger_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        columns = reader.fieldnames or []
+        for row in reader:
+            rows.append({k: float(v) if k not in ("day", "agent_id", "macro_phase") else v for k, v in row.items()})
+            agents.add(int(row["agent_id"]))
+    return {
+        "agents": sorted(agents),
+        "columns": columns,
+        "data": rows,
+    }
+
+
+def _metrics_economy_wealth():
+    """Return wealth snapshot from output/economy/wealth_snapshot.csv."""
+    import csv
+    path = os.path.join(REPO_ROOT, "output", "economy", "wealth_snapshot.csv")
+    if not os.path.exists(path):
+        return {"columns": [], "data": []}
+    rows = []
+    columns = []
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        columns = reader.fieldnames or []
+        for row in reader:
+            r = {}
+            for k, v in row.items():
+                if k in ("agent_id",):
+                    r[k] = int(v)
+                elif k in ("currency", "portfolio_type"):
+                    r[k] = v
+                else:
+                    try:
+                        r[k] = float(v)
+                    except (ValueError, TypeError):
+                        r[k] = v
+            rows.append(r)
+    return {"columns": columns, "data": rows}
+
+
+def _metrics_macro():
+    """Return macro economic state from output/economy/macro_state.json."""
+    macro_path = os.path.join(REPO_ROOT, "output", "economy", "macro_state.json")
+    return _read_json_file(macro_path, {})
+
+
+def _metrics_intervention():
+    """Return intervention metrics from output/intervention/intervention_metrics.csv."""
+    import csv
+    path = os.path.join(REPO_ROOT, "output", "intervention", "intervention_metrics.csv")
+    if not os.path.exists(path):
+        return {"agents": [], "columns": [], "data": []}
+    rows = []
+    agents = set()
+    columns = []
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        columns = reader.fieldnames or []
+        for row in reader:
+            r = {}
+            for k, v in row.items():
+                if k in ("day", "time", "agent_id"):
+                    r[k] = int(v) if k != "time" else v
+                else:
+                    try:
+                        r[k] = float(v)
+                    except (ValueError, TypeError):
+                        r[k] = v
+            rows.append(r)
+            if r.get("agent_id") is not None:
+                agents.add(int(r["agent_id"]))
+    return {"agents": sorted(agents), "columns": columns, "data": rows}
+
+
+def _metrics_location(agent_id):
+    """Return agent location data from output/memory/agent_i_locations.json."""
+    loc_path = os.path.join(REPO_ROOT, "output", "memory", f"agent_{agent_id}_locations.json")
+    return _read_json_file(loc_path, {})
+
+
+def _metrics_episodes(agent_id):
+    """Return the most recent episodes for an agent (for time mapping)."""
+    ep_path = os.path.join(REPO_ROOT, "output", "memory", f"agent_{agent_id}_episodes.jsonl")
+    if not os.path.exists(ep_path):
+        return []
+    # Read last N lines
+    lines = _tail_text(ep_path, max_chars=60000).strip().split("\n")
+    episodes = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            episodes.append({
+                "day": obj.get("day"),
+                "time": obj.get("time"),
+                "step": obj.get("step"),
+            })
+        except json.JSONDecodeError:
+            continue
+    return episodes
+
+
+def _metrics_step_time_map(agent_id):
+    """Return ordered [{step, day, time}] for an agent, used to label x-axes with day boundaries.
+
+    Combines data from two sources to ensure complete coverage:
+      1. agent_i_episodes.jsonl - one record per step (the most reliable per-step mapping)
+      2. simulation_trace.json frames - provides the (date, weekday) string per day, used as a fallback
+    """
+    # Primary: episodes.jsonl
+    ep_path = os.path.join(REPO_ROOT, "output", "memory", f"agent_{agent_id}_episodes.jsonl")
+    rows = []
+    if os.path.exists(ep_path):
+        with open(ep_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                step = obj.get("step")
+                day = obj.get("day")
+                time_str = obj.get("time")
+                # If step is not in the record, use the row index
+                if step is None:
+                    step = len(rows)
+                rows.append({
+                    "step": int(step),
+                    "day": int(day) if day is not None else None,
+                    "time": time_str,
+                })
+    rows.sort(key=lambda r: r["step"])
+
+    # Secondary: derive day info from state history when episodes lack a step index
+    state_path = os.path.join(REPO_ROOT, "output", "state", "agent_state_history.csv")
+    if rows and state_path and os.path.exists(state_path):
+        # Build per-step day map from episodes
+        steps_with_day = {r["step"]: r["day"] for r in rows if r.get("day") is not None}
+        if steps_with_day:
+            # Find the first/last step we know about
+            known_steps = sorted(steps_with_day.keys())
+            last_day = steps_with_day[known_steps[-1]]
+            # Append future steps with same day
+            max_step_seen = max((r["step"] for r in rows), default=0)
+            return [
+                r if r.get("day") is not None else {**r, "day": last_day}
+                for r in rows
+            ]
+
+    return rows
+
+
+def _metrics_relationships(agent_id):
+    """Return personal social relationship data from output/memory/agent_i_relationships.json."""
+    rel_path = os.path.join(REPO_ROOT, "output", "memory", f"agent_{agent_id}_relationships.json")
+    payload = _read_json_file(rel_path, {})
+    is_demo = False
+    if not payload or not isinstance(payload, dict) or len(payload) == 0:
+        is_demo = True
+        payload = _demo_relationships(agent_id)
+    return {
+        "agent_id": agent_id,
+        "relationships": payload,
+        "is_demo": is_demo,
+    }
+
+
+def _demo_relationships(agent_id):
+    """Fallback demo relationships used when the file is empty/missing."""
+    return {
+        f"g_demo_{i}": {
+            "closeness": round(0.5 + (i % 3) * 0.1, 2),
+            "trust": round(0.5 + (i % 4) * 0.08, 2),
+            "obligation": 0.4,
+            "friction": 0.1,
+            "role": ["friend", "coworker", "neighbor"][i % 3],
+            "kind": "ghost",
+            "tie_origin": "demo_seed",
+            "dunbar_tier": ["inner", "close", "acquaintance"][i % 3],
+            "channels": ["chat"],
+            "last_interaction_day": 1,
+        }
+        for i in range(5)
+    }
+
+
+def _metrics_social_network():
+    """Build a force-directed graph dataset from all agents' relationship files.
+
+    Nodes = each agent (id, name, label)
+    Edges = in-sim relationships + ghost relationships (shown as ghost nodes)
+    Returns the full graph data plus an is_demo flag if any file was empty.
+    """
+    profile_text, profile_sections = _profile_sections()
+    agent_meta = {sec["id"]: sec["name"] for sec in profile_sections}
+    nodes = []
+    edges = []
+    seen_agents = set()
+    seen_ghosts = set()
+    is_demo = False
+
+    # Discover agents from relationship files
+    memory_dir = os.path.join(REPO_ROOT, "output", "memory")
+    rel_files = []
+    if os.path.isdir(memory_dir):
+        for name in sorted(os.listdir(memory_dir)):
+            m = re.match(r"agent_(\d+)_relationships\.json$", name)
+            if m:
+                rel_files.append((int(m.group(1)), os.path.join(memory_dir, name)))
+
+    if not rel_files:
+        # Fallback: synthesize from profile sections
+        for sec in profile_sections:
+            aid = int(sec["id"])
+            if aid in seen_agents:
+                continue
+            seen_agents.add(aid)
+            nodes.append({
+                "id": f"a{aid}", "agent_id": aid, "name": sec["name"],
+                "kind": "agent", "tier": "inner", "value": 1.0,
+            })
+        # No edges
+        return {"nodes": nodes, "edges": edges, "is_demo": True}
+
+    for aid, rel_path in rel_files:
+        if aid in seen_agents:
+            continue
+        seen_agents.add(aid)
+        nodes.append({
+            "id": f"a{aid}",
+            "agent_id": aid,
+            "name": agent_meta.get(aid, f"Agent {aid}"),
+            "kind": "agent",
+            "tier": "inner",
+            "value": 1.0,
+        })
+
+    for aid, rel_path in rel_files:
+        data = _read_json_file(rel_path, {})
+        if not data:
+            is_demo = True
+            data = _demo_relationships(aid)
+        else:
+            # If file is mostly populated we keep is_demo as False
+            pass
+        for other_key, info in data.items():
+            if not isinstance(info, dict):
+                continue
+            closeness = float(info.get("closeness", 0.5))
+            trust = float(info.get("trust", 0.5))
+            friction = float(info.get("friction", 0.0))
+            role = info.get("role", "unknown")
+            tier = info.get("dunbar_tier", "acquaintance")
+            kind = info.get("kind", "ghost")
+            profile = info.get("profile") or {}
+            node_name = profile.get("name") or other_key
+
+            target_id = other_key
+            if kind == "agent":
+                # In-sim link: ensure target agent node exists
+                try:
+                    target_agent_id = int(other_key)
+                except (TypeError, ValueError):
+                    continue
+                target_id = f"a{target_agent_id}"
+                if target_agent_id not in seen_agents:
+                    seen_agents.add(target_agent_id)
+                    nodes.append({
+                        "id": target_id,
+                        "agent_id": target_agent_id,
+                        "name": agent_meta.get(target_agent_id, f"Agent {target_agent_id}"),
+                        "kind": "agent",
+                        "tier": "inner",
+                        "value": 1.0,
+                    })
+            else:
+                # Ghost node
+                target_id = f"g_{aid}_{other_key}"
+                if target_id not in seen_ghosts:
+                    seen_ghosts.add(target_id)
+                    nodes.append({
+                        "id": target_id,
+                        "name": node_name,
+                        "kind": "ghost",
+                        "tier": tier,
+                        "role": role,
+                        "value": 0.4 + closeness * 0.6,
+                    })
+
+            edges.append({
+                "source": f"a{aid}",
+                "target": target_id,
+                "role": role,
+                "tier": tier,
+                "closeness": closeness,
+                "trust": trust,
+                "friction": friction,
+                "value": round(0.5 + closeness * 1.5, 2),
+                "kind": kind,
+            })
+
+    return {"nodes": nodes, "edges": edges, "is_demo": is_demo}
+
+
+def _metrics_work_market():
+    """Return parsed job postings from output/work/market.jsonl."""
+    path = os.path.join(REPO_ROOT, "output", "work", "market.jsonl")
+    if not os.path.exists(path):
+        return {"jobs": [], "is_demo": True}
+    jobs = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            job = obj.get("job") if isinstance(obj, dict) else None
+            if isinstance(job, dict):
+                jobs.append(job)
+    is_demo = not bool(jobs)
+    return {"jobs": jobs, "is_demo": is_demo}
+
+
+def _metrics_location_history(agent_id):
+    """Build per-day per-step location timeline from simulation_trace.json.
+
+    Returns:
+      {
+        "agent_id": int,
+        "days": [
+          {"day": int, "date": "2026-05-28", "weekday": "周四",
+           "items": [
+             {"time": "00:14", "location": "...", "activity": "...",
+              "transport_mode": "bike", "distance_km": 0.85,
+              "next_time": "07:32", "next_location": "..."}
+           ]}
+        ],
+        "is_demo": False
+      }
+    """
+    trace_path = os.path.join(REPO_ROOT, "output", "visualization", "simulation_trace.json")
+    payload = _read_json_file(trace_path, {})
+    frames = payload.get("frames", []) if isinstance(payload, dict) else []
+    is_demo = not bool(frames)
+    by_day = {}
+    for frame in frames:
+        day = frame.get("day")
+        date = frame.get("date") or ""
+        weekday = frame.get("weekday") or ""
+        time_str = frame.get("time") or ""
+        for a in frame.get("agents", []):
+            try:
+                if int(a.get("agent_id", 0)) != int(agent_id):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            travel = a.get("travel", {}) or {}
+            entry = {
+                "time": time_str,
+                "location": a.get("resolved_location") or a.get("location") or "—",
+                "scheduled_activity": a.get("scheduled_activity") or "",
+                "activity": a.get("activity") or "",
+                "action": (a.get("action") or "")[:80],
+                "transport_mode": travel.get("mode", "") or "—",
+                "distance_km": float(travel.get("distance_km", 0) or 0),
+                "travel_minutes": int(travel.get("minutes", 0) or 0),
+                "travel_progress": float(travel.get("progress", 1.0) or 0),
+                "in_transit": travel.get("status", "") == "in_transit",
+            }
+            by_day.setdefault(day, {"day": day, "date": date, "weekday": weekday, "items": []})
+            by_day[day]["items"].append(entry)
+    # Sort each day and compute next_time / next_location
+    days_out = []
+    for day_key in sorted(by_day.keys()):
+        d = by_day[day_key]
+        d["items"].sort(key=lambda x: x["time"])
+        for i, it in enumerate(d["items"]):
+            if i + 1 < len(d["items"]):
+                it["next_time"] = d["items"][i + 1]["time"]
+                it["next_location"] = d["items"][i + 1]["location"]
+            else:
+                it["next_time"] = ""
+                it["next_location"] = ""
+        days_out.append(d)
+    return {"agent_id": agent_id, "days": days_out, "is_demo": is_demo}
+
+
+def _metrics_daily_timeline(agent_id):
+    """Combined daily timeline merging schedule.json + simulation_trace.json actuals.
+
+    For each day, returns:
+      - schedule: planned schedule items (from agent_i_schedule.json)
+      - actual: actual items from simulation_trace.json
+    """
+    base = os.path.join(REPO_ROOT, "output", "memory")
+    schedule_path = os.path.join(base, f"agent_{agent_id}_schedule.json")
+    schedule = _read_json_file(schedule_path, [])
+    if not isinstance(schedule, list):
+        schedule = []
+    history = _metrics_location_history(agent_id)
+    return {
+        "agent_id": agent_id,
+        "schedule": schedule,
+        "days": history.get("days", []),
+        "is_demo": history.get("is_demo", False),
+    }
+
+
+def _metrics_activity_summary():
+    """Aggregate activity, location, and transport signals from simulation_trace.json."""
+    trace_path = os.path.join(REPO_ROOT, "output", "visualization", "simulation_trace.json")
+    payload = _read_json_file(trace_path, {})
+    frames = payload.get("frames", []) if isinstance(payload, dict) else []
+    activity_counts = {}
+    location_counts = {}
+    transport_counts = {}
+    distance_by_agent = {}
+    days = set()
+    agents = {}
+    for frame in frames:
+        if frame.get("day") is not None:
+            days.add(int(frame["day"]))
+        for agent in frame.get("agents", []):
+            try:
+                agent_id = int(agent.get("agent_id"))
+            except (TypeError, ValueError):
+                continue
+            agents[agent_id] = agent.get("name") or f"Agent {agent_id}"
+            activity = agent.get("activity") or "unknown"
+            location = agent.get("resolved_location") or agent.get("location") or "unknown"
+            travel = agent.get("travel", {}) or {}
+            mode = travel.get("mode") or "none"
+            distance = float(travel.get("distance_km", 0) or 0)
+            activity_counts[activity] = activity_counts.get(activity, 0) + 1
+            location_counts[location] = location_counts.get(location, 0) + 1
+            transport_counts[mode] = transport_counts.get(mode, 0) + 1
+            distance_by_agent[agent_id] = round(distance_by_agent.get(agent_id, 0.0) + distance, 4)
+
+    def top_items(mapping, limit=12):
+        return [
+            {"name": str(name), "value": value}
+            for name, value in sorted(mapping.items(), key=lambda item: item[1], reverse=True)[:limit]
+        ]
+
+    return {
+        "frame_count": len(frames),
+        "day_count": len(days),
+        "agent_count": len(agents),
+        "activity_counts": top_items(activity_counts),
+        "location_counts": top_items(location_counts),
+        "transport_counts": top_items(transport_counts),
+        "distance_by_agent": [
+            {"agent_id": agent_id, "name": agents.get(agent_id, f"Agent {agent_id}"), "value": value}
+            for agent_id, value in sorted(distance_by_agent.items())
+        ],
+        "is_demo": not bool(frames),
+    }
+
+
 def _life_events_payload():
     return {
         "templates": list_life_event_templates(),
@@ -383,6 +885,40 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_latest_trace_meta())
         if path == "/api/life-events":
             return self._json_response(_life_events_payload())
+        if path == "/api/metrics/state":
+            return self._json_response(_metrics_state())
+        if path == "/api/metrics/economy/daily":
+            return self._json_response(_metrics_economy_daily())
+        if path == "/api/metrics/economy/wealth":
+            return self._json_response(_metrics_economy_wealth())
+        if path == "/api/metrics/macro":
+            return self._json_response(_metrics_macro())
+        if path == "/api/metrics/intervention":
+            return self._json_response(_metrics_intervention())
+        if path.startswith("/api/metrics/locations/"):
+            agent_id = path.split("/")[-1]
+            return self._json_response(_metrics_location(agent_id))
+        if path.startswith("/api/metrics/episodes/"):
+            agent_id = path.split("/")[-1]
+            return self._json_response(_metrics_episodes(agent_id))
+        if path.startswith("/api/metrics/step-time-map/"):
+            agent_id = path.split("/")[-1]
+            return self._json_response(_metrics_step_time_map(agent_id))
+        if path.startswith("/api/metrics/relationships/"):
+            agent_id = path.split("/")[-1]
+            return self._json_response(_metrics_relationships(agent_id))
+        if path == "/api/metrics/social-network":
+            return self._json_response(_metrics_social_network())
+        if path == "/api/metrics/work-market":
+            return self._json_response(_metrics_work_market())
+        if path.startswith("/api/metrics/location-history/"):
+            agent_id = path.split("/")[-1]
+            return self._json_response(_metrics_location_history(agent_id))
+        if path.startswith("/api/metrics/daily-timeline/"):
+            agent_id = path.split("/")[-1]
+            return self._json_response(_metrics_daily_timeline(agent_id))
+        if path == "/api/metrics/activity-summary":
+            return self._json_response(_metrics_activity_summary())
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
