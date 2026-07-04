@@ -64,6 +64,7 @@ Across days, the simulator accumulates:
 - Visualization trace export
 - Agent interview CLI
 - Local dashboard for config editing, profile editing, run control, memory inspection, and interview
+- Agent Studio: a 7-step visual builder/inspector for a single agent — identity, the nine [0,1] state variables (editable radar), skills, tiered memory, Dunbar social circles, behavior dials, and review/deploy; writes back to the state CSV and profile Markdown and can create new agents
 - Distributed multi-machine mode with relay-based communication
 
 ## Project Structure
@@ -103,7 +104,7 @@ code.
 - `data/citymap.md`: city map data
 - `scripts/`: launch and developer utilities
 - `docs/`: tutorials, integration notes, design docs, refactor history (`REFACTOR_PLAN.md`, `REFACTOR_BASELINE.md`, `PROJECT_STRUCTURE.md`)
-- `site/dashboard/`: local dashboard frontend
+- `site/dashboard/`: local dashboard frontend (console `index.html` + Agent Studio `studio.html`)
 - `site/simviz/`: playback viewer
 - `output/`: generated artifacts
 
@@ -248,6 +249,38 @@ The local dashboard provides:
 
 The dashboard stores local overrides in `dashboard_config.json`.
 Those values override `config.py` at runtime.
+
+### Agent Studio
+
+Agent Studio is a focused, single-agent builder and inspector reachable from the
+console toolbar (**Agent Studio ↗**) or directly at
+`http://127.0.0.1:8766/site/dashboard/studio.html`. It presents one agent across
+seven steps, all bound to GAWorld's real seed model:
+
+1. **Identity** — name, gender, age, hukou, residence, and the narrative profile
+2. **State & Personality** — the nine normalized `[0,1]` state variables (`emotion`, `stress`, `econ_security`, `city_identity`, `policy_sensitivity`, `platform_dependence`, `risk_preference`, `voice_propensity`, `mobility_intent`) as live sliders + an editable radar
+3. **Abilities & Skills** — the global Skill library
+4. **Memory** — episodic / habit / intention / schedule counts and a memory graph
+5. **Social & Relationships** — real Dunbar tiers (`inner`/`close`/`acquaintance`/`weak`) and a closeness-ranked relationship list once a run has produced them
+6. **Behavior & Goals** — the behavior-driving state dials
+7. **Review & Deploy** — a full summary, an optional LLM interview, save, and "run simulation with this agent"
+
+Edits are written back to the real seed files: state variables and identity go to
+the state CSV (`data/hangzhou_agents_state_init.csv`) and are mirrored into the
+profile Markdown's state lines; narrative edits go to the profile block; and
+"create" appends both a CSV row and a profile block. Social and finance panels
+read post-run artifacts from `output/memory` and `output/economy` and degrade
+gracefully before a run.
+
+Backend API (added to `dashboard_server.py`):
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/agents/{id}/state` | identity + nine state variables |
+| GET | `/api/agents/{id}/detail` | aggregate: state, profile, memory counts, finance, social, skills |
+| GET | `/api/skills` | global Skill library |
+| POST | `/api/agents/{id}/state` | write state/identity to the CSV (+ profile sync) |
+| POST | `/api/agents` | create a new agent (CSV row + profile block) |
 
 ## Configuration
 

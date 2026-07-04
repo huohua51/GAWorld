@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-07-04 — Agent Studio (single-agent builder/inspector)
+
+A visual builder/inspector for a single agent, integrated into the local dashboard. Seven steps bound to GAWorld's real seed model — identity + the nine `[0,1]` state variables, skills, tiered memory, Dunbar social circles, behavior dials, and review/deploy — with read/write back to the state CSV and profile Markdown.
+
+### Added
+
+- **`site/dashboard/studio.html` / `studio.css` / `studio.js`** — the Agent Studio front-end: a 7-step wizard (Identity, State & Personality, Abilities & Skills, Memory, Social & Relationships, Behavior & Goals, Review & Deploy) with an editable state radar, dependency-free SVG visualizations, an optional LLM interview hook, and a create-new-agent flow. Reachable from the console toolbar (**Agent Studio ↗**) or directly at `/site/dashboard/studio.html`.
+- **`gaworld/apps/dashboard_server.py`** — Studio backend endpoints: `GET /api/agents/{id}/state`, `GET /api/agents/{id}/detail` (aggregate state + profile + memory counts + finance + social + skills), `GET /api/skills`, `POST /api/agents/{id}/state` (write to the state CSV), `POST /api/agents` (create agent). State writes are mirrored into the profile Markdown's `**核心状态变量**` / `**研究增强变量初始化**` lines so the CSV and MD don't drift; creation reuses the imported-agent format and preserves the CSV BOM. Social/finance readers pull from `output/memory` and `output/economy` and degrade gracefully before a run.
+- **`site/dashboard/index.html`** — console toolbar link to the Studio.
+- **`tests/test_dashboard_studio.py`** — 8 unittest cases: state round-trip + profile sync, identity edit, `[0,1]` clamping, create-agent (CSV row + profile block + BOM preserved), and social-snapshot parsing.
+
+### Docs
+
+- **`README.md` / `README.zh-CN.md`** — feature bullet, structure note, and a new **Agent Studio** subsection (7 steps, write-back rules, API table), bilingual.
+- **`docs/FEATURES.md`** — feature-table row with the entry URL.
+- **`docs/TUTORIAL.v2.md`** — new §12.1 Agent Studio (steps × data sources, write-back rules, API, tests) plus TOC anchor.
+- **`docs/PROJECT_STRUCTURE.md`** / **`AGENTS.md`** — `site/dashboard/` studio note and `site/` tree entry.
+
 ## [Unreleased] — 2026-05-22 — Robustness Audit (S4)
 
 Static-analysis sweep over the post-S3 codebase. Confirmed that the LLM provider retry framework, worker-pool fault chain, and per-adapter LLM guards were already production-ready; identified and closed 5 surviving silent-failure spots.

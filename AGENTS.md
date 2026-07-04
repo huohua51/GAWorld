@@ -5,7 +5,7 @@
 ```
 GAWorld/
 ├── gaworld/                  # 核心包（所有功能的正式实现）
-│   ├── apps/                 # 服务器与可视化（dashboard, visualizer, …）
+│   ├── apps/                 # 服务器与可视化（dashboard 后端含 Agent Studio API, visualizer, …）
 │   ├── behavior/             # 动态行为模块（dynamic.py）
 │   ├── cognition/            # 人类真实感模块（realism.py）
 │   ├── core/                 # Agent 基础与并发执行（agent.py, runner.py）
@@ -29,6 +29,7 @@ GAWorld/
 ├── generative_city_sim.py    # CLI 入口（run / reset / interview）
 ├── legacy/                   # 旧版 flat 模块（已弃用，不参与构建）
 ├── scripts/                  # 辅助脚本（generate_citymap, …）
+├── site/                     # 前端（dashboard 控制台 + Agent Studio, simviz, citymap）
 ├── tests/                    # 测试套件（pytest）
 ├── data/                     # 数据资产（agents CSV, profiles MD, citymap MD）
 └── output/                   # 生成产物（日志、记忆、图表）
@@ -78,37 +79,19 @@ There is no build step beyond installing Python dependencies.
 <claude-mem-context>
 # Memory Context
 
-# [GAWorld] recent context, 2026-06-13 1:39pm GMT+8
+# [GAWorld] recent context, 2026-06-22 2:23am GMT+8
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (23,304t read) | 0t work
+Stats: 50 obs (22,251t read) | 0t work
 
 ### Jun 6, 2026
-836 12:49a 🔵 Job training subsidy policy comparison report details
-837 " 🔵 Network evolution natural_evolution experiment configuration
-838 " 🔵 Macro economy wellbeing dynamics: 3-day agent study findings
-839 " 🔵 Memory consistency experiment: 4 treatments designed, Phase 2 stalled in 3 of 4
-846 12:51a 🔵 Polarization diversity intervention produced null/inverse result
-847 " 🔵 Medical reform policy effect is near-zero (weakest of all 4 policies)
-848 " 🔵 Policy intervention strength ranking from comparison CSVs
-849 " 🔵 Network evolution natural_evolution interrupted at Day 1 with sparse network
-850 " 🔵 Memory consistency comparative study details: agent 34 (徐桂兰) as test subject
-851 " 🔵 Transport behavior rain weather effects quantified
-852 12:52a 🔵 Misinformation intervention reward buffering quantified
-853 " 🔵 Polarization experiment state file confirms 9.0% stance variance reduction and +3.6% polarization increase
-854 " 🔵 EXP-VAL-001 ABM validation framework: real-world Hangzhou benchmarks
-855 " 🔵 EXP-EMO-001 emotion contagion: 4 treatments with seeding design
-856 " 🔵 Unified runner ExperimentRegistry: 9 experiments with planned treatments and durations
-857 " 🔵 EXP-INFO-001 misinfo proposal: H1-H4 hypotheses and experimental design
-860 " ⚖️ Primary session pivots from retrospective summary to executing EXP-EMO-001 and EXP-VAL-001
 S258 总结已运行的GAWorld仿真实验，生成结构化markdown报告（研究问题、设计、运行、结果、发现），供后续分析与撰写参考 (Jun 6 at 12:52 AM)
 S260 Continue execution of two unrun experiments (EXP-EMO-001 emotion contagion, EXP-VAL-001 ABM validation) per user request "继续完成两个尚未运行的实验" (Jun 6 at 12:55 AM)
 S261 完成两个未运行的实验 (EXP-EMO-001 情绪传染 + EXP-VAL-001 ABM验证) (Jun 6 at 1:25 AM)
 861 1:26a 🟣 EXP-EMO-001 and EXP-VAL-001 launched as background tasks (3-day smoke tests)
-862 " 🔵 Observer harness appears to re-feed identical tool sequences 9 seconds apart
 863 1:34a 🔵 REFERENCE_BENCHMARKS is a module-level dict in exp_abm_validation.py
 864 " 🔵 EXP-EMO-001 control background task bmz7pqjrl still running, no output after 12s
 865 " 🔵 EXP-EMO-001 seed_agents target out-of-range agent IDs in TREATMENTS config
@@ -147,35 +130,25 @@ S266 实验全面失败 — 所有 5 个仿真 (4 EMO + 1 ABM) 因 DNS 故障无
 890 " 🔵 LLM calls now succeeding — agent preferences being generated
 893 10:50a ✅ Both experiments advancing — EMO at Day 1 08:32, ABM at 2 timeline entries
 S268 用户"重试"决策后, 主会话成功启动两个并行 bgtask, EMO 推进到 Day 1 08:32, ABM 启动并产出 timeline 数据 (Jun 6 at 10:58 AM)
-**Investigated**: - 网络恢复确认: curl https://api.minimaxi.com 返回 404 HTML 而非 DNS 错误
-    - 清理策略: 先 import-based 删除 (recreate 副作用), 再 pure-shutil 二次清理成功
-    - 重试策略: 启动两个并行 bgtask bzidxzfmr (EMO 4 treatments, days=5) + bhvlxcm54 (ABM validation, days=7)
-    - 进程数: 4 个 generative_city_sim 进程 (2 父 bgtask + 2 子 simulation)
-    - EMO control 进度: 00:28 → 08:32 (8h 4min 模拟时间), 3 行 timeline
-    - ABM validation 进度: 2 行 timeline 启动
-    - 4 个 EMO treatment 目录: 只有 control/ 在运行
-
-**Learned**: - **网络恢复后 LLM API 真实可用**: agent_1.log 输出结构化偏好数据 (编程技能 priority 0.68, 运动 priority 0.60) 证明 API 返回有效内容
-    - **Timeline 写入与 agent log 写入节奏不同**: agent log 持续更新, timeline 约每小时模拟时间才刷一次 (throttled)
-    - **Timeline 与 agent log 的 mtime 差异**: 揭示 timeline writer 全局锁/批量 flush 行为
-    - **推进速度估算**: 8h 模拟时间 / ~3-4 min wall-clock ≈ 120x realtime (比 bzeah2mry 估算的 0.39x 显著更好)
-    - **降低天数有效**: 5 天 vs 原 14 天, 7 天 vs 原 30 天, 大幅减少暴露在 API 风险下的时间窗口
-    - **并行策略有效**: EMO 和 ABM 同步推进, 互不阻塞
-    - **状态 CSV 仍在等待**: state/ 目录尚未生成, 需要每个 treatment 完成才会落盘
-    - **Timeline throttling rate**: ~1 entry per ~30-60 sim minutes, 跟 bzeah2mry run 的 101 entries / 4 days 一致
-
-**Completed**: - 网络健康检查 ✅
-    - 旧失败结果清理 ✅
-    - 重试命令准备 (5-7 天简化版) ✅
-    - 两个并行 bgtask 启动并运行中 ✅
-    - EMO control 推进至 Day 1 08:32 (3 行 timeline)
-    - ABM validation 启动并产出 2 行 timeline
-    - 实时监控机制建立 (timeline + agent log + 进程数)
-
-**Next Steps**: - 继续等待 EMO control 跑完 Day 1 → Day 5 (预计 45 min - 1.5h)
-    - 完成后 4 个 EMO treatment 顺序执行 (control → happy → sad → sparse)
-    - ABM validation 7 天并行进行
-    - 每 5-10 分钟检查 timeline 进度
-    - 关注: 是否有新的网络中断, 是否有 step_history 持久化触发
-    - 最终: 跑 compare_treatments() + generate_report()
+### Jun 16, 2026
+908 11:48p 🔵 Presentations skill mandates artifact-tool JSX workflow
+909 " 🔵 Brainstorming skill enforces hard-gate before implementation
+910 " ✅ Created QA comeback scorecard for gaworld-project-intro deck
+911 11:59p 🟣 User requested installation of GordenSun/GordenSuperPPTSkills
+### Jun 17, 2026
+912 12:27a 🔵 Codex skill-installer uses install-skill-from-github.py with auto/git/download methods
+913 " 🔵 GAWorld repo working tree state: AGENTS.md and benchmark/report.md modified, outputs/ untracked
+914 " 🔴 install-skill-from-github.py rejects --path . with "Invalid skill name"
+915 " 🔵 GordenSuperPPTSkills repo structure: three skill subdirectories + examples + README
+916 12:28a 🟣 GordenSuperPPTSkill installed to ~/.codex/skills/GordenSuperPPTSkill
+917 " 🔵 GordenSuperPPTSkill is an orchestrator that chains GordenImagePPTGen → GordenImage2PPTX
+918 " 🟣 All three GordenSuperPPTSkills now installed and verified
+919 " 🔵 GordenImage2PPTX and GordenImagePPTGen ship distinct script toolkits
+### Jun 22, 2026
+932 2:21a 🟣 Proposed keyword-driven web search RAG enrichment capability
+933 " 🔵 GAWorld project structure explored - generative city simulation framework
+934 " 🔵 GAWorld existing RAG, web scrape, and news infrastructure mapped
+935 " 🔵 _news.py three pipeline entry points and web_search engine details mapped
+936 " 🔵 Runtime info-seek orchestration in generative_city_sim.py and memory lifecycle integration
+939 2:22a 🔵 Keyword extraction rules, target chooser priority, and query builder seeds detailed
 </claude-mem-context>

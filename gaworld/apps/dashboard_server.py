@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import re
@@ -22,8 +23,25 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 DASHBOARD_ROOT = os.path.join(REPO_ROOT, "site", "dashboard")
 DASHBOARD_CONFIG_PATH = os.path.join(REPO_ROOT, "dashboard_config.json")
 PROFILE_PATH = os.path.join(REPO_ROOT, CONFIG.get("md_path", "data/hangzhou_profiles_with_names.md"))
+STATE_CSV_PATH = os.path.join(REPO_ROOT, CONFIG.get("csv_path", "data/hangzhou_agents_state_init.csv"))
+ECONOMY_SNAPSHOT_PATH = os.path.join(REPO_ROOT, "output", "economy", "wealth_snapshot.csv")
+SKILLS_DIR = os.path.join(REPO_ROOT, CONFIG.get("skills", {}).get("global_dir", "data/skills"))
 RUN_LOG_PATH = os.path.join(REPO_ROOT, "output", "dashboard", "simulation_run.log")
 PROFILE_HEADER_RE = re.compile(r"^## Profile\s+(\d+)\s*[｜|]\s*(.+?)\s*$", re.MULTILINE)
+
+# The nine normalized [0,1] state variables that seed each agent. Order matters
+# only for display; the CSV column order is preserved on write regardless.
+STATE_VAR_KEYS = (
+    "emotion",
+    "stress",
+    "econ_security",
+    "city_identity",
+    "policy_sensitivity",
+    "platform_dependence",
+    "risk_preference",
+    "voice_propensity",
+    "mobility_intent",
+)
 
 RUN_STATE = {
     "process": None,
@@ -186,6 +204,276 @@ def _save_agent_profile(agent_id, profile_text):
     with open(PROFILE_PATH, "w", encoding="utf-8") as f:
         f.write(updated)
     return _agent_profile(agent_id)
+
+
+# ---------------------------------------------------------------------------
+# Agent state (CSV seed) read / write, skills, finance, and agent creation.
+# The CSV is the machine-readable seed the simulator loads; the Markdown
+# profile is the narrative twin. Studio edits go to the CSV for state vars and
+# to the profile block for narrative, mirroring how imported agents are stored.
+# ---------------------------------------------------------------------------
+
+def _read_state_rows():
+    if not os.path.exists(STATE_CSV_PATH):
+        return [], []
+    with open(STATE_CSV_PATH, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = [dict(row) for row in reader]
+    return fieldnames, rows
+
+
+def _row_id(row):
+    try:
+        return int(float(row.get("id")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _num(value, default=0.5):
+    try:
+        return round(float(value), 4)
+    except (TypeError, ValueError):
+        return default
+
+
+def _state_row_to_payload(row):
+    try:
+        age = int(float(row.get("age")))
+    except (TypeError, ValueError):
+        age = None
+    return {
+        "id": _row_id(row),
+        "name": (row.get("name") or "").strip(),
+        "gender": (row.get("gender") or "").strip(),
+        "age": age,
+        "hukou": (row.get("hukou") or "").strip(),
+        "residence": (row.get("residence") or "").strip(),
+        "state": {key: _num(row.get(key)) for key in STATE_VAR_KEYS},
+    }
+
+
+def _agent_state(agent_id):
+    _, rows = _read_state_rows()
+    for row in rows:
+        if _row_id(row) == int(agent_id):
+            return _state_row_to_payload(row)
+    return None
+
+
+def _atomic_write_state(fieldnames, rows):
+    tmp_path = STATE_CSV_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+    os.replace(tmp_path, STATE_CSV_PATH)
+
+
+def _save_agent_state(agent_id, payload):
+    fieldnames, rows = _read_state_rows()
+    if not fieldnames:
+        raise ValueError("State CSV is missing or empty")
+    target = next((row for row in rows if _row_id(row) == int(agent_id)), None)
+    if target is None:
+        raise ValueError(f"Agent {agent_id} not found in state CSV")
+    for key in ("name", "gender", "hukou", "residence"):
+        if payload.get(key) not in (None, ""):
+            target[key] = str(payload[key])
+    if payload.get("age") not in (None, ""):
+        target["age"] = str(int(payload["age"]))
+    incoming = payload.get("state") or {}
+    for key in STATE_VAR_KEYS:
+        if incoming.get(key) is not None:
+            target[key] = round(max(0.0, min(1.0, float(incoming[key]))), 4)
+    _atomic_write_state(fieldnames, rows)
+    result = _agent_state(agent_id)
+    try:
+        _sync_profile_state_lines(agent_id, result["state"])
+    except Exception:  # noqa: BLE001 - narrative sync is best-effort, never blocks the CSV write
+        _LOG.exception("profile state sync failed for agent %s", agent_id)
+    return result
+
+
+def _sync_profile_state_lines(agent_id, state):
+    """Mirror the CSV state onto the profile Markdown so the two don't drift.
+
+    The CSV is authoritative. This rewrites only the two structured lines a
+    profile block carries — the ``**研究增强变量初始化**`` bullets and the
+    ``**核心状态变量**`` summary — leaving all narrative prose untouched. If a
+    profile lacks those lines, nothing is changed.
+    """
+    section = _agent_profile(agent_id)
+    if not section:
+        return
+    text = section["text"]
+    core = (
+        f"**核心状态变量**：emotion {state['emotion']:.2f}｜stress {state['stress']:.2f}｜"
+        f"econ_security {state['econ_security']:.2f}｜city_identity {state['city_identity']:.2f}"
+    )
+    new_text = re.sub(r"\*\*核心状态变量\*\*：.*", core, text)
+    for key in ("policy_sensitivity", "platform_dependence", "risk_preference", "voice_propensity", "mobility_intent"):
+        new_text = re.sub(rf"^- {key}：.*$", f"- {key}：{state[key]:.2f}", new_text, flags=re.MULTILINE)
+    if new_text != text:
+        _save_agent_profile(agent_id, new_text)
+
+
+def _social_snapshot(agent_id):
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_relationships.json")
+    rels = _read_json_file(path, {})
+    if not isinstance(rels, dict) or not rels:
+        return None
+    tier_counts = {"inner": 0, "close": 0, "acquaintance": 0, "weak": 0}
+    relations = []
+    for key, item in rels.items():
+        if not isinstance(item, dict):
+            continue
+        tier = item.get("dunbar_tier") or ""
+        if tier in tier_counts:
+            tier_counts[tier] += 1
+        profile = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+        relations.append({
+            "id": key,
+            "name": profile.get("name") or str(key),
+            "role": item.get("role") or "",
+            "kind": item.get("kind") or "agent",
+            "tier": tier,
+            "closeness": _num(item.get("closeness"), 0.0),
+            "trust": _num(item.get("trust"), 0.0),
+        })
+    relations.sort(key=lambda r: r["closeness"], reverse=True)
+    return {"count": len(relations), "tier_counts": tier_counts, "relations": relations[:40]}
+
+
+def _skills_library():
+    items = []
+    if os.path.isdir(SKILLS_DIR):
+        for name in sorted(os.listdir(SKILLS_DIR)):
+            if not name.endswith(".md"):
+                continue
+            title = name[:-3]
+            try:
+                with open(os.path.join(SKILLS_DIR, name), "r", encoding="utf-8") as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if stripped.startswith("#"):
+                            title = stripped.lstrip("#").strip() or title
+                            break
+            except OSError:
+                pass
+            items.append({"file": name, "title": title})
+    return items
+
+
+def _finance_snapshot(agent_id):
+    if not os.path.exists(ECONOMY_SNAPSHOT_PATH):
+        return None
+    try:
+        with open(ECONOMY_SNAPSHOT_PATH, "r", encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                try:
+                    if int(float(row.get("agent_id"))) == int(agent_id):
+                        return dict(row)
+                except (TypeError, ValueError):
+                    continue
+    except OSError:
+        return None
+    return None
+
+
+def _agent_detail(agent_id):
+    state = _agent_state(agent_id)
+    if state is None:
+        return None
+    profile = _agent_profile(agent_id) or {}
+    memory = _memory_payload(agent_id)
+
+    def _count(value):
+        return len(value) if isinstance(value, (list, dict)) else 0
+
+    return {
+        "identity": {
+            "id": state["id"],
+            "name": state["name"],
+            "gender": state["gender"],
+            "age": state["age"],
+            "hukou": state["hukou"],
+            "residence": state["residence"],
+        },
+        "state": state["state"],
+        "profile_text": profile.get("text", ""),
+        "memory_counts": {
+            "long_term": _count(memory.get("memory")),
+            "habits": _count(memory.get("habits")),
+            "intentions": _count(memory.get("intentions")),
+            "schedule": _count(memory.get("schedule")),
+        },
+        "finance": _finance_snapshot(agent_id),
+        "social": _social_snapshot(agent_id),
+        "skills": _skills_library(),
+    }
+
+
+def _next_agent_id():
+    _, rows = _read_state_rows()
+    ids = [rid for rid in (_row_id(row) for row in rows) if rid is not None]
+    _, sections = _profile_sections()
+    ids.extend(section["id"] for section in sections)
+    return (max(ids) + 1) if ids else 1
+
+
+def _create_agent(payload):
+    from gaworld.sim.agents_loader import _clip_state_value, _format_imported_profile_block
+
+    agent_id = _next_agent_id()
+    state_in = payload.get("state") or {}
+    defaults = {
+        "emotion": 0.55,
+        "stress": 0.5,
+        "econ_security": 0.5,
+        "city_identity": 0.5,
+        "policy_sensitivity": 0.5,
+        "platform_dependence": 0.5,
+        "risk_preference": 0.5,
+        "voice_propensity": 0.5,
+        "mobility_intent": 0.5,
+    }
+    state = {key: _clip_state_value(state_in.get(key), defaults[key]) for key in STATE_VAR_KEYS}
+    profile_payload = {
+        "name": str(payload.get("name") or f"新智能体{agent_id}"),
+        "gender": str(payload.get("gender") or "未知"),
+        "age": int(payload.get("age") or 30),
+        "hukou": str(payload.get("hukou") or "未知"),
+        "residence": str(payload.get("residence") or "杭州"),
+        "job": str(payload.get("job") or "待补充"),
+        "personality": str(payload.get("personality") or "待补充"),
+        "daily_life": str(payload.get("daily_life") or "待补充"),
+        "values": str(payload.get("values") or "待补充"),
+        "education_income": str(payload.get("education_income") or "待补充"),
+        "social_network": str(payload.get("social_network") or "待补充"),
+        "state": state,
+    }
+    fieldnames, rows = _read_state_rows()
+    if not fieldnames:
+        raise ValueError("State CSV is missing or empty")
+    new_row = {
+        "id": agent_id,
+        "name": profile_payload["name"],
+        "gender": profile_payload["gender"],
+        "age": profile_payload["age"],
+        "hukou": profile_payload["hukou"],
+        "residence": profile_payload["residence"],
+    }
+    new_row.update({key: state[key] for key in STATE_VAR_KEYS})
+    rows.append({key: new_row.get(key, "") for key in fieldnames})
+    _atomic_write_state(fieldnames, rows)
+
+    with open(PROFILE_PATH, "a", encoding="utf-8") as f:
+        f.write(_format_imported_profile_block(agent_id, profile_payload))
+
+    return {"id": agent_id, "name": profile_payload["name"], "state": _agent_state(agent_id)}
 
 
 def _tail_text(path, max_chars=12000):
@@ -368,12 +656,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_config_summary())
         if path == "/api/agents":
             return self._json_response({"agents": _agents_summary()})
+        if path == "/api/skills":
+            return self._json_response({"skills": _skills_library()})
         if path.startswith("/api/agents/") and path.endswith("/profile"):
             agent_id = path.split("/")[3]
             profile = _agent_profile(agent_id)
             if not profile:
                 return self._json_response({"error": "Profile not found"}, status=404)
             return self._json_response(profile)
+        if path.startswith("/api/agents/") and path.endswith("/state"):
+            agent_id = path.split("/")[3]
+            state = _agent_state(agent_id)
+            if state is None:
+                return self._json_response({"error": "Agent not found"}, status=404)
+            return self._json_response(state)
+        if path.startswith("/api/agents/") and path.endswith("/detail"):
+            agent_id = path.split("/")[3]
+            detail = _agent_detail(agent_id)
+            if detail is None:
+                return self._json_response({"error": "Agent not found"}, status=404)
+            return self._json_response(detail)
         if path.startswith("/api/agents/") and path.endswith("/memory"):
             agent_id = path.split("/")[3]
             return self._json_response(_memory_payload(agent_id))
@@ -389,9 +691,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         payload = self._read_json_body()
         if path == "/api/config":
             return self._json_response(_save_config_patch(payload))
+        if path == "/api/agents":
+            return self._json_response(_create_agent(payload))
         if path.startswith("/api/agents/") and path.endswith("/profile"):
             agent_id = path.split("/")[3]
             return self._json_response(_save_agent_profile(agent_id, payload.get("text", "")))
+        if path.startswith("/api/agents/") and path.endswith("/state"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_save_agent_state(agent_id, payload))
         if path == "/api/run/start":
             return self._json_response(_start_simulation(payload))
         if path == "/api/run/stop":

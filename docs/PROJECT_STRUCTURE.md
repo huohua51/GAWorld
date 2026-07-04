@@ -52,6 +52,7 @@ New code that needs config assembly should prefer `gaworld.settings`.
   - `output/memory/agent_<id>_env_preferences.json`: per-agent learned location-avoidance preferences (stateful runs only).
   - `output/work/`: real-work artifacts, capability cache, queue/market event logs.
 - `site/`: dashboard and visualization frontends.
+  - `site/dashboard/`: console (`index.html`) and Agent Studio (`studio.html` — single-agent 7-step builder/inspector, wired to the state CSV + profile Markdown via the Studio endpoints in `dashboard_server.py`).
 - `video/`: Remotion video project.
 - `tmp/`: local temporary/generated scratch content.
 - `backup/`: historical scripts, not active runtime.

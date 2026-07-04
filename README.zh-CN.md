@@ -61,6 +61,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 可视化 trace 导出
 - 单智能体采访 CLI
 - 本地 dashboard：配置编辑、profile 编辑、运行控制、记忆查看、访谈
+- Agent Studio：面向单个智能体的 7 步可视化构建/查看器——身份、九个 [0,1] 状态变量（可编辑雷达）、技能、分层记忆、Dunbar 社交圈、行为拨盘、复核/部署；改动写回状态 CSV 与 profile Markdown，并可创建新智能体
 - 多机分布式 relay 通信模式
 
 ## 项目结构
@@ -112,7 +113,7 @@ GAWorld/
 - `gaworld/sim/`：从主仿真器拆分出来的子模块（持续细化中）
 - `gaworld/work/`：real-work 任务系统（runtime、worker pool、queue、market）
 - `gaworld/apps/`：dashboard、外部环境服务器、分布式 relay
-- `site/dashboard/`：dashboard 前端
+- `site/dashboard/`：dashboard 前端（控制台 `index.html` + Agent Studio `studio.html`）
 - `site/simviz/`：轨迹回放页面
 - `output/`：生成结果
 
@@ -256,6 +257,36 @@ python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877
 
 dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 这个文件会在运行时覆盖 `config.py` 中的基础配置。
+
+### Agent Studio
+
+Agent Studio 是面向单个智能体的可视化构建/查看器，可从控制台工具栏
+（**Agent Studio ↗**）进入，或直接访问
+`http://127.0.0.1:8766/site/dashboard/studio.html`。它把一个智能体拆成
+七步，全部绑定 GAWorld 的真实种子模型：
+
+1. **身份** — 姓名、性别、年龄、户籍、居住地与叙事 profile
+2. **状态 · 性格** — 九个归一化 `[0,1]` 状态变量（`emotion`、`stress`、`econ_security`、`city_identity`、`policy_sensitivity`、`platform_dependence`、`risk_preference`、`voice_propensity`、`mobility_intent`）作为实时滑块 + 可编辑雷达
+3. **能力 · 技能** — 全局技能库
+4. **记忆** — 情节 / 习惯 / 意图 / 日程计数与记忆图谱
+5. **社交 · 关系** — 仿真产出后展示真实 Dunbar 分层（`inner`/`close`/`acquaintance`/`weak`）与按亲密度排序的关系列表
+6. **行为 · 目标** — 驱动行为的状态拨盘
+7. **复核 · 部署** — 完整摘要、可选 LLM 采访、保存、以及“用此居民运行仿真”
+
+改动写回真实种子文件：状态变量与身份写入状态 CSV
+（`data/hangzhou_agents_state_init.csv`），并同步进 profile Markdown 的状态行；
+叙事编辑写入 profile 块；“创建”会同时追加一行 CSV 与一个 profile 块。社交与
+财务面板读取 `output/memory`、`output/economy` 的运行产物，未跑仿真时优雅降级。
+
+后端 API（新增于 `dashboard_server.py`）：
+
+| 方法 | 端点 | 作用 |
+|------|------|------|
+| GET | `/api/agents/{id}/state` | 身份 + 九个状态变量 |
+| GET | `/api/agents/{id}/detail` | 聚合：状态、profile、记忆计数、财务、社交、技能 |
+| GET | `/api/skills` | 全局技能库 |
+| POST | `/api/agents/{id}/state` | 写状态/身份到 CSV（并同步 profile） |
+| POST | `/api/agents` | 创建新智能体（CSV 行 + profile 块） |
 
 ## 配置说明
 

@@ -14,6 +14,7 @@
 | RAG 外部知识注入 | 向某 agent 注入外部信息以改变其认知 | `python generative_city_sim.py rag-add --agent-id 31 --text "..."` / `rag-import --file ...` |
 | 事件对照实验 | 在"有事件 / 无事件"两分支并行仿真并出对比报告 | `python generative_city_sim.py compare-event --event-name "..." --sim-days 3 --seed 42` |
 | 本地 Dashboard | 配置编辑、运行控制、记忆查看、访谈、日志查看 | `python generative_city_sim.py dashboard --port 8766` → `http://127.0.0.1:8766/dashboard` |
+| Agent Studio | 单智能体 7 步可视化构建/查看：身份、九维状态（可编辑雷达）、技能、记忆、Dunbar 社交、行为、复核部署；写回 CSV+profile，可创建新 agent | 控制台工具栏「Agent Studio ↗」→ `http://127.0.0.1:8766/site/dashboard/studio.html` |
 | 轨迹回放查看器 | 可视化回放智能体移动轨迹 | `python generative_city_sim.py serve-viz --port 8000` → `/site/simviz/index.html` |
 | 分布式 relay | 多机协同仿真，各节点处理本地 agent 子集 | `python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877` |
 | 城市地图生成 | 用自然语言描述生成城市地图（节点 / 道路 / 地铁） | `python scripts/generate_citymap.py --description "..."` |

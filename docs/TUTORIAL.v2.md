@@ -21,6 +21,7 @@
 10. [访谈与 RAG 注入](#10-访谈与-rag-注入)
 11. [分布式 relay：多机通信](#11-分布式-relay多机通信)
 12. [Dashboard 使用指南](#12-dashboard-使用指南)
+    - [12.1 Agent Studio（单智能体构建/查看器）](#121-agent-studio单智能体构建查看器)
 13. [配置与开关总表](#13-配置与开关总表)
 14. [输出文件地图](#14-输出文件地图)
 15. [常见问题](#15-常见问题)
@@ -606,6 +607,33 @@ python generative_city_sim.py dashboard --port 8766
 | 日志查看 | 实时查看运行日志 |
 
 **配置覆盖**：Dashboard 的修改写入 `dashboard_config.json`，运行时**覆盖** `config.py` 的基础配置（`config.py` ← 基础，`dashboard_config.json` ← 覆盖）。想恢复原始值，删除 `dashboard_config.json` 即可。
+
+### 12.1 Agent Studio（单智能体构建/查看器）
+
+控制台工具栏点 **「Agent Studio ↗」**，或直接打开
+`http://127.0.0.1:8766/site/dashboard/studio.html`。它聚焦**一个**智能体，
+分七步展示与编辑，字段全部对应 GAWorld 的真实种子模型：
+
+| 步骤 | 内容 | 数据来源 |
+|---|---|---|
+| 1 身份 | 姓名、性别、年龄、户籍、居住地、叙事 profile | 状态 CSV + profile MD |
+| 2 状态 · 性格 | 九个 `[0,1]` 状态变量（滑块 + 可编辑雷达） | 状态 CSV |
+| 3 能力 · 技能 | 全局技能库 | `data/skills` |
+| 4 记忆 | 情节/习惯/意图/日程计数 + 记忆图谱 | `output/memory` |
+| 5 社交 · 关系 | 真实 Dunbar 分层（inner/close/acquaintance/weak）+ 亲密度排序 | `output/memory/*_relationships.json` |
+| 6 行为 · 目标 | 驱动行为的状态拨盘 | 状态 CSV |
+| 7 复核 · 部署 | 摘要、可选采访、保存、用此居民运行仿真 | — |
+
+**写回规则**：状态变量与身份写入状态 CSV
+（`data/hangzhou_agents_state_init.csv`）并**同步**进 profile MD 的
+`**核心状态变量**` 与 `**研究增强变量初始化**` 两处（CSV 为权威源，避免漂移）；
+叙事编辑写 profile 块；「创建」追加一行 CSV + 一个 profile 块（复用导入-agent 的
+格式，保留 BOM）。社交与财务面板读运行产物，未跑仿真时优雅降级为占位。
+
+**后端 API**（`gaworld/apps/dashboard_server.py`）：
+`GET /api/agents/{id}/state`、`GET /api/agents/{id}/detail`、`GET /api/skills`、
+`POST /api/agents/{id}/state`、`POST /api/agents`（创建）。测试见
+`tests/test_dashboard_studio.py`。
 
 ---
 
