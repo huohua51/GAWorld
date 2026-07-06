@@ -206,6 +206,13 @@ python gaworld_bench.py --track A --output-dir ../output
 # Track C（实跑）：调 compare-event，需要配置好 LLM provider
 python gaworld_bench.py --track C --run --days 3 --seed 42 [--llm-provider minimax]
 
+# Track C（A2 多 seed 显著性）：每个干预跨多 seed，输出 95%CI，只对显著项计分
+python gaworld_bench.py --track C --run --seeds 1,2,3,4,5 --days 30 [--llm-provider minimax]
+
+# 断点续跑：多 seed 实跑每完成一个 (干预,seed) 就存 checkpoint；若中途失败（如 API 用量超限），
+# 配额恢复后用相同 --seeds/--days 加 --continue 续跑，已完成的单元自动跳过。
+python gaworld_bench.py --track C --run --seeds 1,2,3,4,5 --days 30 --continue [--llm-provider minimax]
+
 # Track C（离线）：评分已经跑出来的 comparison 目录，不再调仿真
 python gaworld_bench.py --track C --comparisons-root ../output/comparisons \
     --placebo-dir <dir> --det-a <state_a.csv> --det-b <state_b.csv>
@@ -254,7 +261,9 @@ python gaworld_bench.py --all --run --days 3 --seed 42
 
 - **v0.1**：Track A（真实锚点 + schema 修正）、Track C（符号 + 安慰剂 + 确定性）、scorecard 聚合、合成模式。
 - **v0.1.1（已落地）**：A1 事件后效应 `delta_final`、A3 覆盖度折扣、A4 确定性三态 gate（UNVERIFIED）、A5 未完成运行检测、每次运行自动报告。
-- **v0.2**：A2 跨 seed 显著性/置信区间、Track E 成本/失败率解析、CV。
+- **v0.1.2（已落地）**：A2 跨 seed 显著性——`--seeds` 多 seed 模式，每个干预算 95%CI，**只对显著（CI 不含 0）的符号检验计分**，不显著记 `ns`；新增 `significance_coverage`。
+- **v0.1.3（已落地）**：`--continue` 断点续跑——多 seed 实跑每完成一个 (干预,seed) 单元就存 checkpoint（`benchmark/results/checkpoint_multiseed.json`）；中途失败（API 用量等）保存进度并提示，配额恢复后续跑跳过已完成单元。
+- **v0.2**：Track E 成本/失败率解析、CV。
 - **v0.3**：Track B stylized-facts 判据（接 emotion_contagion / network_evolution）。
 - **v0.4**：Track D LLM-judge 评分卡（接 interview / memory_consistency）。
 

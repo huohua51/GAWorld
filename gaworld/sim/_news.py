@@ -40,6 +40,7 @@ from gaworld.io.web_scrape import (
     normalize_text as _normalize_text,
     strip_html as _strip_html,
 )
+from gaworld.io.x_mcp import x_mcp_search
 from gaworld.llm import providers as _llm_providers
 from gaworld.memory.store import save_agent_memory, vector_db_add_entry
 
@@ -322,6 +323,11 @@ def _domain_from_url(url: str) -> str:
     return domain
 
 
+# Domains behind a login wall: page fetches return junk, but search
+# results from these already carry the full post text in "snippet".
+_SNIPPET_ONLY_DOMAINS = {"x.com", "twitter.com"}
+
+
 def _build_agent_preferred_sites(
     agent: dict[str, Any],
     news_sources: list[str] | None = None,
@@ -489,7 +495,10 @@ def _web_search_target(
             continue
         title = str(item.get("title", "")).strip()
         snippet = str(item.get("snippet", "")).strip()
-        excerpt = fetch_news_excerpt(url, timeout=timeout, max_chars=max_chars, user_agent=user_agent)
+        if _domain_from_url(url) in _SNIPPET_ONLY_DOMAINS:
+            excerpt = ""
+        else:
+            excerpt = fetch_news_excerpt(url, timeout=timeout, max_chars=max_chars, user_agent=user_agent)
         content = excerpt or snippet
         if not content:
             continue
@@ -762,7 +771,13 @@ def web_search(
     }
     headers = {"User-Agent": user_agent}
     for engine in engines:
-        search_url = search_urls.get(str(engine).lower())
+        engine_name = str(engine).lower()
+        if engine_name in ("x", "x_mcp", "twitter"):
+            x_results = x_mcp_search(query, config=config)
+            if x_results:
+                return "x", x_results
+            continue
+        search_url = search_urls.get(engine_name)
         if not search_url:
             continue
         try:
@@ -805,12 +820,15 @@ def search_web_and_store(
             continue
         title = str(item.get("title", "")).strip()
         snippet = str(item.get("snippet", "")).strip()
-        excerpt = fetch_news_excerpt(
-            url,
-            timeout=timeout,
-            max_chars=max_chars,
-            user_agent=user_agent,
-        )
+        if _domain_from_url(url) in _SNIPPET_ONLY_DOMAINS:
+            excerpt = ""
+        else:
+            excerpt = fetch_news_excerpt(
+                url,
+                timeout=timeout,
+                max_chars=max_chars,
+                user_agent=user_agent,
+            )
         candidate_text = excerpt or snippet
         if not candidate_text:
             continue

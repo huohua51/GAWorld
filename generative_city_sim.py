@@ -18,8 +18,11 @@ from html import unescape
 from gaworld.settings import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
 from gaworld.interests import (
+    apply_daily_growth_decay,
     bootstrap_growth_profiles,
+    evolve_growth_profile,
     format_growth_context,
+    growth_focus,
     match_growth_items,
     save_agent_growth_profile,
     update_growth_from_episode,
@@ -558,6 +561,8 @@ INTERESTS_CACHE_PATH = INTERESTS_CONFIG.get("cache_path", "output/memory/growth_
 INTERESTS_PROGRESS_MINUTES = INTERESTS_CONFIG.get("progress_minutes_per_step")
 INTERESTS_DAILY_INSERT_CHANCE = float(INTERESTS_CONFIG.get("daily_insert_chance", 0.55))
 INTERESTS_WEEKEND_BOOST = float(INTERESTS_CONFIG.get("weekend_boost", 0.25))
+INTERESTS_DECAY_CONFIG = dict(INTERESTS_CONFIG.get("decay", {}) or {})
+INTERESTS_EVOLUTION_CONFIG = dict(INTERESTS_CONFIG.get("evolution", {}) or {})
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
 ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
@@ -4125,6 +4130,57 @@ def run_simulation():
                 )
             except Exception as _lifecycle_exc:  # noqa: BLE001
                 print(f"⚠️ memory lifecycle hook failed for {agent.get('name')}: {_lifecycle_exc}")
+        # Growth day-tick: forgetting decay + interest-set evolution
+        # (retire stale triggered-phase items, adopt from social partners).
+        if INTERESTS_ENABLED:
+            for agent in agents:
+                profile = agent.get("growth_profile")
+                if not profile:
+                    continue
+                partner_ids = set()
+                for ep in agent.get("episodes", []) or []:
+                    if int(ep.get("day", 0) or 0) != day:
+                        continue
+                    partner_ids.update(ep.get("social_partners", []) or [])
+                candidates: list[str] = []
+                for pid in partner_ids:
+                    partner = agents_by_id.get(pid)
+                    if partner is None:
+                        try:
+                            partner = agents_by_id.get(int(pid))
+                        except (TypeError, ValueError):
+                            partner = None
+                    if partner is None or partner is agent:
+                        continue
+                    candidates.extend(growth_focus(partner.get("growth_profile"), limit=1))
+                profile, decay_changes = apply_daily_growth_decay(
+                    profile, day, config=INTERESTS_DECAY_CONFIG
+                )
+                profile, evolution_changes = evolve_growth_profile(
+                    profile,
+                    day,
+                    social_candidates=candidates,
+                    config=INTERESTS_EVOLUTION_CONFIG,
+                    max_items=INTERESTS_MAX_ITEMS,
+                )
+                agent["growth_profile"] = profile
+                if STATEFUL:
+                    save_agent_growth_profile(
+                        agent["id"], profile, CONFIG.get("memory_dir", "output/memory")
+                    )
+                growth_notes = []
+                if decay_changes.get("level_changes"):
+                    growth_notes.append(
+                        f"{len(decay_changes['level_changes'])}项兴趣/技能因久未练习而生疏"
+                    )
+                if evolution_changes.get("retired"):
+                    growth_notes.append("放下了：" + "、".join(evolution_changes["retired"]))
+                if evolution_changes.get("adopted"):
+                    growth_notes.append(
+                        "受身边人影响开始尝试：" + "、".join(evolution_changes["adopted"])
+                    )
+                if growth_notes:
+                    print(f"🌱 {agent['name']} 的成长变化：{'；'.join(growth_notes)}")
         hook_bus.emit(
             "on_day_end",
             day=day,

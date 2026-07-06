@@ -20,6 +20,30 @@ ALLOWED_KINDS = {KIND_HOBBY, KIND_SKILL}
 
 DEFAULT_MAX_ITEMS = 6
 
+# Hidi & Renninger four-phase interest development model. Phase is a
+# *derived* property of (level, total_minutes) — nothing new is persisted.
+PHASE_TRIGGERED = "触发期"
+PHASE_MAINTAINED = "维持期"
+PHASE_EMERGING = "浮现期"
+PHASE_WELL_DEVELOPED = "成熟期"
+
+# Level thresholds crossed upward emit a milestone in the episode progress
+# dict so diaries/reflections can reference tangible achievements.
+MILESTONES = ((0.35, "入门"), (0.60, "熟练"), (0.85, "精通"))
+
+DEFAULT_DECAY = {
+    "enabled": True,
+    "grace_days": 2,
+    "daily_rate": 0.012,
+    "floor": 0.05,
+}
+DEFAULT_EVOLUTION = {
+    "enabled": True,
+    "retire_after_days": 14,
+    "adopt_chance": 0.35,
+    "max_new_per_day": 1,
+}
+
 _PROMPT_TEMPLATE = """你是一个仿真社会的兴趣与技能成长建模助手。
 请根据虚构居民 profile，推导该居民自然拥有或计划发展的兴趣爱好与技能。
 
@@ -210,7 +234,9 @@ def save_growth_cache(path: str, cache: dict[int, GrowthProfile]) -> None:
     if directory:
         os.makedirs(directory, exist_ok=True)
     payload = {str(k): v.to_dict() for k, v in cache.items()}
-    tmp = f"{path}.tmp"
+    # Process-unique tmp: compare-event runs two scenarios in parallel that may
+    # target the same global cache path; a shared "{path}.tmp" races on os.replace.
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
@@ -286,12 +312,28 @@ def format_growth_context(profile: dict[str, Any] | GrowthProfile | None, *, max
         kind = "兴趣" if item.kind == KIND_HOBBY else "技能"
         career = "；与职业发展相关" if item.career_link else ""
         lines.append(
-            f"- {item.name}（{kind}/{item.category}，优先级{item.priority:.2f}，"
+            f"- {item.name}（{kind}/{item.category}，{growth_phase(item)}，优先级{item.priority:.2f}，"
             f"水平{item.level:.2f}，每周目标{item.weekly_target_minutes}分钟；"
             f"偏好时段：{','.join(item.preferred_time_blocks) or '灵活'}；"
             f"可安排：{templates}{career}）"
         )
     return "\n".join(lines) if lines else "无"
+
+
+def growth_phase(item: dict[str, Any] | GrowthItem) -> str:
+    """Classify an item into the four-phase interest development model."""
+    if isinstance(item, GrowthItem):
+        level, minutes = item.level, item.total_minutes
+    else:
+        level = _clamp(item.get("level", 0.2))
+        minutes = max(0, _coerce_int(item.get("total_minutes", 0), 0, 10000000))
+    if level < 0.25 and minutes < 300:
+        return PHASE_TRIGGERED
+    if level < 0.45:
+        return PHASE_MAINTAINED
+    if level < 0.70:
+        return PHASE_EMERGING
+    return PHASE_WELL_DEVELOPED
 
 
 def growth_focus(profile: dict[str, Any] | GrowthProfile | None, limit: int = 2) -> list[str]:
@@ -332,7 +374,7 @@ def update_growth_from_episode(
     gp = profile if isinstance(profile, GrowthProfile) else GrowthProfile.from_dict(profile or {})
     if not gp.items:
         payload = gp.to_dict()
-        return payload, {"matches": [], "minutes": 0, "level_changes": {}, "reason": "no_profile"}
+        return payload, {"matches": [], "minutes": 0, "level_changes": {}, "milestones": [], "reason": "no_profile"}
     matches = match_growth_items(
         gp,
         episode.get("final_activity", ""),
@@ -341,11 +383,12 @@ def update_growth_from_episode(
     )
     if not matches:
         payload = gp.to_dict()
-        return payload, {"matches": [], "minutes": 0, "level_changes": {}, "reason": "no_match"}
+        return payload, {"matches": [], "minutes": 0, "level_changes": {}, "milestones": [], "reason": "no_match"}
     match_names = {str(item.get("name", "")) for item in matches}
     minutes = max(1, int(step_minutes or 30))
     day = int(episode.get("day", 0) or 0)
     level_changes: dict[str, dict[str, float]] = {}
+    milestones: list[dict[str, str]] = []
     for item in gp.items:
         if item.name not in match_names:
             continue
@@ -359,20 +402,138 @@ def update_growth_from_episode(
             item.last_practiced_day = day
         practice_factor = min(0.035, minutes / max(600.0, item.weekly_target_minutes * 4.0))
         priority_factor = 0.6 + item.priority * 0.6
-        item.level = _clamp(item.level + practice_factor * priority_factor)
+        # Power-law learning curve: gains shrink as mastery grows.
+        mastery_factor = 1.0 - 0.6 * item.level
+        # Habit momentum: an unbroken streak compounds practice quality.
+        streak_factor = 1.0 + min(0.30, 0.03 * item.streak_days)
+        item.level = _clamp(item.level + practice_factor * priority_factor * mastery_factor * streak_factor)
         if abs(item.level - before) > 0.0001:
             level_changes[item.name] = {
                 "before": round(before, 4),
                 "after": round(item.level, 4),
             }
+            for threshold, label in MILESTONES:
+                if before < threshold <= item.level:
+                    milestones.append({"name": item.name, "label": label})
     payload = gp.to_dict()
     progress = {
         "matches": sorted(match_names),
         "minutes": minutes,
         "level_changes": level_changes,
+        "milestones": milestones,
         "reason": "matched_activity_or_action",
     }
     return payload, progress
+
+
+def apply_daily_growth_decay(
+    profile: dict[str, Any] | GrowthProfile | None,
+    day: int,
+    *,
+    config: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Day-end forgetting tick: unpracticed items lose level, streaks break.
+
+    Retention grows with accumulated practice (consolidated skills barely
+    decay) and is phase-aware: triggered-phase interests are fragile,
+    well-developed ones are self-sustaining.
+    """
+    cfg = {**DEFAULT_DECAY, **(config or {})}
+    gp = profile if isinstance(profile, GrowthProfile) else GrowthProfile.from_dict(profile or {})
+    changes: dict[str, dict[str, float]] = {}
+    if not cfg.get("enabled", True) or not gp.items:
+        return gp.to_dict(), {"level_changes": changes}
+    day = int(day or 0)
+    grace_days = max(0, int(cfg.get("grace_days", 2)))
+    daily_rate = max(0.0, float(cfg.get("daily_rate", 0.012)))
+    floor = _clamp(cfg.get("floor", 0.05))
+    for item in gp.items:
+        idle_days = day - int(item.last_practiced_day or 0)
+        if idle_days <= 0:
+            continue
+        if idle_days > 1 and item.streak_days:
+            item.streak_days = 0
+        if idle_days <= grace_days:
+            continue
+        retention = min(0.8, item.total_minutes / 3000.0)
+        phase = growth_phase(item)
+        phase_factor = {PHASE_TRIGGERED: 1.5, PHASE_WELL_DEVELOPED: 0.5}.get(phase, 1.0)
+        before = item.level
+        item.level = _clamp(item.level - daily_rate * (1.0 - retention) * phase_factor, lo=min(floor, before))
+        if abs(item.level - before) > 0.0001:
+            changes[item.name] = {"before": round(before, 4), "after": round(item.level, 4)}
+    return gp.to_dict(), {"level_changes": changes}
+
+
+def evolve_growth_profile(
+    profile: dict[str, Any] | GrowthProfile | None,
+    day: int,
+    *,
+    social_candidates: Iterable[str] = (),
+    config: dict[str, Any] | None = None,
+    max_items: int = DEFAULT_MAX_ITEMS,
+    rng: Optional[Any] = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Day-end interest-set turnover: retire stale triggered-phase items,
+    adopt new interests by social contagion.
+
+    ``social_candidates`` are growth-item names observed on the day's
+    social partners (assembled by the caller). Pure rules, no LLM.
+    """
+    import random as _random
+
+    cfg = {**DEFAULT_EVOLUTION, **(config or {})}
+    rng = rng or _random
+    gp = profile if isinstance(profile, GrowthProfile) else GrowthProfile.from_dict(profile or {})
+    changes: dict[str, list[str]] = {"retired": [], "adopted": []}
+    if not cfg.get("enabled", True):
+        return gp.to_dict(), changes
+    day = int(day or 0)
+    retire_after = max(1, int(cfg.get("retire_after_days", 14)))
+
+    kept: list[GrowthItem] = []
+    for item in gp.items:
+        idle_days = day - int(item.last_practiced_day or 0)
+        stale = (
+            growth_phase(item) == PHASE_TRIGGERED
+            and idle_days > retire_after
+            and item.priority < 0.75
+        )
+        if stale and len(gp.items) - len(changes["retired"]) > 1:
+            changes["retired"].append(item.name)
+        else:
+            kept.append(item)
+    gp.items = kept
+
+    adopt_chance = _clamp(cfg.get("adopt_chance", 0.35))
+    max_new = max(0, int(cfg.get("max_new_per_day", 1)))
+    existing = {item.name for item in gp.items}
+    for name in social_candidates:
+        if len(changes["adopted"]) >= max_new or len(gp.items) >= max(1, int(max_items)):
+            break
+        cleaned = _clean_text(name, max_chars=24)
+        if not cleaned or cleaned in existing:
+            continue
+        if rng.random() > adopt_chance:
+            continue
+        gp.items.append(
+            GrowthItem(
+                name=cleaned,
+                kind=KIND_HOBBY,
+                category="社交",
+                motivation="受身边人影响而产生兴趣",
+                level=0.08,
+                priority=0.45,
+                weekly_target_minutes=60,
+                preferred_time_blocks=["evening", "weekend"],
+                activity_templates=[cleaned, f"和朋友一起{cleaned}"],
+                sociality=0.8,
+                last_practiced_day=day,
+            )
+        )
+        existing.add(cleaned)
+        changes["adopted"].append(cleaned)
+    return gp.to_dict(), changes
 
 
 def _build_prompt(agent: dict[str, Any], max_items: int) -> str:
@@ -645,10 +806,13 @@ __all__ = [
     "GrowthItem",
     "GrowthProfile",
     "agent_growth_path",
+    "apply_daily_growth_decay",
     "bootstrap_growth_profiles",
     "derive_growth_profile",
+    "evolve_growth_profile",
     "format_growth_context",
     "growth_focus",
+    "growth_phase",
     "load_agent_growth_profile",
     "load_growth_cache",
     "match_growth_items",

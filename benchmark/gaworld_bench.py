@@ -32,6 +32,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics
 import subprocess
 import sys
@@ -54,6 +55,8 @@ ANCHORS = {
                           "source": "2024中国主要城市通勤监测报告 (杭州)"},
     "transit_share":     {"value": 0.476, "tol": 0.25,
                           "source": "杭州市交通运输局2024"},
+    "wealth_gini":       {"value": 0.70, "tol": 0.30,
+                          "source": "CHFS/瑞信财富报告: 中国家庭财富Gini≈0.6-0.75"},
 }
 
 # ── Track C: known-sign interventions (metrics present in comparison_metrics.csv) ─
@@ -112,6 +115,21 @@ def clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
+def gini(values: list[float]) -> float | None:
+    """Gini coefficient over non-negative values (negatives clipped to 0)."""
+    vals = sorted(max(0.0, v) for v in values)
+    n = len(vals)
+    total = sum(vals)
+    if n == 0 or total <= 0:
+        return None
+    cum = 0.0
+    weighted = 0.0
+    for i, v in enumerate(vals, start=1):
+        cum += v
+        weighted += i * v
+    return (2.0 * weighted) / (n * total) - (n + 1.0) / n
+
+
 # ── Track A ──────────────────────────────────────────────────────────────────
 def track_a_macro_fit(output_dir: Path) -> dict:
     """Compare aggregate sim statistics against real anchors."""
@@ -125,6 +143,20 @@ def track_a_macro_fit(output_dir: Path) -> dict:
             vals = _floats(rows, key)
             if vals:
                 metrics[key] = statistics.fmean(vals)
+        # Distribution-level: wealth Gini over net worth
+        # (balance + housing fund − debt); debt column absent in old runs.
+        net_worth = []
+        for r in rows:
+            try:
+                nw = (float(r.get("balance") or 0)
+                      + float(r.get("housing_fund") or 0)
+                      - float(r.get("debt") or 0))
+            except ValueError:
+                continue
+            net_worth.append(nw)
+        g = gini(net_worth) if net_worth else None
+        if g is not None:
+            metrics["wealth_gini"] = g
 
     # commute_minutes / transit_share are optional: only scored if the sim
     # emitted the relevant files (not present in current default output).
@@ -147,11 +179,27 @@ def track_a_macro_fit(output_dir: Path) -> dict:
         return {"track": "A", "status": "n/a",
                 "note": "no economy/wealth_snapshot.csv found"}
 
+    # Money-conservation audit: a hard gate, not an anchor fit. If the sim
+    # exported conservation_audit.csv, max |drift| must stay within one cent.
+    conservation = None
+    audit = output_dir / "economy" / "conservation_audit.csv"
+    if audit.exists():
+        drifts = _floats(read_csv_rows(audit), "drift")
+        if drifts:
+            max_drift = max(abs(d) for d in drifts)
+            conservation = {"max_abs_drift": round(max_drift, 4),
+                            "pass": max_drift <= 0.01}
+
     s_vals = [m["score"] for m in scored.values()]
     score = statistics.fmean(s_vals)
     passed = score >= 0.6 and all(s > 0 for s in s_vals)
-    return {"track": "A", "status": "ok", "score": round(score, 4),
-            "pass": passed, "metrics": scored, "n_samples": n_samples}
+    if conservation is not None:
+        passed = passed and conservation["pass"]
+    result = {"track": "A", "status": "ok", "score": round(score, 4),
+              "pass": passed, "metrics": scored, "n_samples": n_samples}
+    if conservation is not None:
+        result["conservation"] = conservation
+    return result
 
 
 # ── Track C ──────────────────────────────────────────────────────────────────
@@ -216,48 +264,51 @@ def track_c_causal(sign_sources: dict[str, Path], placebo_dir: Path | None,
     out["sign"] = {"score": round(sign_score, 4), "n_eval": n_eval, "n_correct": n_ok,
                    "effect_col": EFFECT_COL, "tests": sign_results}
 
-    # C2 — placebo / null event (post-event effect)
+    # C2 placebo + C3 determinism (shared with the multi-seed scorer)
+    placebo_score, out["placebo"] = _placebo_block(placebo_dir)
+    det_score, out["determinism"] = _determinism_block(det_a, det_b)
+    if incomplete:  # A5
+        out["incomplete"] = [p.name for p in incomplete]
+
+    coverage = n_eval / len(SIGN_TESTS)
+    out["coverage"] = round(coverage, 4)
+    base, out["score"] = _aggregate_c(sign_score, placebo_score, det_score, coverage)
+    out["score_uncovered"] = base
+    out["pass"] = (sign_score >= 0.75) and (placebo_score is None or placebo_score >= 0.8) \
+        and (coverage >= 0.75)
+    out["det_status"] = out["determinism"]["status"]
+    return out
+
+
+# ── shared Track C sub-blocks ────────────────────────────────────────────────
+def _placebo_block(placebo_dir: Path | None) -> tuple[float | None, dict]:
     if placebo_dir and (placebo_dir / "comparison_metrics.csv").exists():
         rows = read_csv_rows(placebo_dir / "comparison_metrics.csv")
         deltas = _floats(rows, EFFECT_COL) or _floats(rows, "delta_mean")
         within = [abs(d) < PLACEBO_EPS for d in deltas]
-        placebo_score = (sum(within) / len(within)) if within else 0.0
+        score = (sum(within) / len(within)) if within else 0.0
         worst = max((abs(d) for d in deltas), default=0.0)
-        out["placebo"] = {"score": round(placebo_score, 4), "eps": PLACEBO_EPS,
-                          "n_metrics": len(deltas), "max_abs_delta": round(worst, 4)}
-    else:
-        placebo_score = None
-        out["placebo"] = {"score": None, "note": "no completed placebo comparison"}
+        return score, {"score": round(score, 4), "eps": PLACEBO_EPS,
+                       "n_metrics": len(deltas), "max_abs_delta": round(worst, 4)}
+    return None, {"score": None, "note": "no completed placebo comparison"}
 
-    # C3 — determinism (tri-state: ok / fail / unassessed; A4)
+
+def _determinism_block(det_a: Path | None, det_b: Path | None) -> tuple[float | None, dict]:
     if det_a and det_b and det_a.exists() and det_b.exists():
-        det_score, n = _determinism_score(det_a, det_b)
-        det_status = "ok" if det_score >= 1.0 - 1e-12 else "fail"
-        out["determinism"] = {"score": round(det_score, 6), "n_points": n, "status": det_status}
-    else:
-        det_score = None
-        out["determinism"] = {"score": None, "status": "unassessed",
-                              "note": "no baseline pair provided"}
+        score, n = _determinism_score(det_a, det_b)
+        status = "ok" if score >= 1.0 - 1e-12 else "fail"
+        return score, {"score": round(score, 6), "n_points": n, "status": status}
+    return None, {"score": None, "status": "unassessed", "note": "no baseline pair provided"}
 
-    # A5 — runs that matched a keyword but never produced comparison_metrics.csv
-    if incomplete:
-        out["incomplete"] = [p.name for p in incomplete]
 
-    # aggregate: weighted mean of available sub-scores, then coverage discount (A3)
+def _aggregate_c(sign_score: float, placebo_score, det_score, coverage: float) -> tuple[float, float]:
     parts, weights = [sign_score], [0.5]
     if placebo_score is not None:
         parts.append(placebo_score); weights.append(0.25)
     if det_score is not None:
         parts.append(det_score); weights.append(0.25)
     base = sum(p * w for p, w in zip(parts, weights)) / sum(weights)
-    coverage = n_eval / len(SIGN_TESTS)
-    out["coverage"] = round(coverage, 4)
-    out["score_uncovered"] = round(base, 4)        # before coverage discount
-    out["score"] = round(base * coverage, 4)        # coverage-discounted (A3)
-    out["pass"] = (sign_score >= 0.75) and (placebo_score is None or placebo_score >= 0.8) \
-        and (coverage >= 0.75)
-    out["det_status"] = out["determinism"]["status"]
-    return out
+    return round(base, 4), round(base * coverage, 4)  # (uncovered, coverage-discounted A3)
 
 
 def _determinism_score(a: Path, b: Path) -> tuple[float, int]:
@@ -346,6 +397,156 @@ def orchestrate_track_c(days: int, seed: int, provider: str | None,
     return track_c_causal(sign_sources, placebo_dir, det_a, det_b)
 
 
+# ── A2: cross-seed significance ──────────────────────────────────────────────
+# 95% two-sided Student-t critical values by degrees of freedom (n-1).
+_T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+        8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
+        15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+        21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056,
+        27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042}
+
+
+def ci95(samples: list[float]) -> tuple[float | None, float | None, bool, int]:
+    """Return (mean, halfwidth, significant, n). significant = 95% CI excludes 0.
+
+    n<2 yields no CI and significant=False (one point can't establish significance).
+    """
+    n = len(samples)
+    if n == 0:
+        return None, None, False, 0
+    m = statistics.fmean(samples)
+    if n < 2:
+        return m, None, False, n
+    hw = _T95.get(n - 1, 1.96) * statistics.stdev(samples) / math.sqrt(n)
+    return m, hw, abs(m) > hw, n
+
+
+def _metrics_for_intervention(name: str) -> list[str]:
+    return [t["metric"] for t in SIGN_TESTS if t["name"] == name]
+
+
+def track_c_multiseed(samples_by_test: dict[tuple[str, str], list[float]],
+                      placebo_dir: Path | None, det_a: Path | None,
+                      det_b: Path | None, incomplete: list[Path] | None = None) -> dict:
+    """Significance-aware Track C: score the sign only on tests whose effect is
+    significant across seeds (95% CI excludes 0). Non-significant tests are
+    reported as 'ns' and excluded from the sign numerator/denominator (A2)."""
+    out = {"track": "C", "status": "ok", "mode": "multiseed"}
+    tests = []
+    n_sig = n_correct = n_data = 0
+    for t in SIGN_TESTS:
+        s = samples_by_test.get((t["name"], t["metric"]), [])
+        m, hw, sig, n = ci95(s)
+        if n > 0:
+            n_data += 1
+        correct = bool(sig and m is not None and m * t["sign"] > 0)
+        if sig:
+            n_sig += 1
+            n_correct += int(correct)
+        tests.append({**{k: t[k] for k in ("name", "metric", "sign", "why")},
+                      "mean": None if m is None else round(m, 4),
+                      "ci95": None if hw is None else round(hw, 4),
+                      "n": n, "significant": sig, "correct": correct})
+    sign_score = (n_correct / n_sig) if n_sig else 0.0
+    out["sign"] = {"score": round(sign_score, 4), "n_eval": n_sig, "n_correct": n_correct,
+                   "n_significant": n_sig, "n_data": n_data, "effect_col": EFFECT_COL,
+                   "tests": tests}
+
+    placebo_score, out["placebo"] = _placebo_block(placebo_dir)
+    det_score, out["determinism"] = _determinism_block(det_a, det_b)
+    if incomplete:
+        out["incomplete"] = [p.name for p in incomplete]
+
+    coverage = n_data / len(SIGN_TESTS)
+    sig_coverage = n_sig / len(SIGN_TESTS)
+    out["coverage"] = round(coverage, 4)
+    out["significance_coverage"] = round(sig_coverage, 4)
+    base, out["score"] = _aggregate_c(sign_score, placebo_score, det_score, coverage)
+    out["score_uncovered"] = base
+    out["pass"] = (sign_score >= 0.75) and (coverage >= 0.75) and (sig_coverage >= 0.5) \
+        and (placebo_score is None or placebo_score >= 0.8)
+    out["det_status"] = out["determinism"]["status"]
+    return out
+
+
+CHECKPOINT_PATH = RESULTS_DIR / "checkpoint_multiseed.json"
+
+
+def _load_checkpoint() -> dict | None:
+    if CHECKPOINT_PATH.exists():
+        try:
+            return json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+    return None
+
+
+def _save_checkpoint(state: dict) -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = CHECKPOINT_PATH.with_name(CHECKPOINT_PATH.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, CHECKPOINT_PATH)
+
+
+def orchestrate_track_c_multiseed(seeds: list[int], days: int, provider: str | None,
+                                  det_a: Path | None, det_b: Path | None,
+                                  resume: bool = False) -> dict:
+    """Run each intervention across seeds and score with significance.
+
+    Checkpoint/resume (--continue): progress is saved to CHECKPOINT_PATH after
+    every completed (intervention, seed) unit. If a compare-event call fails
+    (e.g. LLM quota), the partial state is kept and the run stops with a resume
+    hint; re-running with resume=True skips the units already done.
+    """
+    plan = [(key, seed) for key in INTERVENTIONS for seed in seeds]
+    completed: dict[tuple[str, str], dict] = {}  # (key, seed) -> {metric: effect}
+
+    ckpt = _load_checkpoint() if resume else None
+    if ckpt is not None:
+        if ckpt.get("days") != days or sorted(ckpt.get("seeds", [])) != sorted(seeds):
+            return {"track": "C", "status": "n/a",
+                    "note": f"--continue 的 days/seeds 与已存进度不一致（存={ckpt.get('days')}天"
+                            f"/{ckpt.get('seeds')}）。请用相同参数，或删除 {CHECKPOINT_PATH} 重新开始。"}
+        for u in ckpt.get("completed", []):
+            completed[(u["intervention"], u["seed"])] = u["metrics"]
+        print(f"[bench] --continue: 已完成 {len(completed)}/{len(plan)} 个单元，续跑剩余。")
+    elif resume:
+        print("[bench] --continue: 未找到 checkpoint，从头开始。")
+
+    def _persist():
+        _save_checkpoint({
+            "seeds": seeds, "days": days, "n_units": len(plan),
+            "completed": [{"intervention": k, "seed": s, "metrics": m}
+                          for (k, s), m in completed.items()],
+        })
+
+    for key, seed in plan:
+        if (key, seed) in completed:
+            continue
+        name, desc = INTERVENTIONS[key]
+        d = _run_compare_event(name, desc, days, seed, provider)
+        mcsv = (d / "comparison_metrics.csv") if d else None
+        if not (mcsv and mcsv.exists()):
+            _persist()  # save progress so far, then stop for the user to retry later
+            return {"track": "C", "status": "incomplete",
+                    "note": f"compare-event 在 {key}/seed={seed} 失败（可能 API 用量超限）。"
+                            f"已保存进度 {len(completed)}/{len(plan)} → 配额恢复后用 "
+                            f"`--continue`（相同 --seeds/--days）续跑。"}
+        completed[(key, seed)] = {m: eff["effect"] for m in _metrics_for_intervention(key)
+                                  if (eff := _event_effect(mcsv, m))}
+        _persist()  # checkpoint after each successful unit
+
+    samples: dict[tuple[str, str], list[float]] = {}
+    for (key, _seed), metrics in completed.items():
+        for metric, effect in metrics.items():
+            samples.setdefault((key, metric), []).append(effect)
+    if not samples:
+        return {"track": "C", "status": "n/a",
+                "note": "multi-seed runs produced no data — check LLM provider / config"}
+    CHECKPOINT_PATH.unlink(missing_ok=True)  # done -> clear checkpoint
+    return track_c_multiseed(samples, None, det_a, det_b, None)
+
+
 # ── Scorecard ────────────────────────────────────────────────────────────────
 def build_scorecard(tracks: dict) -> dict:
     implemented = {k: v for k, v in tracks.items()
@@ -390,10 +591,13 @@ def render_scorecard_md(sc: dict) -> str:
         sign = c.get("sign", {})
         plc = c.get("placebo", {}).get("score")
         det_status = c.get("determinism", {}).get("status", "未评估")
-        L += ["", f"- Track C: 符号 {sign.get('n_correct')}/{sign.get('n_eval')} 正确"
-                  f"（覆盖 {c.get('coverage')}，按 `{sign.get('effect_col')}` 事件后效应）"
-                  f" · 安慰剂 {'未评估' if plc is None else plc}"
-                  f" · 确定性 {det_status}"]
+        if c.get("mode") == "multiseed":  # A2: significant-only sign + significance coverage
+            head = (f"- Track C[多seed]: 符号 {sign.get('n_correct')}/{sign.get('n_significant')} 显著且正确"
+                    f"（显著覆盖 {c.get('significance_coverage')}，数据覆盖 {c.get('coverage')}，95%CI）")
+        else:
+            head = (f"- Track C: 符号 {sign.get('n_correct')}/{sign.get('n_eval')} 正确"
+                    f"（覆盖 {c.get('coverage')}，按 `{sign.get('effect_col')}` 事件后效应）")
+        L += ["", head + f" · 安慰剂 {'未评估' if plc is None else plc} · 确定性 {det_status}"]
         if c.get("incomplete"):
             L.append(f"- ⚠️ 运行未完成（缺 comparison_metrics.csv）: {', '.join(c['incomplete'])}")
     return "\n".join(L) + "\n"
@@ -435,7 +639,54 @@ def _report_track_a(t: dict) -> tuple[list[str], list[str]]:
     return lines, recs
 
 
+def _report_track_c_multiseed(t: dict) -> tuple[list[str], list[str]]:
+    lines, recs = [], []
+    sign = t.get("sign", {})
+    lines.append(f"符号 {sign.get('n_correct')}/{sign.get('n_significant')} 显著且正确"
+                 f"（显著覆盖 {t.get('significance_coverage')}，数据覆盖 {t.get('coverage')}，95%CI）。")
+    ns = []
+    for r in sign.get("tests", []):
+        if r["n"] == 0:
+            lines.append(f"- `{r['name']}/{r['metric']}`: 无数据（未评估）")
+            continue
+        ci = "" if r["ci95"] is None else f"±{r['ci95']:.4f}"
+        if not r["significant"]:
+            tag = "ns(不显著)"
+            ns.append(r)
+        else:
+            tag = "✓" if r["correct"] else "✗"
+        arrow = "↑" if r["sign"] > 0 else "↓"
+        lines.append(f"- `{r['name']}/{r['metric']}`: Δ={r['mean']:+.4f}{ci} (n={r['n']}) 期望{arrow} {tag}")
+    if ns:
+        recs.append(f"{len(ns)} 项不显著（95%CI 含 0）：增加 seed 数或确认效应是否真实，"
+                    "不要据不显著结果下因果结论。")
+    wrong = [r for r in sign.get("tests", []) if r["significant"] and not r["correct"]]
+    if wrong:
+        recs.append("有显著但方向相反的项 → 检查该干预的事件→指标因果接线。")
+    if t.get("significance_coverage", 0) < 0.5:
+        recs.append("显著项不足一半：单 seed 噪声大，增加 seed 或延长仿真。")
+    _track_c_common_recs(t, recs)
+    return lines, recs
+
+
+def _track_c_common_recs(t: dict, recs: list[str]) -> None:
+    if t.get("incomplete"):
+        recs.append(f"补跑未完成的对照（{', '.join(t['incomplete'])}）。")
+    plc = t.get("placebo", {}).get("score")
+    if plc is None:
+        recs.append("安慰剂未评估：补一个能跑完的空事件对照。")
+    elif plc < 0.8:
+        recs.append(f"安慰剂泄漏（{plc}）：空事件也产生效应 → 排查与事件无关的漂移/噪声。")
+    det = t.get("determinism", {}).get("status")
+    if det == "unassessed":
+        recs.append("确定性未评估：提供两份同 seed baseline（`--det-a/--det-b`）。")
+    elif det == "fail":
+        recs.append("⚠️ 非确定！先修随机源，否则整套结果不可信。")
+
+
 def _report_track_c(t: dict) -> tuple[list[str], list[str]]:
+    if t.get("mode") == "multiseed":
+        return _report_track_c_multiseed(t)
     lines, recs = [], []
     sign = t.get("sign", {})
     lines.append(f"符号 {sign.get('n_correct')}/{sign.get('n_eval')} 正确"
@@ -562,6 +813,20 @@ def make_synthetic(root: Path) -> dict:
             "det_b": st / "baseline_run_b.csv"}
 
 
+def make_synthetic_multiseed() -> dict[tuple[str, str], list[float]]:
+    """Fabricate per-(intervention,metric) delta_final samples across 5 seeds.
+
+    3 of 4 tests are tight + significant + correct; tax/econ_security straddles 0
+    (non-significant) to exercise the 'ns' path.
+    """
+    return {
+        ("traffic_restriction", "mobility_intent"): [0.30, 0.32, 0.34, 0.31, 0.33],
+        ("layoff_shock", "econ_security"): [-0.05, -0.06, -0.04, -0.055, -0.045],
+        ("layoff_shock", "stress"): [0.17, 0.16, 0.18, 0.15, 0.19],
+        ("tax_cut", "econ_security"): [0.02, -0.01, 0.03, -0.02, 0.01],  # ns
+    }
+
+
 def _write_metrics(path: Path, deltas: list[tuple[str, float]]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -587,8 +852,12 @@ def main() -> int:
                    help="Track C: live-run compare-event (needs an LLM provider)")
     p.add_argument("--days", type=int, default=3, help="sim days for live --run")
     p.add_argument("--seed", type=int, default=42, help="random seed for live --run")
+    p.add_argument("--seeds", help="A2 multi-seed significance mode: comma list, e.g. 1,2,3,4,5")
+    p.add_argument("--continue", dest="resume", action="store_true",
+                   help="resume a multi-seed --run from its saved checkpoint (after a quota/API failure)")
     p.add_argument("--llm-provider", help="provider passed to compare-event (e.g. minimax)")
     args = p.parse_args()
+    seeds = [int(s) for s in args.seeds.split(",") if s.strip()] if args.seeds else None
 
     syn_sign_sources = None
     if args.synthetic:
@@ -609,7 +878,18 @@ def main() -> int:
         out_dir = args.output_dir or (PROJECT_ROOT / "output")  # sensible default
         tracks["A"] = track_a_macro_fit(out_dir)
     if run_c:
-        if syn_sign_sources is not None:
+        if seeds is not None:  # A2 multi-seed significance mode
+            if args.synthetic:
+                tracks["C"] = track_c_multiseed(make_synthetic_multiseed(),
+                                                args.placebo_dir, args.det_a, args.det_b)
+            elif args.run or args.resume:
+                tracks["C"] = orchestrate_track_c_multiseed(
+                    seeds, args.days, args.llm_provider, args.det_a, args.det_b,
+                    resume=args.resume)
+            else:
+                tracks["C"] = {"track": "C", "status": "n/a",
+                               "note": "--seeds 多seed模式需配 --run（实跑，需 provider）或 --synthetic"}
+        elif syn_sign_sources is not None:
             tracks["C"] = track_c_causal(syn_sign_sources, args.placebo_dir,
                                          args.det_a, args.det_b)
         elif args.run:

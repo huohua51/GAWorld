@@ -25,10 +25,10 @@
 |---|---|---|
 | 多后端 LLM 路由 | Ollama / OpenAI 兼容 / Anthropic 兼容，可按任务分流模型 | `CONFIG["llm"]["routing"]["default"]` / `["tasks"]`；环境变量 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等 |
 | 记忆系统 | 短期 / 情景 / 长期总结 / 关系记忆 + 向量召回，跨天保持一致性 | 自动运行；`CONFIG["memory"]`；产物 `output/memory/` |
-| 经济仿真 | 个税 7 档累进 + 五险一金、恩格尔消费、四账户投资、宏观周期与冲击 | `CONFIG["economy"]`；产物 `output/economy/` |
+| 经济仿真 | 货币守恒闭环（企业/政府/银行部门池）、个税 + 五险一金真实代扣、恩格尔消费、现金约束 + 信贷、投资含共同市场因子、消费/房租路由到 agent、熟人借贷、宏观周期与冲击 | `CONFIG["economy"]`（子块 `sectors`/`credit`/`routing`/`friend_loans`）；产物 `output/economy/`（含 `conservation_audit.csv`、`sectors.json`） |
 | 位置系统与交通 | 类别空间匹配、真实出行成本、高峰 / 天气影响、通勤记忆、区域价格 | 自动运行（依赖 `data/citymap.md`）；`gaworld/world/city_map.py` |
 | 动态行为系统 | 承诺度感知中断、情绪即兴行为、社交偶遇链、环境事件级联、需求中断与日程恢复 | `CONFIG["dynamic_behavior"]["enabled"]` |
-| 兴趣爱好与技能成长 | 为每个 agent 派生成长画像，影响日程、动作权重与工作选择 | `CONFIG["interests"]["enabled"]`；产物 `output/memory/agent_<id>_growth.json` |
+| 兴趣爱好与技能成长 | 为每个 agent 派生成长画像并动态演化（幂律学习、里程碑、遗忘衰减、发展四阶段、社交兴趣传染），影响日程、动作权重与工作选择 | `CONFIG["interests"]["enabled"]`（日终机制见 `interests.decay` / `interests.evolution`）；产物 `output/memory/agent_<id>_growth.json` |
 | 社交网络 | 关系衰减、Dunbar 分层、off-screen ghost 事件 | 自动运行；`gaworld/social/network.py`；产物 `output/network/` |
 | 生命事件 | 生日、疾病、换工作等调度事件 | 自动运行；`gaworld/events/life.py` |
 | 政策 / 环境事件 | 政策冲击与环境扰动注入仿真 | `CONFIG["policy_events"]`；`gaworld/env/system.py`；产物 `output/environment/timeline.jsonl` |

@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-07-04 — Personal Growth v2 (learning dynamics + interest evolution)
+
+Multi-disciplinary redesign of the interest/skill-growth system (design doc: `docs/proposals/2026-07-04-personal-growth-v2.md`). All new mechanics are pure rules — no extra LLM calls; the persisted `agent_N_growth.json` schema is unchanged and backward compatible.
+
+### Added
+
+- **`gaworld/interests.py`** — learning dynamics: power-law diminishing returns (gains shrink with mastery), streak momentum (unbroken practice compounds), and milestone events (入门/熟练/精通 threshold crossings surfaced in `episode["growth_progress"]["milestones"]`). New `growth_phase()` derives the Hidi & Renninger four-phase label (触发期/维持期/浮现期/成熟期) from level + practice volume; `format_growth_context` now shows it, so prompt self-image evolves with development.
+- **`gaworld/interests.py::apply_daily_growth_decay`** — day-end forgetting tick: unpracticed items lose level after a grace period, retention rises with accumulated practice (consolidated skills barely decay), decay is phase-aware (triggered ×1.5, well-developed ×0.5), idle gaps break streaks.
+- **`gaworld/interests.py::evolve_growth_profile`** — day-end interest-set turnover: stale triggered-phase items are retired (never below 1 item); new interests are adopted by social contagion from the day's social partners (bounded by `adopt_chance`, `max_new_per_day`, `max_items`; deterministic via injectable rng).
+- **`generative_city_sim.py`** — day-end growth tick wired into PHASE 3c: gathers partner growth focus from the day's episodes, runs decay + evolution, persists when stateful, prints a 🌱 change line.
+- **`gaworld/settings/behavior.py`** — `interests.decay` and `interests.evolution` config blocks (both enabled by default, individually switchable).
+- **`tests/test_interest_growth_dynamics.py`** — 18 cases: diminishing returns, streak momentum, milestones, decay (grace/retention/floor/streak-break/disabled), phase boundaries, evolution (retire/keep-last/adopt/chance/dedupe/caps/disabled).
+
+### Fixed
+
+- **`gaworld/sim/_summary.py::_growth_diff`** — read the actual `GrowthProfile` schema (`items` / float `level` / `total_minutes`) instead of the never-existing `interests` / int level / `minutes`, so end-of-run growth diffs are no longer always empty.
+
+### Docs
+
+- **`README.md` / `README.zh-CN.md`** — feature bullet, `interests` config note, and an expanded **Interest And Skill Growth / 兴趣爱好与技能成长系统** section covering the v2 dynamics, bilingual.
+- **`docs/TUTORIAL.v2.md`** — §5.5 expanded with the v2 mechanics and their config keys; config-table row updated.
+- **`docs/FEATURES.md`** — feature-table row updated with the day-end mechanics and config pointers.
+- **`docs/PROJECT_STRUCTURE.md`** — `gaworld/interests.py` entry now mentions decay and interest-set evolution.
+- **`docs/proposals/2026-07-04-personal-growth-v2.md`** — the design document (four-perspective expert review, mechanism specs, non-goals, validation).
+
 ## [Unreleased] — 2026-07-04 — Agent Studio (single-agent builder/inspector)
 
 A visual builder/inspector for a single agent, integrated into the local dashboard. Seven steps bound to GAWorld's real seed model — identity + the nine `[0,1]` state variables, skills, tiered memory, Dunbar social circles, behavior dials, and review/deploy — with read/write back to the state CSV and profile Markdown.

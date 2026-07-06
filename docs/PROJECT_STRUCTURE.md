@@ -12,7 +12,7 @@ CLI/backward-compat entrypoints until their callers have been migrated.
 - `gaworld/settings/`: focused configuration fragments assembled into the legacy `CONFIG` dict.
 - `gaworld/core/`: typed core abstractions used by new code.
 - `gaworld/io/`: IO helpers such as HTTP guards and web scraping.
-- `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, and progress updates.
+- `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, progress updates, day-end forgetting decay, and interest-set evolution (retirement + social contagion).
 - `gaworld/work/`: real-work task routing, queueing, adapters, and market data.
 - `gaworld/skills/`: per-agent Skill subsystem — global library at `data/skills/`, private skills under `output/memory/agent_<id>_skills/`, and experience-to-skill consolidation. See [`SKILL_SYSTEM.md`](SKILL_SYSTEM.md).
 - `gaworld/world/local_physical.py`: per-node occupancy / opening-hours snapshots and crowd-surge anomaly detection injected into perception. See [`physical_env_perception_changelog.md`](physical_env_perception_changelog.md).

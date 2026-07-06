@@ -106,6 +106,15 @@ def economy_settings() -> dict[str, Any]:
                 },
                 "auto_save_enabled": True,
                 "checking_buffer_months": 2.0,
+                "market_correlation": 0.7,
+            },
+            # --- Credit & cash constraint ---
+            "credit": {
+                "enabled": True,
+                "credit_limit_months": 2.0,
+                "annual_interest_rate": 0.18,
+                "hardship_liquidity_months": 1.0,
+                "min_spend_factor": 0.25,
             },
             # --- Macro-economic cycle ---
             "macro": {
@@ -160,6 +169,26 @@ def economy_settings() -> dict[str, Any]:
                 "year_end_bonus_enabled": True,
                 "year_end_bonus_months": 1.0,
             },
+            # --- Payment routing to agents (P3) ---
+            "routing": {
+                "enabled": True,
+                "merchant_labor_share": 0.35,
+                "landlord_share": 1.0,
+                "landlord_keywords": ["房东", "包租", "出租"],
+            },
+            # --- Friend loans over the social network (P3) ---
+            "friend_loans": {
+                "enabled": True,
+                "max_outstanding_months": 1.0,
+                "lender_buffer_months": 2.0,
+                "willingness_factor": 0.5,
+            },
+            # --- Sector pools (closed-loop money flows) ---
+            "sectors": {
+                "initial_firms_balance": 0.0,
+                "initial_government_balance": 0.0,
+                "initial_bank_balance": 0.0,
+            },
             # --- Backward-compat behavior triggers ---
             "rent_income_ratio": 0.22,
             "daily_utilities_cost": 12.0,
@@ -170,8 +199,6 @@ def economy_settings() -> dict[str, Any]:
             "asset_safety_days": 18.0,
             "income_seek_threshold": 0.56,
             "income_seek_probability_scale": 0.9,
-            "wealth_drive_seek_threshold": 0.65,
-            "income_growth_when_deficit": 0.08,
             "income_seek_activities": ["工作", "兼职", "接单", "技能提升"],
             "expense_ranges": {
                 "food": [8.0, 26.0],

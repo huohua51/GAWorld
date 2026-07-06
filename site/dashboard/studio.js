@@ -230,20 +230,66 @@ function stepState() {
     </div>`;
 }
 
+const KIND_LABELS = { hobby: "兴趣", skill: "技能" };
+const COG_LABELS = {
+  skill_breadth: "技能广度", deliverable_capacity: "产出能力", growth_level: "成长水平",
+  memory_volume: "记忆积累", external_knowledge: "外部知识",
+};
+
+function chips(arr, cls = "") {
+  return (arr && arr.length)
+    ? `<div class="chips">${arr.map((s) => `<span class="chip ${cls}">${esc(s)}</span>`).join("")}</div>`
+    : "";
+}
+
+function growthRows(growth) {
+  const items = (growth && growth.items) || [];
+  if (!items.length) return `<p class="section-note">尚无成长档案——运行仿真后由 gaworld/interests.py 派生。</p>`;
+  return items.map((it) => {
+    const practiced = it.total_minutes > 0
+      ? `累计 ${it.total_minutes} 分钟 · 连续 ${it.streak_days} 天 · 最近第 ${it.last_practiced_day} 天练习`
+      : "尚未开始练习";
+    return `<div class="bar-row"><div class="bl">
+        <b>${esc(it.name)} <span class="tag">${KIND_LABELS[it.kind] || esc(it.kind)}</span></b>
+        <small>${esc(it.motivation || it.category || "")}</small>
+        <small class="growth-change">${practiced}</small></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.round(clamp01(it.level) * 100)}%"></div></div></div>`;
+  }).join("");
+}
+
 function stepSkills() {
-  const skills = (store.detail && store.detail.skills) || [];
-  const rows = skills.length
-    ? skills.map((s, idx) => {
-        const lvl = 0.55 + ((idx * 37) % 40) / 100; // presentation only
-        return `<div class="bar-row"><div class="bl"><b>${esc(s.title)}</b><small>${esc(s.file)}</small></div>
-          <div class="bar-track"><div class="bar-fill" style="width:${Math.round(lvl * 100)}%"></div></div></div>`;
-      }).join("")
-    : `<p class="section-note">技能库为空（data/skills）。</p>`;
+  const d = store.detail || {};
+  const caps = d.capabilities;
+  const priv = d.private_skills || [];
+  const lib = d.skills || [];
+  const cog = d.cognition;
+
+  const capCard = `<div class="card"><h3>能力画像 ${caps && caps.job_label ? `<span class="tag">${esc(caps.job_label)}</span>` : ""}</h3>
+    ${caps
+      ? `${chips(caps.skills)}${(caps.deliverables || []).length ? `<p class="section-note">可交付物</p>${chips(caps.deliverables)}` : ""}
+         ${caps.notes ? `<p class="section-note">${esc(caps.notes)}</p>` : ""}`
+      : `<p class="section-note">能力画像未生成——运行仿真后从 output/work/capabilities.json 读取。</p>`}</div>`;
+  const privCard = `<div class="card"><h3>私有技能 <span class="tag">${priv.length} 项</span></h3>
+    ${priv.length
+      ? priv.map((s) => `<div class="bar-row"><div class="bl"><b>${esc(s.title)}</b><small>${esc(s.file)} · 经验蒸馏</small></div></div>`).join("")
+      : `<p class="section-note">尚无私有技能——仿真中按经验蒸馏生成。</p>`}</div>`;
+  const libCard = `<div class="card"><h3>全局技能库 <span class="tag">${lib.length} 项</span></h3>
+    ${lib.length ? chips(lib.map((s) => s.title)) : `<p class="section-note">技能库为空（data/skills）。</p>`}</div>`;
+  const cogCard = `<div class="card"><h3>认知指数</h3>
+    ${cog
+      ? `<div class="cog-score">${cog.score}</div>
+         ${Object.keys(COG_LABELS).map((key) => `
+           <div class="bar-row"><div class="bl"><b>${COG_LABELS[key]}</b></div>
+           <div class="bar-track"><div class="bar-fill" style="width:${Math.round(clamp01(cog.components[key]) * 100)}%"></div></div></div>`).join("")}
+         <p class="section-note">由技能 / 成长 / 记忆 / 外部知识派生的透明指数（60–140），非测量智商。</p>`
+      : `<p class="section-note">加载后显示。</p>`}</div>`;
   return `
     <h2 class="section-title">能力 · 技能</h2>
-    <p class="section-note">全局技能库（Markdown）。仿真中会按经验蒸馏出私有技能并注入认知/工作简报。</p>
-    <div class="card"><h3>技能库 <span class="tag">${skills.length} 项</span></h3>${rows}</div>
-    <div class="card"><h3>兴趣与成长</h3><p class="section-note">每位 agent 的兴趣、计划技能与练习进度在仿真运行时派生（gaworld/interests.py）。</p></div>`;
+    <p class="section-note">能力画像与技能来自仿真产出；兴趣与成长实时读取 agent 成长档案（level / 练习时长 / 连续天数）。</p>
+    <div class="cols two">
+      <div>${capCard}<div class="card"><h3>兴趣与成长 <span class="tag">${((d.growth || {}).items || []).length} 项</span></h3>${growthRows(d.growth)}</div></div>
+      <div>${cogCard}${privCard}${libCard}</div>
+    </div>`;
 }
 
 function stepMemory() {
@@ -272,7 +318,16 @@ function stepMemory() {
         <p class="section-note" style="margin-top:14px">${total ? "该居民已有记忆痕迹。" : "尚无记忆——运行仿真后此处填充。"}</p>
       </div>
       <div class="card"><h3>记忆图谱</h3><div class="viz-wrap"><svg viewBox="0 0 240 240">${dots}</svg></div></div>
-    </div>`;
+    </div>
+    ${ragCard(store.detail && store.detail.rag)}`;
+}
+
+function ragCard(rag) {
+  const items = (rag && rag.items) || [];
+  const body = items.length
+    ? items.slice(0, 8).map((t) => `<p class="rag-item">${esc(t.split("关键词:")[0].trim())}</p>`).join("")
+    : `<p class="section-note">尚无外部注入知识——[额外信息] 记忆由 external_rag 引导或运行时检索写入。</p>`;
+  return `<div class="card"><h3>外部 RAG 知识 <span class="tag">${(rag && rag.count) || 0} 条</span></h3>${body}</div>`;
 }
 
 const TIER_LABELS = { inner: "亲密", close: "挚友", acquaintance: "熟人", weak: "弱连接" };
@@ -374,6 +429,7 @@ function stepReview() {
   return `
     <h2 class="section-title">复核 · 部署</h2>
     <p class="section-note">${store.creating ? "确认后创建新居民（写入 CSV + profile）。" : "确认后保存改动并可直接投入仿真。"}</p>
+    ${agentCardBlock(store.detail)}
     <div class="cols two">
       <div class="card"><h3>身份</h3><div class="review-list">${idRows}</div></div>
       <div class="card"><h3>状态变量</h3><div class="review-list">${stRows}</div></div>
@@ -390,6 +446,29 @@ function stepReview() {
       <button id="saveBtn2" class="button primary">${store.creating ? "创建居民" : "保存改动"}</button>
       <button id="runBtn2" class="button steel" ${store.creating ? "disabled" : ""}>用此居民运行仿真</button>
     </div>`;
+}
+
+function agentCardBlock(detail) {
+  if (!detail || !detail.agent_card) return "";
+  const card = detail.agent_card;
+  const oc = detail.openclaw || {};
+  const cog = detail.cognition;
+  const ocChip = oc.connected
+    ? `<span class="chip ok">🦞 已连接 OpenClaw</span>`
+    : `<span class="chip">🦞 未连接 OpenClaw</span>`;
+  const ocLine = oc.connected
+    ? `<small class="muted-line">${oc.is_openclaw_agent ? "外部 OpenClaw 智能体" : "与 OpenClaw 智能体互通"} · 集群 ${esc(oc.cluster || "—")} · 发出 ${oc.messages_sent} / 收到 ${oc.messages_received} 条消息</small>`
+    : `<small class="muted-line">未在 relay 中检测到 OpenClaw 往来（scripts/openclaw_bridge.py 可接入）。</small>`;
+  return `<div class="card"><h3>Agent Card <span class="tag">${esc(card.schema)}</span></h3>
+    <div class="ac-head"><b>${esc(card.name)}</b> <span class="tag">#${esc(card.id)}</span>
+      ${card.job_label ? `<span class="tag">${esc(card.job_label)}</span>` : ""}
+      ${ocChip}${cog ? `<span class="chip">认知指数 ${cog.score}</span>` : ""}</div>
+    <small class="muted-line">${esc(card.description)}</small>
+    ${card.skills.length ? `<p class="section-note">技能</p>${chips(card.skills)}` : ""}
+    ${card.interests.length ? `<p class="section-note">兴趣</p>${chips(card.interests)}` : ""}
+    ${card.deliverables.length ? `<p class="section-note">可交付物</p>${chips(card.deliverables)}` : ""}
+    ${ocLine}
+    <small class="muted-line">API：${esc(card.endpoints.detail)}</small></div>`;
 }
 
 /* ---------- step event binding ---------- */

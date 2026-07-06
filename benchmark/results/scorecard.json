@@ -1,102 +1,13 @@
 {
-  "generated": "2026-06-15T00:58:15",
+  "generated": "2026-07-04T09:03:01",
   "trust_gate": "UNVERIFIED",
-  "composite_hint": 0.4425,
+  "composite_hint": null,
   "headline_track": null,
   "tracks": {
-    "A": {
-      "track": "A",
-      "status": "ok",
-      "score": 0.3849,
-      "pass": false,
-      "metrics": {
-        "engel_coefficient": {
-          "sim": 0.3,
-          "anchor": 0.288,
-          "rel_err": 0.0417,
-          "score": 0.7222,
-          "source": "国家统计局2024公报 (城镇28.8%)"
-        },
-        "savings_rate": {
-          "sim": 0.25,
-          "anchor": 0.35,
-          "rel_err": 0.2857,
-          "score": 0.0476,
-          "source": "2024 口径敏感, 区间30-43%"
-        }
-      },
-      "n_samples": 1
-    },
     "C": {
       "track": "C",
-      "status": "ok",
-      "sign": {
-        "score": 0.5,
-        "n_eval": 4,
-        "n_correct": 2,
-        "effect_col": "delta_final",
-        "tests": [
-          {
-            "name": "traffic_restriction",
-            "metric": "mobility_intent",
-            "sign": 1,
-            "why": "限行→出行摩擦上升→流动意愿上升",
-            "delta": 0.3367721709501239,
-            "delta_final": 0.3367721709501239,
-            "delta_mean": 0.006816445170920282,
-            "correct": true
-          },
-          {
-            "name": "layoff_shock",
-            "metric": "econ_security",
-            "sign": -1,
-            "why": "裁员→收入骤降→经济安全感下降",
-            "delta": 0.133008693307404,
-            "delta_final": 0.133008693307404,
-            "delta_mean": 0.019573677264325906,
-            "correct": false
-          },
-          {
-            "name": "layoff_shock",
-            "metric": "stress",
-            "sign": 1,
-            "why": "裁员→压力上升",
-            "delta": -0.19199639751733327,
-            "delta_final": -0.19199639751733327,
-            "delta_mean": -0.03293028666376002,
-            "correct": false
-          },
-          {
-            "name": "tax_cut",
-            "metric": "econ_security",
-            "sign": 1,
-            "why": "减税→可支配收入上升→经济安全感上升",
-            "delta": 0.020140241063553277,
-            "delta_final": 0.020140241063553277,
-            "delta_mean": -0.008559226379740603,
-            "correct": true
-          }
-        ]
-      },
-      "placebo": {
-        "score": null,
-        "note": "no completed placebo comparison"
-      },
-      "determinism": {
-        "score": null,
-        "status": "unassessed",
-        "note": "no baseline pair provided"
-      },
-      "incomplete": [
-        "20260215_230503_临时交通限行",
-        "20260606_103918_临时交通限行",
-        "20260606_113627_图书馆闭馆时间微调"
-      ],
-      "coverage": 1.0,
-      "score_uncovered": 0.5,
-      "score": 0.5,
-      "pass": false,
-      "det_status": "unassessed"
+      "status": "incomplete",
+      "note": "compare-event 在 traffic_restriction/seed=1 失败（可能 API 用量超限）。已保存进度 0/15 → 配额恢复后用 `--continue`（相同 --seeds/--days）续跑。"
     },
     "B": {
       "status": "n/a",

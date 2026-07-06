@@ -1,54 +1,23 @@
-# 迁移任务规划
+# 任务规划:个人发展与兴趣系统增强(科学家团队设计)
 
 ## 目标
-将根目录遗留的 4 个真实模块迁移进 `gaworld/` 包，并把根目录文件改为 shim（向后兼容桥接），最终完成 flat→package 迁移。
-
-## 现状摘要
-已完成 shim 的（根目录已委托给 gaworld/）：
-- city_map_system → gaworld.world.city_map
-- config → gaworld.settings.CONFIG
-- distributed_comm → gaworld.distributed.comm
-- dynamic_behavior → gaworld.behavior.dynamic
-- economy_module → gaworld.economy.finance
-- environment → gaworld.env.system
-- human_realism → gaworld.cognition.realism
-- intervention_policy → gaworld.policy.intervention
-- life_events → gaworld.events.life
-- llm_providers → gaworld.llm.providers
-- memory_store → gaworld.memory.store
-- social_network → gaworld.social.network
-
-**尚未迁移的（仍有真实代码）：**
-1. experience_store.py → gaworld/memory/experience.py
-2. avatar_generator.py → gaworld/io/avatar.py
-3. simulation_visualizer.py → gaworld/apps/visualizer.py
-4. extensibility.py → gaworld/hooks.py
-
-**脚本（保留在根目录）：**
-- custom_hooks.py（示例钩子，不迁移）
-- analyze_wellbeing.py（分析脚本，不迁移）
-- generate_agent_rag_seed.py（工具脚本，不迁移）
-
-**入口点：**
-- generative_city_sim.py：有几处 import 需从 shim 路径升级到 gaworld 直接路径
+以多学科虚拟专家小组(发展心理学、行为科学、复杂系统、ML/仿真工程)评审现有个人发展与兴趣系统,产出增强设计并实现+测试。
 
 ## 阶段
-
-- [x] 阶段1：分析确认
-- [x] 阶段2：迁移 experience_store → gaworld/memory/experience.py + shim
-- [x] 阶段3：迁移 avatar_generator → gaworld/io/avatar.py + shim
-- [x] 阶段4：迁移 simulation_visualizer → gaworld/apps/visualizer.py + shim
-- [x] 阶段5：迁移 extensibility → gaworld/hooks.py + shim
-- [x] 阶段6：更新 generative_city_sim.py 的 import 到 gaworld 路径
-- [x] 阶段6b：修正 gaworld/ 内部 from config import → from gaworld.settings import
-- [x] 阶段7：更新 pyproject.toml
-- [x] 阶段8：运行测试验证（311 通过，2 失败为迁移前已有缺陷，已确认）
+- [x] 阶段1:调研现有系统(interests.py、_curiosity.py、skills/、sim 接入点、测试)
+- [x] 阶段2:专家小组评审,写设计文档 docs/proposals/2026-07-04-personal-growth-v2.md
+- [x] 阶段3:实现增强(按设计文档范围)
+- [x] 阶段4:补测试,跑全量测试验证(新增18测试全过;全量527过,6失败均在干净HEAD复现,为存量问题)
+- [x] 阶段5:更新 CHANGELOG,收尾
 
 ## 约束与注意事项
-- 测试文件大量使用旧名（memory_store, city_map_system 等），shim 必须保留
-- sys.modules 技巧用于模块级状态共享（experience_store 需要这种处理）
-- simulation_visualizer 内部 import 要从 avatar_generator/city_map_system 改为 gaworld 路径
-- experience_store 内部 `from config import CONFIG` 改为 `from gaworld.settings import CONFIG`
+- 新代码只写进 gaworld/ 包(AGENTS.md 规则)
+- 项目守则:最小改动、外科手术式修改、不做投机性抽象
+- LLM 失败不能中断仿真(本次全部纯规则,零新增 LLM 调用)
+- 持久化格式向后兼容(agent_N_growth.json 未改 schema)
+- 经济系统刚改造过(P0-P3),勿动经济不变量(未触碰)
 
 ## 错误记录
-（留空）
+- 在挂载 repo 里执行 `git stash` 失败(沙盒对 .git 内文件 unlink 无权限),留下 stale `.git/index.lock`(0 字节,14:41),沙盒里 rm 也被拒。工作区文件未受影响(改动都在)。教训:此挂载 repo 内不要做需要写 index 的 git 操作;基线对比改用 `git archive HEAD`(只读)。index.lock 需用户在宿主机删除:`rm /Users/cw/dev/GAWorld/.git/index.lock`
+- 注意:stash@{0} "!!GitHub_Desktop<main>" 是用户 GitHub Desktop 的存量 stash,勿动
+- 沙盒 python 是 3.10,项目要求 ≥3.11;已用 uv 建 /tmp/gaw-venv(3.11.15)跑测试

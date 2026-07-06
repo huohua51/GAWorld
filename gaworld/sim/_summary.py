@@ -111,28 +111,32 @@ def _state_deltas(
 
 
 def _growth_diff(initial: _Snapshot, agent: _Agent) -> list[dict[str, Any]]:
-    """Return interests whose level/minutes changed during the run."""
-    before = (initial.get("growth_profile") or {}).get("interests", []) or []
-    after = (agent.get("growth_profile") or {}).get("interests", []) or []
-    before_by_name = {str(it.get("name") or it.get("id") or ""): it for it in before if isinstance(it, dict)}
+    """Return growth items whose level/minutes changed during the run.
+
+    Reads the actual ``GrowthProfile`` schema: ``items`` with float
+    ``level`` (0-1) and int ``total_minutes``.
+    """
+    before = (initial.get("growth_profile") or {}).get("items", []) or []
+    after = (agent.get("growth_profile") or {}).get("items", []) or []
+    before_by_name = {str(it.get("name") or ""): it for it in before if isinstance(it, dict)}
     diffs: list[dict[str, Any]] = []
     for item in after:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or item.get("id") or "").strip()
+        name = str(item.get("name") or "").strip()
         if not name:
             continue
         prev = before_by_name.get(name, {})
-        prev_level = int(prev.get("level", 0) or 0)
-        new_level = int(item.get("level", 0) or 0)
-        prev_min = float(prev.get("minutes", 0.0) or 0.0)
-        new_min = float(item.get("minutes", 0.0) or 0.0)
-        if new_level != prev_level or new_min - prev_min >= 1.0:
+        prev_level = float(prev.get("level", 0.0) or 0.0)
+        new_level = float(item.get("level", 0.0) or 0.0)
+        prev_min = float(prev.get("total_minutes", 0.0) or 0.0)
+        new_min = float(item.get("total_minutes", 0.0) or 0.0)
+        if abs(new_level - prev_level) >= 0.005 or new_min - prev_min >= 1.0:
             diffs.append(
                 {
                     "name": name,
-                    "level_from": prev_level,
-                    "level_to": new_level,
+                    "level_from": round(prev_level, 3),
+                    "level_to": round(new_level, 3),
                     "minutes_gained": round(new_min - prev_min, 1),
                 }
             )

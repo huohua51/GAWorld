@@ -26,6 +26,13 @@ PROFILE_PATH = os.path.join(REPO_ROOT, CONFIG.get("md_path", "data/hangzhou_prof
 STATE_CSV_PATH = os.path.join(REPO_ROOT, CONFIG.get("csv_path", "data/hangzhou_agents_state_init.csv"))
 ECONOMY_SNAPSHOT_PATH = os.path.join(REPO_ROOT, "output", "economy", "wealth_snapshot.csv")
 SKILLS_DIR = os.path.join(REPO_ROOT, CONFIG.get("skills", {}).get("global_dir", "data/skills"))
+CAPABILITIES_CACHE_PATH = os.path.join(
+    REPO_ROOT, CONFIG.get("real_work", {}).get("capabilities_cache", "output/work/capabilities.json")
+)
+RELAY_STATE_PATH = os.path.join(
+    REPO_ROOT,
+    CONFIG.get("distributed", {}).get("server", {}).get("state_path", "output/distributed/relay_state.json"),
+)
 RUN_LOG_PATH = os.path.join(REPO_ROOT, "output", "dashboard", "simulation_run.log")
 PROFILE_HEADER_RE = re.compile(r"^## Profile\s+(\d+)\s*[｜|]\s*(.+?)\s*$", re.MULTILINE)
 
@@ -347,15 +354,15 @@ def _social_snapshot(agent_id):
     return {"count": len(relations), "tier_counts": tier_counts, "relations": relations[:40]}
 
 
-def _skills_library():
+def _scan_skill_dir(directory):
     items = []
-    if os.path.isdir(SKILLS_DIR):
-        for name in sorted(os.listdir(SKILLS_DIR)):
+    if os.path.isdir(directory):
+        for name in sorted(os.listdir(directory)):
             if not name.endswith(".md"):
                 continue
             title = name[:-3]
             try:
-                with open(os.path.join(SKILLS_DIR, name), "r", encoding="utf-8") as f:
+                with open(os.path.join(directory, name), "r", encoding="utf-8") as f:
                     for line in f:
                         stripped = line.strip()
                         if stripped.startswith("#"):
@@ -365,6 +372,152 @@ def _skills_library():
                 pass
             items.append({"file": name, "title": title})
     return items
+
+
+def _skills_library():
+    return _scan_skill_dir(SKILLS_DIR)
+
+
+def _private_skills(agent_id):
+    # Mirrors SkillRegistry._private_dir: {memory_dir}/agent_{id}_skills
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    return _scan_skill_dir(os.path.join(REPO_ROOT, memory_dir, f"agent_{int(agent_id)}_skills"))
+
+
+def _capabilities_snapshot(agent_id):
+    data = _read_json_file(CAPABILITIES_CACHE_PATH, {})
+    if not isinstance(data, dict):
+        return None
+    entry = data.get(str(int(agent_id)))
+    return entry if isinstance(entry, dict) else None
+
+
+def _rag_snapshot(memory_items):
+    # External-RAG memories are tagged with the [额外信息…] prefix (gaworld/sim/_rag.py).
+    items = []
+    for item in memory_items if isinstance(memory_items, list) else []:
+        text = str(item).strip()
+        if text.startswith("[额外信息"):
+            items.append(text[:300])
+    return {"count": len(items), "items": items[:20]}
+
+
+def _growth_snapshot(agent_id):
+    from gaworld.interests import load_agent_growth_profile
+
+    memory_dir = os.path.join(REPO_ROOT, _effective_config().get("memory_dir", "output/memory"))
+    profile = load_agent_growth_profile(int(agent_id), memory_dir)
+    return profile or None
+
+
+def _openclaw_snapshot(agent_id):
+    cfg = CONFIG.get("openclaw", {}) or {}
+    state = _read_json_file(RELAY_STATE_PATH, {})
+    directory = state.get("directory") if isinstance(state, dict) else {}
+    directory = directory if isinstance(directory, dict) else {}
+
+    entry = None
+    openclaw_ids = set()
+    for cluster, cluster_map in directory.items():
+        if not isinstance(cluster_map, dict):
+            continue
+        for aid, item in cluster_map.items():
+            if not isinstance(item, dict):
+                continue
+            if item.get("agent_type") == "openclaw":
+                openclaw_ids.add(str(aid))
+            if str(aid) == str(int(agent_id)) and entry is None:
+                entry = {**item, "cluster": cluster}
+
+    sent = received = 0
+    messages = state.get("messages") if isinstance(state, dict) else []
+    for msg in messages if isinstance(messages, list) else []:
+        if not isinstance(msg, dict):
+            continue
+        frm, to = str(msg.get("from_agent")), str(msg.get("to_agent"))
+        if frm == str(int(agent_id)) and to in openclaw_ids:
+            sent += 1
+        elif to == str(int(agent_id)) and frm in openclaw_ids:
+            received += 1
+
+    is_openclaw = bool(entry and entry.get("agent_type") == "openclaw")
+    return {
+        "enabled": bool(cfg.get("enabled")),
+        "registered": entry is not None,
+        "is_openclaw_agent": is_openclaw,
+        "cluster": entry.get("cluster") if entry else None,
+        "node_id": entry.get("node_id") if entry else None,
+        "messages_sent": sent,
+        "messages_received": received,
+        "connected": is_openclaw or (sent + received) > 0,
+    }
+
+
+def _cognition_snapshot(capabilities, growth, memory_counts, rag):
+    """Derived cognitive index — NOT a measured IQ.
+
+    Transparent composite of what the simulation actually tracks:
+    skill breadth, deliverable capacity, growth levels, memory volume,
+    and external (RAG) knowledge, mapped onto a familiar 60–140 scale.
+    """
+    caps = capabilities or {}
+    growth_items = (growth or {}).get("items", []) or []
+    avg_level = (
+        sum(_num(item.get("level"), 0.0) for item in growth_items) / len(growth_items)
+        if growth_items else 0.0
+    )
+    memory_total = sum(v for v in memory_counts.values() if isinstance(v, (int, float)))
+    components = {
+        "skill_breadth": min(1.0, len(caps.get("skills") or []) / 6.0),
+        "deliverable_capacity": min(1.0, len(caps.get("deliverables") or []) / 4.0),
+        "growth_level": avg_level,
+        "memory_volume": min(1.0, memory_total / 200.0),
+        "external_knowledge": min(1.0, rag.get("count", 0) / 10.0),
+    }
+    weights = {
+        "skill_breadth": 0.25,
+        "deliverable_capacity": 0.15,
+        "growth_level": 0.25,
+        "memory_volume": 0.2,
+        "external_knowledge": 0.15,
+    }
+    score01 = sum(components[key] * weights[key] for key in weights)
+    return {
+        "score": round(60 + score01 * 80),
+        "score01": round(score01, 4),
+        "components": {key: round(value, 4) for key, value in components.items()},
+    }
+
+
+def _agent_card(identity, capabilities, private_skills, growth, openclaw):
+    caps = capabilities or {}
+    skills = list(caps.get("skills") or [])
+    for skill in private_skills:
+        if skill["title"] not in skills:
+            skills.append(skill["title"])
+    interests = list(caps.get("interests") or [])
+    for item in (growth or {}).get("items", []) or []:
+        name = item.get("name")
+        if name and name not in interests:
+            interests.append(name)
+    return {
+        "schema": "gaworld.agent-card/v1",
+        "id": identity["id"],
+        "name": identity["name"],
+        "description": " · ".join(
+            str(part) for part in (identity.get("gender"), f"{identity.get('age')}岁", identity.get("residence")) if part
+        ),
+        "job_label": caps.get("job_label") or "",
+        "skills": skills,
+        "interests": interests,
+        "deliverables": list(caps.get("deliverables") or []),
+        "adapters": list(caps.get("adapter_priority") or []),
+        "openclaw_connected": bool(openclaw.get("connected")),
+        "endpoints": {
+            "detail": f"/api/agents/{identity['id']}/detail",
+            "interview": "/api/interview",
+        },
+    }
 
 
 def _finance_snapshot(agent_id):
@@ -393,26 +546,40 @@ def _agent_detail(agent_id):
     def _count(value):
         return len(value) if isinstance(value, (list, dict)) else 0
 
+    identity = {
+        "id": state["id"],
+        "name": state["name"],
+        "gender": state["gender"],
+        "age": state["age"],
+        "hukou": state["hukou"],
+        "residence": state["residence"],
+    }
+    memory_counts = {
+        "long_term": _count(memory.get("memory")),
+        "habits": _count(memory.get("habits")),
+        "intentions": _count(memory.get("intentions")),
+        "schedule": _count(memory.get("schedule")),
+    }
+    capabilities = _capabilities_snapshot(agent_id)
+    private_skills = _private_skills(agent_id)
+    growth = _growth_snapshot(agent_id)
+    rag = _rag_snapshot(memory.get("memory"))
+    openclaw = _openclaw_snapshot(agent_id)
     return {
-        "identity": {
-            "id": state["id"],
-            "name": state["name"],
-            "gender": state["gender"],
-            "age": state["age"],
-            "hukou": state["hukou"],
-            "residence": state["residence"],
-        },
+        "identity": identity,
         "state": state["state"],
         "profile_text": profile.get("text", ""),
-        "memory_counts": {
-            "long_term": _count(memory.get("memory")),
-            "habits": _count(memory.get("habits")),
-            "intentions": _count(memory.get("intentions")),
-            "schedule": _count(memory.get("schedule")),
-        },
+        "memory_counts": memory_counts,
         "finance": _finance_snapshot(agent_id),
         "social": _social_snapshot(agent_id),
         "skills": _skills_library(),
+        "private_skills": private_skills,
+        "capabilities": capabilities,
+        "growth": growth,
+        "rag": rag,
+        "openclaw": openclaw,
+        "cognition": _cognition_snapshot(capabilities, growth, memory_counts, rag),
+        "agent_card": _agent_card(identity, capabilities, private_skills, growth, openclaw),
     }
 
 
