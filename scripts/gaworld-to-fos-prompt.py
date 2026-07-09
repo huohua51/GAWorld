@@ -138,13 +138,28 @@ def _build_manual_prompt(observation: str, hint: str | None = None) -> str:
 def _read_profiles_csv(output_dir: Path) -> list[dict[str, str]]:
     """Read ``profiles.csv`` from the output directory.
 
-    Returns an empty list if the file does not exist or cannot be parsed.
+    Falls back to ``data/hangzhou_agents_state_init.csv`` in the repo root
+    if ``profiles.csv`` does not exist in the output directory.
+
+    Returns an empty list if neither file exists or cannot be parsed.
     All status messages go to stderr.
     """
     path = output_dir / "profiles.csv"
     if not path.is_file():
         print(f"[gaworld-to-fos] profiles.csv not found at {path}", file=sys.stderr)
-        return []
+        # Fallback: check repo root's data/ directory
+        repo_root = _find_gaworld_root()
+        if repo_root is not None:
+            fallback = repo_root / "data" / "hangzhou_agents_state_init.csv"
+            if fallback.is_file():
+                print(f"[gaworld-to-fos] Using fallback profiles from {fallback}", file=sys.stderr)
+                path = fallback
+            else:
+                print(f"[gaworld-to-fos] Fallback not found at {fallback} either", file=sys.stderr)
+                return []
+        else:
+            print("[gaworld-to-fos] GAWorld repo root not found; cannot locate fallback profiles", file=sys.stderr)
+            return []
     try:
         with path.open("r", encoding="utf-8-sig") as fh:
             reader = csv.DictReader(fh)
@@ -156,8 +171,13 @@ def _read_profiles_csv(output_dir: Path) -> list[dict[str, str]]:
         return []
 
 
-def _read_agent_actions(output_dir: Path, agent_id: int | str) -> list[dict[str, Any]]:
+def _load_actions(output_dir: Path, agent_id: int | str) -> list[dict[str, Any]]:
     """Read ``memory/agent_{id}_actions.json`` for a single agent.
+
+    Handles three formats:
+    * List of dicts (returned as-is).
+    * Dict of lists (activity name -> list of action strings).
+    * Any other dict (wrapped as a single-element list for backward compat).
 
     Returns an empty list if the file does not exist or cannot be parsed.
     """
@@ -170,6 +190,19 @@ def _read_agent_actions(output_dir: Path, agent_id: int | str) -> list[dict[str,
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
+            # Dict-of-lists format: activity name -> list of action strings
+            if data and all(
+                isinstance(v, list)
+                and v
+                and all(isinstance(s, str) for s in v)
+                for v in data.values()
+            ):
+                result: list[dict[str, Any]] = []
+                for activity, actions in data.items():
+                    for action_str in actions:
+                        result.append({"type": activity, "action": action_str})
+                return result
+            # Fallback: wrap unknown dict format
             return [data]
         return []
     except (json.JSONDecodeError, OSError):
@@ -194,6 +227,29 @@ def _read_agent_diaries(output_dir: Path, agent_id: int | str) -> list[dict[str,
     except OSError as exc:
         print(f"[gaworld-to-fos] Error reading diaries for agent {agent_id}: {exc}", file=sys.stderr)
     return entries
+
+
+def _read_agent_memory(output_dir: Path, agent_id: int | str) -> list[str]:
+    """Read ``memory/agent_{id}.json`` for a single agent.
+
+    The file is typically a list of memory strings (qualitative context
+    like init seed profiles, memory reviews, and daily consolidations).
+    If it is a dict instead, return an empty list gracefully.
+
+    Returns an empty list if the file does not exist or cannot be parsed.
+    """
+    path = output_dir / "memory" / f"agent_{agent_id}.json"
+    if not path.is_file():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            return [str(item) for item in data]
+        # If it's a dict, don't treat it as state; return empty gracefully
+        return []
+    except (json.JSONDecodeError, OSError):
+        return []
 
 
 def _read_state_csvs(output_dir: Path) -> list[dict[str, str]]:
@@ -262,6 +318,25 @@ def _summarise_diaries(diary_entries: list[dict[str, str]], max_agents: int = 5)
     )
 
 
+def _summarise_memories(memories: dict[str, list[str]]) -> str:
+    """Build a condensed summary of qualitative memory entries per agent.
+
+    ``memories`` maps agent_id -> list of memory strings.
+    Shows the most recent (last) entries per agent, capped per agent.
+    """
+    if not memories:
+        return "(No qualitative memory entries available.)"
+    lines: list[str] = []
+    for aid in sorted(memories.keys()):
+        texts = memories[aid]
+        shown = texts[-5:]  # last 5 entries per agent
+        for t in shown:
+            lines.append(f"- [Agent {aid}] {t[:300]}")
+        if len(texts) > 5:
+            lines.append(f"  (... and {len(texts) - 5} more entries for agent {aid})")
+    return "\n".join(lines)
+
+
 def _summarise_actions(actions: list[dict[str, Any]], max_items: int = 50) -> str:
     """Build a condensed summary of agent actions.
 
@@ -272,7 +347,7 @@ def _summarise_actions(actions: list[dict[str, Any]], max_items: int = 50) -> st
     lines: list[str] = []
     for act in actions[:max_items]:
         time_str = act.get("time", act.get("timestamp", ""))
-        activity = act.get("activity", "")
+        activity = act.get("activity", act.get("type", ""))
         action = act.get("action", "")
         lines.append(f"- [{time_str}] {activity}: {action}")
     if len(actions) > max_items:
@@ -332,16 +407,20 @@ def _build_auto_observation_prompt(
         if aid.strip() and aid not in sample_ids:
             sample_ids.append(aid)
 
-    # Read actions and diaries for sample agents
+    # Read actions, diaries, and memory entries for sample agents
     all_actions: list[dict[str, Any]] = []
     all_diaries: list[dict[str, str]] = []
+    all_memories: dict[str, list[str]] = {}
     for aid in sample_ids:
-        actions = _read_agent_actions(output_dir, aid)
+        actions = _load_actions(output_dir, aid)
         all_actions.extend(actions)
         diaries = _read_agent_diaries(output_dir, aid)
         all_diaries.extend(diaries)
+        memories = _read_agent_memory(output_dir, aid)
+        if memories:
+            all_memories[aid] = memories
         if actions:
-            print(f"[gaworld-to-fos] Agent {aid}: {len(actions)} actions, {len(diaries)} diaries", file=sys.stderr)
+            print(f"[gaworld-to-fos] Agent {aid}: {len(actions)} actions, {len(diaries)} diaries, {len(memories)} memory entries", file=sys.stderr)
 
     # Read state trajectories
     state_rows = _read_state_csvs(output_dir)
@@ -368,6 +447,9 @@ def _build_auto_observation_prompt(
         "",
         "--- Agent Diaries (sample) ---",
         _summarise_diaries(all_diaries),
+        "",
+        "--- Qualitative Memory Entries ---",
+        _summarise_memories(all_memories),
         "",
         "--- State Trajectories ---",
         _summarise_state_trajectories(state_rows),
