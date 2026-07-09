@@ -400,12 +400,25 @@ def _build_auto_observation_prompt(
     profiles = _read_profiles_csv(output_dir)
     print(f"[gaworld-to-fos] Found {len(profiles)} profiles", file=sys.stderr)
 
-    # Gather sample agent IDs from profiles
-    sample_ids: list[str] = []
-    for p in profiles[:max_profiles]:
-        aid = str(p.get("id", p.get("ID", p.get("Id", ""))))
-        if aid.strip() and aid not in sample_ids:
-            sample_ids.append(aid)
+    # Discover which agents actually have data files in memory/
+    memory_dir = output_dir / "memory"
+    file_ids: list[str] = []
+    if memory_dir.is_dir():
+        for fpath in sorted(memory_dir.glob("agent_*_actions.json")):
+            stem = fpath.stem
+            raw_id = stem.replace("agent_", "").replace("_actions", "")
+            if raw_id and raw_id not in file_ids:
+                file_ids.append(raw_id)
+
+    # Use file-discovered IDs if available, otherwise fall back to profiles
+    if file_ids:
+        sample_ids = file_ids[:max_profiles]
+    else:
+        sample_ids = []
+        for p in profiles[:max_profiles]:
+            aid = str(p.get("id", p.get("ID", p.get("Id", ""))))
+            if aid.strip() and aid not in sample_ids:
+                sample_ids.append(aid)
 
     # Read actions, diaries, and memory entries for sample agents
     all_actions: list[dict[str, Any]] = []
@@ -539,11 +552,25 @@ def _build_english_summary_prompt(
     """
     profiles = _read_profiles_csv(output_dir)
 
-    sample_ids: list[str] = []
-    for p in profiles[:max_profiles]:
-        aid = str(p.get("id", p.get("ID", p.get("Id", ""))))
-        if aid.strip() and aid not in sample_ids:
-            sample_ids.append(aid)
+    # Discover which agents actually have data files in memory/
+    memory_dir = output_dir / "memory"
+    file_ids: list[str] = []
+    if memory_dir.is_dir():
+        for fpath in sorted(memory_dir.glob("agent_*_actions.json")):
+            stem = fpath.stem
+            raw_id = stem.replace("agent_", "").replace("_actions", "")
+            if raw_id and raw_id not in file_ids:
+                file_ids.append(raw_id)
+
+    # Use file-discovered IDs if available, otherwise fall back to profiles
+    if file_ids:
+        sample_ids = file_ids[:max_profiles]
+    else:
+        sample_ids = []
+        for p in profiles[:max_profiles]:
+            aid = str(p.get("id", p.get("ID", p.get("Id", ""))))
+            if aid.strip() and aid not in sample_ids:
+                sample_ids.append(aid)
 
     all_actions: list[dict[str, Any]] = []
     all_diaries: list[dict[str, str]] = []
