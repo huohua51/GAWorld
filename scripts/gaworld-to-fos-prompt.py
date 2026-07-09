@@ -524,6 +524,78 @@ def _wrap_for_fos(analysis_text: str, output_dir: Path | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# English summary helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_english_summary_prompt(
+    output_dir: Path,
+    max_profiles: int = 10,
+) -> str:
+    """Build a prompt asking the LLM to translate Chinese sim data into an English summary.
+
+    Reads the same GAWorld simulation data as the normal FOS flow and wraps it
+    in a translation/summarisation prompt for the LLM.
+    """
+    profiles = _read_profiles_csv(output_dir)
+
+    sample_ids: list[str] = []
+    for p in profiles[:max_profiles]:
+        aid = str(p.get("id", p.get("ID", p.get("Id", ""))))
+        if aid.strip() and aid not in sample_ids:
+            sample_ids.append(aid)
+
+    all_actions: list[dict[str, Any]] = []
+    all_diaries: list[dict[str, str]] = []
+    all_memories: dict[str, list[str]] = {}
+    for aid in sample_ids:
+        actions = _load_actions(output_dir, aid)
+        all_actions.extend(actions[:20])  # truncate per agent
+        diaries = _read_agent_diaries(output_dir, aid)
+        for d in diaries[:3]:  # limit diaries per agent
+            d["content"] = d["content"][:500]  # truncate content
+            all_diaries.append(d)
+        memories = _read_agent_memory(output_dir, aid)
+        if memories:
+            all_memories[aid] = memories[-3:]  # last 3 entries
+
+    state_rows = _read_state_csvs(output_dir)
+
+    data_str = (
+        f"Agent profiles:\n{_summarise_profiles(profiles[:max_profiles])}\n\n"
+        f"Sample actions:\n{_summarise_actions(all_actions, max_items=30)}\n\n"
+        f"Sample diaries:\n{_summarise_diaries(all_diaries)}\n\n"
+        f"Memory entries:\n{_summarise_memories(all_memories)}\n\n"
+        f"State trajectories:\n{_summarise_state_trajectories(state_rows)}"
+    )
+
+    # Truncate if too long
+    if len(data_str) > 7000:
+        data_str = data_str[:7000] + "\n\n[data truncated]"
+
+    prompt = (
+        "You are a bilingual research assistant. Below is raw Chinese simulation "
+        "output from GAWorld, a multi-agent city simulator. Please translate the "
+        "following into English and produce a clear, readable summary of what happened.\n\n"
+        "Key data:\n"
+        "1. Agent profiles (name, age, personality, values, daily life habits)\n"
+        "2. Per-agent actions across each day (activity names and action descriptions)\n"
+        "3. State trajectories (emotion, stress, energy, etc.) — translate the labels "
+        "and summarise changes\n"
+        "4. Diary entries (first-person Chinese text → English summary)\n\n"
+        "Format your output as a clean English report with sections:\n"
+        "## Simulation Overview\n"
+        "## Agent Profiles\n"
+        "## Daily Activities by Agent\n"
+        "## State Changes\n"
+        "## Diary Highlights\n"
+        "## Key Observations\n\n"
+        f"--- RAW CHINESE DATA ---\n{data_str}"
+    )
+    return prompt
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -586,12 +658,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum number of agent profiles to include in auto mode (default: 10).",
     )
 
+    parser.add_argument(
+        "--english",
+        action="store_true",
+        help=( "Print an English summary of the simulation output (translates Chinese "
+               "data) before the FOS prompt." ),
+    )
+
     return parser
 
 
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if args.english and not args.output_dir:
+        print("Error: --english requires --output-dir.", file=sys.stderr)
+        sys.exit(1)
 
     # ---- Manual mode ----
     if args.manual is not None:
@@ -647,6 +730,23 @@ def main() -> None:
             f"[LLM analysis failed: {exc}]\n\n"
             f"Raw simulation data:\n\n{observation_prompt}"
         )
+
+    # ---- English summary (optional) ----
+    if args.english:
+        print("[gaworld-to-fos] Generating English summary...", file=sys.stderr)
+        english_prompt = _build_english_summary_prompt(
+            output_dir,
+            max_profiles=args.max_profiles,
+        )
+        try:
+            english_summary = _call_llm_lazy(english_prompt, task="english_summary")
+            print("\n" + "=" * 60)
+            print("  ENGLISH SUMMARY OF SIMULATION OUTPUT")
+            print("=" * 60 + "\n")
+            print(english_summary)
+            print("\n" + "=" * 60 + "\n")
+        except Exception as e:
+            print(f"[gaworld-to-fos] Warning: English summary LLM call failed: {e}", file=sys.stderr)
 
     # Wrap the LLM analysis for FOS
     fos_prompt = _wrap_for_fos(llm_analysis, output_dir=output_dir)
