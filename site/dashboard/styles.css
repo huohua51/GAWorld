@@ -208,6 +208,9 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
   gap: 12px;
 }
 
+.fos-output { min-height: 280px; max-height: 520px; }
+.fos-options { display: grid; gap: 10px; margin-bottom: 10px; }
+
 .codebox {
   min-height: 150px;
   max-height: 420px;

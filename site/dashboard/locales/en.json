@@ -124,6 +124,15 @@
   "distributed.no_edges": "No interaction edges.",
   "distributed.no_messages": "No social messages.",
 
+  "fos_export.title": "FOS Export",
+  "fos_export.hint_label": "Analyst Hint",
+  "fos_export.hint_placeholder": "e.g. Look for social withdrawal",
+  "fos_export.english": "English summary (translate Chinese output)",
+  "fos_export.generate_btn": "Generate FOS Prompt",
+  "fos_export.copy_btn": "Copy to Clipboard",
+  "fos_export.no_output": "Click \"Generate FOS Prompt\" after running a simulation.",
+  "fos_export.generating": "Generating FOS prompt...",
+
   "lang.en": "EN",
   "lang.zh": "CN"
 }

@@ -7,7 +7,7 @@
       }
     }
   },
-  "sim_days": 60,
+  "sim_days": 1,
   "seconds_per_day": 10,
   "agent_ids": [
     34

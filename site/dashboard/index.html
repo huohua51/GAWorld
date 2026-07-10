@@ -159,6 +159,31 @@
           </div>
           <pre id="lifeEventListBox" class="codebox event-list" data-i18n="life_event.none">暂无人生事件。</pre>
         </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker" data-i18n="fos_export.title">FOS Export</p>
+              <h2 data-i18n="fos_export.title">FOS AI Scientist Export</h2>
+            </div>
+            <button id="reloadFosBtn" class="button small" data-i18n="btn.refresh">Refresh</button>
+          </div>
+          <div class="fos-options">
+            <label>
+              <span data-i18n="fos_export.hint_label">Analyst Hint</span>
+              <input id="fosHintInput" data-i18n-placeholder="fos_export.hint_placeholder" placeholder="e.g. Look for social withdrawal" />
+            </label>
+            <label class="checkline">
+              <input id="fosEnglishCheckbox" type="checkbox" />
+              <span data-i18n="fos_export.english">English summary (translate Chinese output)</span>
+            </label>
+          </div>
+          <div class="button-row end">
+            <button id="fosExportBtn" class="button primary" data-i18n="fos_export.generate_btn">Generate FOS Prompt</button>
+            <button id="fosCopyBtn" class="button" data-i18n="fos_export.copy_btn">Copy to Clipboard</button>
+          </div>
+          <pre id="fosOutputBox" class="codebox fos-output" data-i18n="fos_export.no_output">Click &quot;Generate FOS Prompt&quot; after running a simulation.</pre>
+        </section>
       </aside>
     </section>
 

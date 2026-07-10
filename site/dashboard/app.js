@@ -52,6 +52,11 @@ const els = {
   addLifeEventBtn: document.getElementById("addLifeEventBtn"),
   reloadLifeEventsBtn: document.getElementById("reloadLifeEventsBtn"),
   lifeEventListBox: document.getElementById("lifeEventListBox"),
+  fosHintInput: document.getElementById("fosHintInput"),
+  fosEnglishCheckbox: document.getElementById("fosEnglishCheckbox"),
+  fosExportBtn: document.getElementById("fosExportBtn"),
+  fosCopyBtn: document.getElementById("fosCopyBtn"),
+  fosOutputBox: document.getElementById("fosOutputBox"),
   reloadMemoryBtn: document.getElementById("reloadMemoryBtn"),
   memoryBox: document.getElementById("memoryBox"),
   stateMemoryBox: document.getElementById("stateMemoryBox"),
@@ -457,6 +462,23 @@ function drawMap(frame) {
   });
 }
 
+async function fosExport() {
+  const hint = els.fosHintInput.value.trim() || null;
+  const english = els.fosEnglishCheckbox.checked;
+  els.fosOutputBox.textContent = window.__("fos_export.generating");
+  const payload = { hint, english };
+  const result = await api("/api/fos-export", { method: "POST", body: JSON.stringify(payload) });
+  if (result.error) {
+    els.fosOutputBox.textContent = "Error: " + result.error;
+    return;
+  }
+  let output = result.prompt;
+  if (result.summary) {
+    output = result.summary + "\n\n" + output;
+  }
+  els.fosOutputBox.textContent = output;
+}
+
 async function interview() {
   if (!state.selectedAgentId) return;
   els.interviewOutput.textContent = __("interview.running");
@@ -500,6 +522,13 @@ function bindEvents() {
   });
   els.addLifeEventBtn.addEventListener("click", () => addLifeEvent().catch((error) => message(error.message, "error")));
   els.reloadLifeEventsBtn.addEventListener("click", () => loadLifeEvents().catch((error) => message(error.message, "error")));
+  els.fosExportBtn.addEventListener("click", () => fosExport().catch((error) => message(error.message, "error")));
+  els.fosCopyBtn.addEventListener("click", () => {
+    const text = els.fosOutputBox.textContent;
+    if (text && text !== window.__("fos_export.no_output")) {
+      navigator.clipboard.writeText(text).then(() => message("Copied!")).catch(() => message("Copy failed"));
+    }
+  });
   els.timelineSlider.addEventListener("input", () => {
     state.frameIndex = Number(els.timelineSlider.value || 0);
     renderTrace();

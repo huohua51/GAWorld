@@ -124,6 +124,15 @@
   "distributed.no_edges": "暂无互动边。",
   "distributed.no_messages": "暂无社交消息。",
 
+  "fos_export.title": "FOS 导出",
+  "fos_export.hint_label": "分析提示",
+  "fos_export.hint_placeholder": "例如：寻找社交退缩模式",
+  "fos_export.english": "英文摘要（翻译中文输出）",
+  "fos_export.generate_btn": "生成 FOS Prompt",
+  "fos_export.copy_btn": "复制到剪贴板",
+  "fos_export.no_output": "运行仿真后点击「生成 FOS Prompt」。",
+  "fos_export.generating": "FOS prompt 生成中...",
+
   "lang.en": "EN",
   "lang.zh": "CN"
 }
