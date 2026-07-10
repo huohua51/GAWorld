@@ -39,20 +39,22 @@ The paper will make three contributions.
 
 ### 3.1 Layered validation framework
 
-The framework separates five claims that are often collapsed in evaluations of generative societies:
+The framework separates four scientific claims that are often collapsed in evaluations of generative
+societies, plus a cross-cutting reproducibility/cost gate:
 
 1. macro-level empirical fit;
 2. emergent or stylized-fact validity;
 3. causal and counterfactual validity;
 4. individual, persona, and memory consistency;
-5. reproducibility, robustness, and cost.
+5. cross-cutting gate: reproducibility, robustness, and cost.
 
-Each layer answers a distinct scientific question and can be passed, failed, or left unassessed.
+Each scientific layer returns pass, fail, or unassessed; the gate separately returns OK, unverified, or
+untrustworthy under a declared deterministic or stochastic reproducibility protocol.
 
 ### 3.2 Executable GAWorld-Bench protocol
 
-The benchmark operationalizes the framework with real-world anchors, known-sign interventions,
-placebo tests, determinism checks, coverage discounts, and a trust gate. It reports a scorecard rather than
+The benchmark operationalizes provenance, Track A/C checks, coverage reporting, and a deterministic-mode
+subtest, while the remaining tracks are protocol specifications. It reports a vector scorecard rather than
 allowing a composite average to hide failed or unassessed dimensions.
 
 ### 3.3 Evidence audit using GAWorld
@@ -81,9 +83,11 @@ Every quantitative statement will be traceable to a repository artifact and assi
 
 The principal evidence will be:
 
-1. Existing macroeconomic snapshots showing an Engel coefficient near 0.290 and a savings rate near
-   0.328. These are presented as implementation checks because the mechanisms are partly parameterized
-   and the available sample is small.
+1. The current macroeconomic snapshot contains one agent with an Engel coefficient of 0.48 and a savings
+   rate of 0.05, while an earlier real benchmark report recorded 0.30 and 0.25 for another one-agent
+   snapshot. These divergent values are presented as evidence of sample and version sensitivity. The
+   apparently favorable values near 0.290 and 0.328 belong to the synthetic fixture and are excluded from
+   empirical claims.
 2. The traffic-restriction diagnostic in which the mobility-intent difference is approximately +0.0068
    under a whole-run mean and +0.3368 at the post-event endpoint. This illustrates severe temporal
    dilution rather than proving policy predictiveness.
@@ -105,9 +109,9 @@ verification example that is visually and textually separated from the real-resu
 |---|---:|---|
 | Introduction | 0.8 page | Motivate validation as the bottleneck and state contributions. |
 | Related Work | 0.8 page | Position against generative agents, agent-based model validation, simulation evaluation, and counterfactual testing. |
-| Layered Validation Framework | 1.5 pages | Define the five layers, evidence hierarchy, scorecard, and trust gate. |
+| Layered Validation Framework | 1.5 pages | Define four scientific layers, evidence hierarchy, scorecard, and cross-cutting gate. |
 | GAWorld-Bench Implementation | 1.2 pages | Specify metrics, provenance labels, known-sign tests, placebo, determinism, coverage, and aggregation rules. |
-| Audit of GAWorld | 1.5 pages | Present real-output diagnostics, temporal-window sensitivity, cross-run instability, and missing evidence. |
+| Audit of GAWorld | 1.5 pages | Present real-output diagnostics, temporal-window sensitivity, non-comparable archives, and missing evidence. |
 | Limitations, Ethics, and Reproducibility | 0.8 page | Bound claims, discuss LLM and social-simulation risks, and document reproducibility. |
 | Conclusion | 0.3 page | Restate the methodological result and future evaluation requirements. |
 
@@ -119,12 +123,12 @@ claims remains in the main paper.
 
 The main paper will contain four compact visual elements:
 
-1. **Five-layer framework figure:** the validation hierarchy with reproducibility as a cross-cutting gate.
+1. **Layered framework figure:** four scientific claim layers with reproducibility as a cross-cutting gate.
 2. **Benchmark data-flow figure:** simulation artifacts, provenance classification, layer-specific checks,
    trust gate, and scorecard.
 3. **Evidence provenance table:** real, diagnostic, synthetic, and incomplete artifacts with allowed claim
    strength.
-4. **Audit results table:** whole-run versus post-event effects and cross-run result variability.
+4. **Audit results table:** whole-run versus post-event contrasts and non-comparable archived results.
 
 Figures should use vector graphics and remain legible in the AAAI two-column layout and in grayscale.
 

@@ -15,7 +15,7 @@
 - Create `paper/aaai27_gaworld_bench/main.tex`: anonymous seven-page manuscript and all paper tables.
 - Create `paper/aaai27_gaworld_bench/references.bib`: primary-source, verified bibliography.
 - Create `paper/aaai27_gaworld_bench/supplementary.tex`: protocol definitions, provenance ledger, and expanded results.
-- Create `paper/aaai27_gaworld_bench/figures/validation_layers.tex`: TikZ five-layer validation figure.
+- Create `paper/aaai27_gaworld_bench/figures/validation_layers.tex`: TikZ four-layer plus gate validation figure.
 - Create `paper/aaai27_gaworld_bench/figures/evidence_pipeline.tex`: TikZ evidence-to-scorecard flow figure.
 - Create `paper/aaai27_gaworld_bench/README.md`: build instructions, template provenance, and artifact-to-claim map.
 - Create `paper/aaai27_gaworld_bench/SUBMISSION_NOTES.zh-CN.md`: Chinese handoff, risk register, and author checklist.
@@ -66,7 +66,7 @@ Record these IDs and paths in the README:
 ```markdown
 | ID | Class | Repository source | Allowed claim |
 |---|---|---|---|
-| E-A1 | REAL | `output/economy/wealth_snapshot.csv` | Available macro snapshots are close to selected anchors, but constitute weak evidence |
+| E-A1 | REAL | `output/economy/wealth_snapshot.csv` | The current one-agent snapshot diverges from selected anchors and cannot establish macro fit |
 | E-A2 | REAL | `output/economy/conservation_audit.csv` | Whether the recorded run conserves money within the configured tolerance |
 | E-C1 | DIAGNOSTIC | `benchmark/results/reports/report_20260615T005429.md` | Whole-run and post-event windows can produce materially different effects |
 | E-C2 | REAL | `benchmark/results/reports/report_20260620T133943.md` | One historical single-seed run produced the listed directions; no significance claim |
@@ -76,7 +76,7 @@ Record these IDs and paths in the README:
 | E-D1 | INCOMPLETE | `docs/proposals/results/exp_memory_consistency/COMPARISON_REPORT.md` | Persona/memory validity is unassessed because only one treatment completed both phases |
 ```
 
-- [ ] **Step 4: Verify synthetic provenance numerically**
+- [ ] **Step 4: Verify the synthetic numeric fingerprint**
 
 Run:
 
@@ -228,9 +228,9 @@ git commit -m "add verified gaworld bench references"
 
 - [ ] **Step 1: Draw the validation hierarchy**
 
-Create a compact TikZ figure with five labeled rows: `Macro Fit`, `Emergent Dynamics`, `Counterfactual
-Validity`, `Individual Consistency`, and `Reproducibility / Cost`. Show the final row as a gate spanning all
-higher rows. Use shapes and labels, not color alone, to distinguish pass, fail, and unassessed states.
+Create a compact TikZ figure with four scientific claim columns: `Macro Fit`, `Emergent Dynamics`,
+`Counterfactual Validity`, and `Individual Consistency`. Show `Reproducibility / Cost` as a gate spanning
+all four columns. Use shapes and labels, not color alone, to distinguish pass, fail, and unassessed states.
 
 - [ ] **Step 2: Draw the evidence pipeline**
 
@@ -294,7 +294,7 @@ Organize it into generative societies, ABM validation, and LLM-agent evaluation.
 specific gap GAWorld-Bench addresses: separation of claim types, provenance-aware scoring, and a
 cross-layer trust gate.
 
-- [ ] **Step 4: Define the five-layer framework**
+- [ ] **Step 4: Define the four scientific layers and cross-cutting gate**
 
 For each layer, define the scientific claim, admissible evidence, pass/fail/unassessed outcome, and failure
 mode. Include the validation hierarchy figure and explicitly distinguish parameter recovery from emergent
@@ -303,7 +303,7 @@ validation.
 - [ ] **Step 5: Specify GAWorld-Bench**
 
 Define the macro relative-error score, known-sign intervention checks, post-event effect window,
-placebo threshold, determinism check, coverage discount, and trust gate. Present the scorecard as a vector
+placebo threshold, deterministic-mode check, coverage reporting, and trust gate. Present the scorecard as a vector
 of layer outcomes; if a composite trend hint is mentioned, label it non-decisional.
 
 - [ ] **Step 6: Create the provenance table**
@@ -315,14 +315,16 @@ row must state what claim strength is permitted and give one repository example.
 
 Report:
 
-- Engel coefficient approximately `0.290` versus anchor `0.288` and savings rate approximately `0.328`
-  versus anchor `0.350`, as weak implementation checks;
+- current one-agent Engel coefficient `0.48` versus anchor `0.288` and savings rate `0.05` versus anchor
+  `0.35`, alongside the earlier one-agent report values `0.30` and `0.25`, as evidence of sample/version
+  sensitivity rather than macro fit;
 - traffic-restriction mobility-intent `delta_mean=+0.0068` versus `delta_final=+0.3368`, described as
   approximately 49-fold temporal dilution;
 - tax-cut economic-security `delta_mean=-0.0086` versus `delta_final=+0.0201`, described as a sign change
   under the selected window;
 - historical single-seed layoff values `econ_security=-0.0498` and `stress=+0.1717` alongside a later
-  single-seed run with `econ_security=+0.0826` and `stress=+0.0078`, described as cross-run instability;
+  single-observation batch with `econ_security=+0.0826` and `stress=+0.0078`, described as non-comparable
+  to earlier archives because common run metadata are missing;
 - Track B, D, and full Track E evidence as unassessed.
 
 Never present the exact synthetic deltas `+0.08`, `-0.12`, `+0.09`, or `+0.06` as real results.
@@ -357,7 +359,7 @@ limitation and reviewed manually.
 Run:
 
 ```bash
-rg -n '0\.290|0\.288|0\.328|0\.350|0\.0068|0\.3368|-0\.0086|0\.0201|-0\.0498|0\.1717|0\.0826|0\.0078' \
+rg -n '0\.48|0\.288|0\.05|0\.35|0\.30|0\.25|0\.0068|0\.3368|-0\.0086|0\.0201|-0\.0498|0\.1717|0\.0826|0\.0078' \
   paper/aaai27_gaworld_bench/main.tex paper/aaai27_gaworld_bench/README.md
 ```
 
