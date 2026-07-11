@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-07-11 — Microkernel plugin architecture (K1 + K2-lite)
+
+Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design doc: `docs/proposals/2026-07-11-microkernel-plugin-architecture.md`; author guide: `docs/PLUGIN_AUTHORING.md`. Behavior-preserving: full suite 551 passed / 6 pre-existing failures, identical to baseline.
+
+### Added
+
+- **`gaworld/kernel/`** — six kernel services (<800 lines total): `Clock` (deterministic sim time, advanced only by the main loop), `EventBus` (observe/collect/filter hook semantics with priorities; drop-in HookBus superset that loads the same `CONFIG["extensions"]` hooks), `PluginRegistry` + `Plugin` base (assembly from `CONFIG["plugins"]` class paths and `gaworld.plugins` entry points, dependency-ordered setup/teardown, trust-boundary error containment), `Controller` (priority-ordered action validator chain + audited named interventions — skeleton until K4 routes actions through it), `Recorder` (unified JSONL event stream under `output/records/`, auto `_day`/`_time` stamping), `SimContext` (single runtime source of truth; `plugin_state()` and `agent_ext()` namespace helpers replace bare agent-dict keys for plugin state).
+- **`generative_city_sim.py`** — two cognition dispatch points inside the step loop, no-ops with zero subscribers: `perception.compose` (collect → snippets merged into the step env context) and `action.selected` (filter over the chosen action). Kernel bootstrap replaces the HookBus instance; all 7 legacy extension phases fire unchanged.
+- **`tests/test_kernel.py`** — 23 unit tests for the six services; **`tests/test_kernel_plugin_e2e.py`** — end-to-end proof that a plugin declared only in `CONFIG["plugins"]` is assembled, injects perception that reaches an LLM prompt, and filters selected actions (zero simulator source edits).
+- **`docs/PLUGIN_AUTHORING.md`** — plugin author guide (lifecycle, hook semantics, event catalog, state ownership, controller usage).
+
+### Changed
+
+- **`generative_city_sim.py::run_simulation`** — hook dispatch now goes through `gaworld.kernel.EventBus`; `sim_ctx.clock` is advanced at day start and each timeline tick; plugin `setup_all`/`teardown_all` wrap the simulation lifecycle. `gaworld/hooks.py` (HookBus) remains for legacy callers.
+
 ## [Unreleased] — 2026-07-04 — Personal Growth v2 (learning dynamics + interest evolution)
 
 Multi-disciplinary redesign of the interest/skill-growth system (design doc: `docs/proposals/2026-07-04-personal-growth-v2.md`). All new mechanics are pure rules — no extra LLM calls; the persisted `agent_N_growth.json` schema is unchanged and backward compatible.

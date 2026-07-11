@@ -392,6 +392,18 @@ class ActionSpec:
 REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**，
 本方案从其阶段 1h（pipeline 化）起接管并扩展：
 
+> **进度（2026-07-11）**：
+> ✅ K1 完成（commit `d8826a9`）——kernel 六件套 + run_simulation 接线，
+> 23 个单测，全量 551 过 / 6 个既有失败与基线一致。
+> ✅ K2-lite 完成（commit `da259d6`）——`perception.compose` 与
+> `action.selected` 分发点 + 零侵入插件端到端测试
+> （`tests/test_kernel_plugin_e2e.py`）。`plan.prompt` 需 `planning()`
+> 阶段化后接入，归入完整 K2。
+> ⬜ K2 完整认知管线（CognitionStage + StepContext）
+> ⬜ K3 插件上岸（注意：intervention 内联注入存在 env_context 覆盖
+> life_event_context 的既有行为，迁移时需决定保留还是修正）
+> ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
+
 ### 阶段 K1：内核骨架（不改行为）
 - 新建 `gaworld/kernel/`：SimContext、Clock、EventBus（含 HookBus 兼容层）、
   PluginRegistry、Recorder；Controller 先只有 observe 型骨架。
