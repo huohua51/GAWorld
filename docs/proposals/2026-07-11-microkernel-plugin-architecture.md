@@ -435,7 +435,12 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > 留待与其一并迁移。
 > ✅ K3h real_work 上岸——`gaworld/work/plugin.py`；新增
 > `action.outcome` 过滤事件；teardown 顺手修复 worker 池泄漏。
-> ⬜ K3 余下插件：dynamic_behavior（含 spatial_preferences）——最后一个。
+> ✅ K3i dynamic_behavior + spatial_preferences 上岸——**K3 全部完成**。
+> 新增 `interrupts.compose`（filter，思绪计算）、`location.resolve`
+> （filter，位置重定向）、`interrupt.applied`（observe）三个事件；
+> dyn_result 应用逻辑留 adjust 阶段作为中断生产者与管线间的通用契约。
+> 9 个内置插件全部上岸，主循环只剩管线骨架、legacy 自发性回退和
+> 通用契约应用。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）

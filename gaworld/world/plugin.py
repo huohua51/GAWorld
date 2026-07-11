@@ -13,9 +13,10 @@ each tick and give every agent a snapshot of its *current* surroundings
   of the life-event (20) and intervention (10) contributions, preserving the
   pre-migration text order exactly.
 
-Deliberately NOT here: the spatial-preference layer (P4 — aversion
-recording, redirection, day-start decay). It is entangled with the
-dynamic-behavior interrupt results and migrates together with that plugin.
+:class:`SpatialPreferencesPlugin` (K3i) is the P4 layer of the same stack:
+learned location-aversion — stateful load on ``agents.built``, recency decay
+on ``on_day_start``, aversion-aware redirection on the ``location.resolve``
+filter, and anomaly-experience recording on ``interrupt.applied``.
 """
 
 from __future__ import annotations
@@ -92,3 +93,98 @@ class LocalPhysicalPlugin(Plugin):
         if text:
             return f"身边的物理环境：{text}"
         return None
+
+
+class SpatialPreferencesPlugin(Plugin):
+    """P4: learned location-avoidance preferences (see module docstring)."""
+
+    id = "spatial_preferences"
+
+    def setup(self, ctx):
+        from gaworld.memory import experience as exp_impl
+        from gaworld.memory import spatial_preferences as sp_impl
+
+        self._sp = sp_impl
+        self._exp = exp_impl
+        cfg = ctx.config.get("spatial_preferences", {}) or {}
+        self._enabled = bool(cfg.get("enabled", True))
+        self._weight = float(cfg.get("anomaly_weight", 1.0))
+        self._threshold = float(cfg.get("avoid_threshold", 1.5))
+        self._half_life = float(cfg.get("half_life_days", 7.0))
+        if not self._enabled:
+            return
+        ctx.bus.on("agents.built", self._load_preferences)
+        ctx.bus.on("on_day_start", self._decay_preferences)
+        ctx.bus.on("location.resolve", self._redirect)
+        ctx.bus.on("interrupt.applied", self._record_anomaly)
+
+    def _stateful(self, sim) -> bool:
+        return bool(sim.config.get("stateful", False))
+
+    def _save(self, agent):
+        self._exp.save_agent_env_preferences(
+            agent["id"], agent.get("env_preferences", {})
+        )
+
+    def _load_preferences(self, hook_ctx):
+        sim = hook_ctx["sim"]
+        if not self._stateful(sim):
+            return
+        for agent in hook_ctx.get("agents", []):
+            agent["env_preferences"] = self._exp.load_agent_env_preferences(agent["id"])
+
+    def _decay_preferences(self, hook_ctx):
+        sim = hook_ctx["sim"]
+        day = hook_ctx.get("day")
+        for agent in hook_ctx.get("agents", []):
+            self._sp.decay_preferences(agent, day, half_life_days=self._half_life)
+            if self._stateful(sim):
+                self._save(agent)
+
+    def _redirect(self, desired_location, hook_ctx):
+        if not desired_location:
+            return None
+        sim = hook_ctx["sim"]
+        new_location, _redirected = self._sp.redirect_for_aversion(
+            hook_ctx["agent"],
+            sim.extras.get("city_map"),
+            desired_location,
+            hook_ctx.get("time_str"),
+            threshold=self._threshold,
+        )
+        return new_location
+
+    def _record_anomaly(self, hook_ctx):
+        sim = hook_ctx["sim"]
+        # Parity with the pre-K3i nesting: recording lived inside the
+        # replan block, so it inherits the replan enable gate.
+        if not bool((sim.config.get("replan", {}) or {}).get("enabled", True)):
+            return
+        dyn = hook_ctx.get("dyn_result")
+        if not (hook_ctx.get("changed") and isinstance(dyn, dict)):
+            return
+        itr = dyn.get("interrupt") or {}
+        extra = itr.get("extra", {}) if isinstance(itr, dict) else {}
+        persistent_anomaly = (
+            isinstance(itr, dict)
+            and not itr.get("resumable", True)
+            and (bool(extra.get("anomaly"))
+                 or extra.get("event_type") in ("emergency", "local_physical"))
+        )
+        # Learn to avoid a *place* only for location-bound anomalies —
+        # never for city-wide macro anomalies, which aren't a place's fault.
+        if not (persistent_anomaly
+                and extra.get("event_type") == "local_physical"
+                and extra.get("location")):
+            return
+        agent = hook_ctx["agent"]
+        self._sp.record_anomaly_experience(
+            agent,
+            location=str(extra.get("location")),
+            day=hook_ctx.get("day"),
+            weight=self._weight,
+            reason=str(itr.get("kind", "")),
+            time_str=hook_ctx.get("time_str"),
+        )
+        if self._stateful(sim):
+            self._save(agent)

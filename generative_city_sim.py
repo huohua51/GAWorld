@@ -52,19 +52,12 @@ from gaworld.world.city_map import (
     calc_transport_cost,
     is_rush_hour,
 )
-from gaworld.memory.spatial_preferences import (
-    decay_preferences as decay_env_preferences,
-    record_anomaly_experience,
-    redirect_for_aversion,
-)
 from gaworld.distributed.comm import (
     DistributedRelayClient,
     extract_sender_agent_ids,
     format_inbox_context,
 )
 from gaworld.behavior.dynamic import (
-    dynamic_transient_thought,
-    evaluate_step_dynamics,
     insert_activity_into_schedule as dynamic_insert_activity,
 )
 from gaworld.kernel import build_kernel
@@ -550,11 +543,8 @@ REPLAN_CONFIG = CONFIG.get("replan", {}) if isinstance(CONFIG, dict) else {}
 REPLAN_ENABLED = bool(REPLAN_CONFIG.get("enabled", True))
 REPLAN_WINDOW_MINUTES = max(1, int(REPLAN_CONFIG.get("window_minutes", 120)))
 REPLAN_DEFER_GAP = max(1, int(REPLAN_CONFIG.get("defer_gap_minutes", 30)))
-SPATIAL_PREF_CONFIG = CONFIG.get("spatial_preferences", {}) if isinstance(CONFIG, dict) else {}
-SPATIAL_PREF_ENABLED = bool(SPATIAL_PREF_CONFIG.get("enabled", True))
-SPATIAL_PREF_WEIGHT = float(SPATIAL_PREF_CONFIG.get("anomaly_weight", 1.0))
-SPATIAL_PREF_THRESHOLD = float(SPATIAL_PREF_CONFIG.get("avoid_threshold", 1.5))
-SPATIAL_PREF_HALF_LIFE = float(SPATIAL_PREF_CONFIG.get("half_life_days", 7.0))
+# Spatial-preference (P4) constants moved to
+# gaworld.world.plugin.SpatialPreferencesPlugin (K3i).
 
 
 DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
@@ -2533,10 +2523,8 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
             seed_vector_db_from_memory(agent)
-            # P4: learned location-aversion persists across runs (independent
-            # of human-realism, so loaded outside that block).
-            if SPATIAL_PREF_ENABLED:
-                agent["env_preferences"] = load_agent_env_preferences(agent["id"])
+            # K3i: learned location-aversion loading rides `agents.built`
+            # (SpatialPreferencesPlugin).
             if HUMAN_REALISM_ENABLED:
                 agent["episodes"] = load_agent_episodes(agent["id"])
                 agent["habits"] = load_agent_habits(agent["id"])
@@ -2889,23 +2877,19 @@ def run_simulation():
 
     def _stage_interrupts(agent, step, sim):
         scheduled_activity = step.get("scheduled_activity", "")
-        # --- Dynamic behaviour system (replaces old transient thought) ---
-        _use_dynamic = CONFIG.get("dynamic_behavior", {}).get("enabled", True)
-        if _use_dynamic:
-            transient_thought = dynamic_transient_thought(
-                agent,
-                time_str,
-                scheduled_activity,
-                perception_text=step.get("_perception", ""),
-                env_events=step.get("_env_events", []),
-                policy_desc=step.get("policy_desc"),
-                social_context=step.get("social_context", ""),
-                inbox_messages=step.get("_inbox_messages", []),
-                all_agents=agents,
-                agents_by_id=agents_by_id,
-                config=CONFIG,
-            )
-        else:
+        # K3i: interrupt/thought computation rides the interrupts.compose
+        # filter (DynamicBehaviorPlugin; engines return {} for "no change",
+        # never None). None here means no producer ran — fall back to the
+        # legacy spontaneity path, matching the old enabled/disabled branch.
+        transient_thought = hook_bus.filter(
+            "interrupts.compose",
+            None,
+            agent=agent,
+            step=step,
+            day=day,
+            time_str=time_str,
+        )
+        if transient_thought is None:
             transient_thought = maybe_generate_transient_thought(
                 agent,
                 time_str,
@@ -3042,22 +3026,6 @@ def run_simulation():
                 and (bool(_extra.get("anomaly"))
                      or _extra.get("event_type") in ("emergency", "local_physical"))
             )
-            # P4: learn to avoid a *place* only for location-bound
-            # anomalies (crowd surge / closed venue) — never for
-            # city-wide macro anomalies, which aren't a place's fault.
-            if (SPATIAL_PREF_ENABLED and _persistent_anomaly
-                    and _extra.get("event_type") == "local_physical"
-                    and _extra.get("location")):
-                record_anomaly_experience(
-                    agent,
-                    location=str(_extra.get("location")),
-                    day=day,
-                    weight=SPATIAL_PREF_WEIGHT,
-                    reason=str(_itr.get("kind", "")),
-                    time_str=time_str,
-                )
-                if STATEFUL:
-                    save_agent_env_preferences(agent_id, agent.get("env_preferences", {}))
             _cur_min = _time_str_to_minutes(time_str)
             if _persistent_anomaly and scheduled_activity and _cur_min is not None:
                 _sched_tuples = [
@@ -3080,6 +3048,18 @@ def run_simulation():
                     )
                     daily_logs[agent_id] += _replan_log
                     append_agent_log(agent, _replan_log)
+        # K3i: observers react to the applied interrupt result (e.g. the
+        # spatial-preferences plugin records location-bound anomalies).
+        hook_bus.emit(
+            "interrupt.applied",
+            agent=agent,
+            step=step,
+            dyn_result=_dyn_result,
+            changed=changed,
+            scheduled_activity=scheduled_activity,
+            day=day,
+            time_str=time_str,
+        )
         step["_activity"] = activity
         step["_changed"] = changed
         step["_change_reason"] = change_reason
@@ -3087,12 +3067,16 @@ def run_simulation():
     def _stage_move(agent, step, sim):
         activity = step.get("_activity", step.get("scheduled_activity", ""))
         desired_location = resolve_location(agent, activity, time_str, city_map)
-        # P4: bias away from places the agent has learned to avoid.
-        if SPATIAL_PREF_ENABLED and desired_location:
-            desired_location, _redirected = redirect_for_aversion(
-                agent, city_map, desired_location, time_str,
-                threshold=SPATIAL_PREF_THRESHOLD,
-            )
+        # K3i: plugins may rewrite the resolved location (aversion-aware
+        # redirection rides this filter).
+        desired_location = hook_bus.filter(
+            "location.resolve",
+            desired_location,
+            agent=agent,
+            activity=activity,
+            day=day,
+            time_str=time_str,
+        )
         movement = move_agent(
             agent,
             desired_location=desired_location,
@@ -3797,11 +3781,8 @@ def run_simulation():
             # Reset daily travel cost counter
             if "locations" in agent:
                 agent["locations"]["daily_travel_cost"] = 0.0
-            # P4: decay learned location-aversion by recency at each day start.
-            if SPATIAL_PREF_ENABLED:
-                decay_env_preferences(agent, day, half_life_days=SPATIAL_PREF_HALF_LIFE)
-                if STATEFUL:
-                    save_agent_env_preferences(agent["id"], agent.get("env_preferences", {}))
+        # K3i: the P4 location-aversion recency decay rides `on_day_start`
+        # (SpatialPreferencesPlugin).
         hook_bus.emit(
             "on_day_start",
             day=day,
