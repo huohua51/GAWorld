@@ -82,8 +82,10 @@ class RumorPlugin(Plugin):
 | `on_day_start` / `on_day_end` | observe | `day` + 同上 |
 | `on_time_tick` | observe | `day` `time_str` |
 | `on_agent_pre_step` / `on_agent_post_step` | observe | `agent` `day` `time_str` `step`（post_step 的 `step` 含 `action`/`outcome`/`reflection` 等全步数据） |
-| `perception.compose` | **collect** | `agent` `day` `time_str` `scheduled_activity` `env_context` `social_context` `env_events` `policy` `policy_desc` `news` |
+| `perception.compose` | **collect** | `agent` `day` `time_str` `scheduled_activity` `env_context` `social_context` `env_events` `policy` `policy_desc` `news`（贡献并入环境上下文，会出现在 Env 日志行） |
+| `perception.sections` | **collect** | `agent` `day` `time_str` `scheduled_activity` `social_context`（贡献渲染在感知 prompt 内部的专属段落，不污染环境上下文——技能块用这里） |
 | `action.selected` | **filter**（value=动作字符串） | `agent` `activity` `day` `time_str` `location` |
+| `memory.consolidate` | observe | `agent` `day`（日终逐 agent 发射，插件自管节奏门控——技能蒸馏用这里） |
 
 内置参考实现：`gaworld/policy/plugin.py`（InterventionPlugin，K3a 迁移的
 第一个内置子系统——感知注入 + post_step 指标落盘 + agents.built 播种，

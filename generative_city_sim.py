@@ -3062,9 +3062,24 @@ def run_simulation():
                     f"{step_env_context}\n{_snippet}" if step_env_context else _snippet
                 )
         step["_env_context"] = step_env_context
+        # K3c: plugins contribute prompt sections rendered inside the
+        # perception prompt (e.g. the Skill library block).
+        extra_sections = hook_bus.collect(
+            "perception.sections",
+            agent=agent,
+            day=day,
+            time_str=time_str,
+            scheduled_activity=scheduled_activity,
+            social_context=social_context,
+        )
         # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
         step["_perception"] = perception(
-            agent, time_str, social_context, step_env_context, policy_desc if policy else None
+            agent,
+            time_str,
+            social_context,
+            step_env_context,
+            policy_desc if policy else None,
+            extra_sections=extra_sections,
         )
 
     def _stage_interrupts(agent, step, sim):
@@ -4272,6 +4287,9 @@ def run_simulation():
                 )
             except Exception as _lifecycle_exc:  # noqa: BLE001
                 print(f"⚠️ memory lifecycle hook failed for {agent.get('name')}: {_lifecycle_exc}")
+            # K3c: plugins run their own day-end memory passes here (e.g.
+            # the Skill library's experience-to-skill distillation).
+            hook_bus.emit("memory.consolidate", agent=agent, day=day)
         # Growth day-tick: forgetting decay + interest-set evolution
         # (retire stale triggered-phase items, adopt from social partners).
         if INTERESTS_ENABLED:

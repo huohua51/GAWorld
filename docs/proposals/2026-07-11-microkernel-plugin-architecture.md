@@ -413,8 +413,13 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > `step_ctx["activity"]` 种子值无条件覆盖 LLM/动态活动调整，
 > RoutineChange 在主线路径失效约 5 个月；修复后 hook 覆盖仅在
 > 实际改写种子值时生效。**该修复改变模拟动力学，进行中的实验需重新基线。**
-> ⬜ K3 余下插件：skills/interests（K2 就绪后解锁）→ life_events
-> （需先增 `env.events.compose` 征集点）→ local_physical → real_work →
+> ✅ K3c skills 上岸——`gaworld/skills/plugin.py`；新增
+> `perception.sections`（感知 prompt 内部段落征集，与污染环境上下文的
+> `perception.compose` 区分）与 `memory.consolidate`（日终逐 agent）
+> 两个事件；`_cognition.py` 不再 import skills 域。
+> ⬜ K3 余下插件：interests（涉及 bootstrap/memorize 阶段/日终/日程/
+> 动作偏置五处，需要独立一轮）→ life_events（需先增
+> `env.events.compose` 征集点）→ local_physical → real_work →
 > dynamic_behavior → economy。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 

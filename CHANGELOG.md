@@ -28,6 +28,10 @@ Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design 
 
 - **Routine changes were silently disabled on the mainline path** (since commit `3f7edba`, ~5 months): the loop re-read `step_ctx["activity"]` unconditionally after `maybe_adjust_activity`, and the key was seeded with `scheduled_activity` at step start — so absent a pre-step hook override, the seeded value clobbered every LLM/dynamic activity adjustment. Fixed post-K2: a hook override wins only when it actually changed the seeded value. Red-green verified in `tests/test_routine_change_mainline.py`. **This changes simulation dynamics — agents now actually execute routine changes; re-baseline ongoing experiments.**
 
+### K3c — Skill library migrated to a plugin
+
+- **`gaworld/skills/plugin.py`** (`SkillsPlugin`) — skill injection moved from a hard-wired call inside `_cognition.perception` to the new `perception.sections` collect event (dispatched in the perceive stage; contributions render at the exact prompt position the old suffix occupied, so prompt structure is unchanged). Skill distillation moved from `memory/lifecycle.py` to the new `memory.consolidate` observe event emitted per agent at the day boundary, honoring the same `CONFIG["memory"]["skill_consolidation"]` cadence. `perception()` gained an `extra_sections` parameter; `_agent_skill_block` is gone and `gaworld/sim/_cognition.py` no longer imports the skills domain. Wiring pinned by `tests/test_skills_plugin.py` (inject / suppress / cadence).
+
 ### K3a — intervention subsystem migrated to a plugin
 
 - **`gaworld/policy/plugin.py`** (`InterventionPlugin`) + **`gaworld/plugins/__init__.py`** (`builtin_plugins()`, the one domain-side aggregation point). The inline feed/metrics/init code is removed from `run_simulation`; the plugin rides `agents.built` (new pre-snapshot observe event), `perception.compose`, and `on_agent_post_step`. Metric state keys are still seeded when the feature is disabled (schema parity). `tests/test_intervention_plugin.py` pins the wiring both ways.
