@@ -404,8 +404,13 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > （agent 构建后、初始快照前）。env_context 覆盖 life_event_context
 > 的既有行为按 bug 修正处理（改为追加语义），CHANGELOG 有记录。
 > ⬜ K2 完整认知管线（CognitionStage + StepContext）
-> ⬜ K3 余下插件：skills → interests → life_events → local_physical →
-> real_work → dynamic_behavior → economy
+> ⬜ K3 余下插件：life_events → local_physical → real_work →
+> dynamic_behavior → economy。
+> **skills / interests 调整为随 K2 一并迁移**——调研发现二者的注入点
+> 已内嵌在 `sim/_cognition.py::perception` 与 `memory/lifecycle.py`
+> 日终序列内部（不在主循环），插件化前置条件是 perception 阶段化与
+> `memory.consolidate` 事件，均为 K2 交付物；现在强迁只会改变 prompt
+> 结构而无解耦收益。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）
