@@ -3373,6 +3373,22 @@ def run_simulation():
                             )
                 else:
                     agent["_local_physical"] = {}
+                # K2: plugins contribute perception snippets (collect semantics —
+                # with no subscribers this is a no-op and behavior is unchanged).
+                for _snippet in hook_bus.collect(
+                    "perception.compose",
+                    agent=agent,
+                    day=day,
+                    time_str=time_str,
+                    scheduled_activity=scheduled_activity,
+                    env_context=step_env_context,
+                    social_context=social_context,
+                ):
+                    _snippet = str(_snippet).strip()
+                    if _snippet:
+                        step_env_context = (
+                            f"{step_env_context}\n{_snippet}" if step_env_context else _snippet
+                        )
                 # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
                 perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
                 # --- Dynamic behaviour system (replaces old transient thought) ---
@@ -3637,6 +3653,17 @@ def run_simulation():
                         recall_context=action_recall,
                         decision_refs=action_refs,
                         return_debug=True,
+                    )
+                    # K2: plugins may rewrite the selected action (filter
+                    # semantics — with no subscribers the value passes through).
+                    act = hook_bus.filter(
+                        "action.selected",
+                        act,
+                        agent=agent,
+                        activity=activity,
+                        day=day,
+                        time_str=time_str,
+                        location=resolved_location,
                     )
                     outcome = f"在【{activity}】中执行了【{act}】"
                     if real_work_runtime is not None:
