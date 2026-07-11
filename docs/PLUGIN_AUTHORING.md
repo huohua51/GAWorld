@@ -86,6 +86,7 @@ class RumorPlugin(Plugin):
 | `perception.sections` | **collect** | `agent` `day` `time_str` `scheduled_activity` `social_context`（贡献渲染在感知 prompt 内部的专属段落，不污染环境上下文——技能块用这里） |
 | `action.selected` | **filter**（value=动作字符串） | `agent` `activity` `day` `time_str` `location` |
 | `memory.consolidate` | observe | `agent` `day`（日终逐 agent 发射，插件自管节奏门控——技能蒸馏用这里） |
+| `episode.compose` | observe（可改写 episode） | `agent` `episode` `step_minutes` `day` `time_str`（episode 构建后、入库前；interests 插件在此填充成长键） |
 
 内置参考实现：`gaworld/policy/plugin.py`（InterventionPlugin，K3a 迁移的
 第一个内置子系统——感知注入 + post_step 指标落盘 + agents.built 播种，

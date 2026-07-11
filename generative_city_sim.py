@@ -17,16 +17,9 @@ from html import unescape
 
 from gaworld.settings import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
-from gaworld.interests import (
-    apply_daily_growth_decay,
-    bootstrap_growth_profiles,
-    evolve_growth_profile,
-    format_growth_context,
-    growth_focus,
-    match_growth_items,
-    save_agent_growth_profile,
-    update_growth_from_episode,
-)
+# Growth-profile lifecycle moved to gaworld.interests_plugin (K3d); only
+# the inline read-side consumers remain (schedule prompt context + matching).
+from gaworld.interests import format_growth_context, match_growth_items
 from gaworld.logging_setup import LOG_MODE, get_logger
 
 _LOG = get_logger("gaworld.sim")
@@ -550,15 +543,13 @@ HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
 # HUMAN_MEMORY_CONFIG / RECALL_CONFIG / MEMORY_REVIEW_CONFIG snapshots
 # removed in run-split-1 — their only consumers (the evoke_memory cluster)
 # moved to ``gaworld.sim._memory_recall`` and now read CONFIG at call time.
+# Growth-profile lifecycle constants moved into gaworld.interests_plugin
+# (K3d); the ones left feed the inline schedule-prompt and matching reads.
 INTERESTS_CONFIG = CONFIG.get("interests", {})
 INTERESTS_ENABLED = bool(INTERESTS_CONFIG.get("enabled", True))
 INTERESTS_MAX_ITEMS = max(1, int(INTERESTS_CONFIG.get("max_items", 6)))
-INTERESTS_CACHE_PATH = INTERESTS_CONFIG.get("cache_path", "output/memory/growth_profiles.json")
-INTERESTS_PROGRESS_MINUTES = INTERESTS_CONFIG.get("progress_minutes_per_step")
 INTERESTS_DAILY_INSERT_CHANCE = float(INTERESTS_CONFIG.get("daily_insert_chance", 0.55))
 INTERESTS_WEEKEND_BOOST = float(INTERESTS_CONFIG.get("weekend_boost", 0.25))
-INTERESTS_DECAY_CONFIG = dict(INTERESTS_CONFIG.get("decay", {}) or {})
-INTERESTS_EVOLUTION_CONFIG = dict(INTERESTS_CONFIG.get("evolution", {}) or {})
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
 ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
@@ -2720,23 +2711,8 @@ def run_simulation():
                 agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
-    if INTERESTS_ENABLED:
-        bootstrap_growth_profiles(
-            agents,
-            cache_path=INTERESTS_CACHE_PATH,
-            memory_dir=CONFIG.get("memory_dir", "output/memory"),
-            llm=lambda prompt: call_llm(prompt, task="growth_profile", agent_id=None),
-            max_items=INTERESTS_MAX_ITEMS,
-            stateful=STATEFUL,
-        )
-        for agent in agents:
-            context = format_growth_context(agent.get("growth_profile"), max_items=INTERESTS_MAX_ITEMS)
-            growth_log = f"[GrowthProfile] {agent.get('name', agent['id'])}\n{context}\n"
-            print(growth_log.strip())
-            append_agent_log(agent, growth_log)
-    else:
-        for agent in agents:
-            agent["growth_profile"] = {}
+    # K3d: growth-profile bootstrap now rides the `agents.built` event
+    # (gaworld/interests_plugin.py), which fires before this point.
     distributed_client = DistributedRelayClient(DISTRIBUTED_CONFIG)
     if distributed_client.enabled:
         registered = distributed_client.register_agents(agents)
@@ -3614,29 +3590,19 @@ def run_simulation():
                 "expected_outcome": str(plan.get("expected_outcome", "")).strip(),
                 "created_at_day": day,
             }
-            if INTERESTS_ENABLED:
-                progress_minutes = step_minutes
-                if INTERESTS_PROGRESS_MINUTES is not None:
-                    parsed_minutes = _parse_step_minutes(INTERESTS_PROGRESS_MINUTES)
-                    if parsed_minutes is not None:
-                        progress_minutes = parsed_minutes
-                updated_growth, growth_progress = update_growth_from_episode(
-                    agent.get("growth_profile"),
-                    episode,
-                    step_minutes=progress_minutes,
-                )
-                agent["growth_profile"] = updated_growth
-                episode["growth_matches"] = list(growth_progress.get("matches", []))
-                episode["growth_progress"] = growth_progress
-                if STATEFUL:
-                    save_agent_growth_profile(
-                        agent_id,
-                        agent.get("growth_profile", {}),
-                        CONFIG.get("memory_dir", "output/memory"),
-                    )
-            else:
-                episode["growth_matches"] = []
-                episode["growth_progress"] = {"matches": [], "minutes": 0, "level_changes": {}}
+            episode["growth_matches"] = []
+            episode["growth_progress"] = {"matches": [], "minutes": 0, "level_changes": {}}
+            # K3d: the interests plugin fills the growth keys and updates
+            # the agent's growth profile on this event; the empty defaults
+            # above keep the episode schema stable when it's disabled.
+            hook_bus.emit(
+                "episode.compose",
+                agent=agent,
+                episode=episode,
+                step_minutes=step_minutes,
+                day=day,
+                time_str=time_str,
+            )
             agent.setdefault("episodes", []).append(episode)
             update_habits_from_episode(agent, episode, HUMAN_REALISM_CONFIG)
             append_agent_episode(agent_id, episode)
@@ -4290,57 +4256,9 @@ def run_simulation():
             # K3c: plugins run their own day-end memory passes here (e.g.
             # the Skill library's experience-to-skill distillation).
             hook_bus.emit("memory.consolidate", agent=agent, day=day)
-        # Growth day-tick: forgetting decay + interest-set evolution
-        # (retire stale triggered-phase items, adopt from social partners).
-        if INTERESTS_ENABLED:
-            for agent in agents:
-                profile = agent.get("growth_profile")
-                if not profile:
-                    continue
-                partner_ids = set()
-                for ep in agent.get("episodes", []) or []:
-                    if int(ep.get("day", 0) or 0) != day:
-                        continue
-                    partner_ids.update(ep.get("social_partners", []) or [])
-                candidates: list[str] = []
-                for pid in partner_ids:
-                    partner = agents_by_id.get(pid)
-                    if partner is None:
-                        try:
-                            partner = agents_by_id.get(int(pid))
-                        except (TypeError, ValueError):
-                            partner = None
-                    if partner is None or partner is agent:
-                        continue
-                    candidates.extend(growth_focus(partner.get("growth_profile"), limit=1))
-                profile, decay_changes = apply_daily_growth_decay(
-                    profile, day, config=INTERESTS_DECAY_CONFIG
-                )
-                profile, evolution_changes = evolve_growth_profile(
-                    profile,
-                    day,
-                    social_candidates=candidates,
-                    config=INTERESTS_EVOLUTION_CONFIG,
-                    max_items=INTERESTS_MAX_ITEMS,
-                )
-                agent["growth_profile"] = profile
-                if STATEFUL:
-                    save_agent_growth_profile(
-                        agent["id"], profile, CONFIG.get("memory_dir", "output/memory")
-                    )
-                growth_notes = []
-                if decay_changes.get("level_changes"):
-                    growth_notes.append(
-                        f"{len(decay_changes['level_changes'])}项兴趣/技能因久未练习而生疏"
-                    )
-                if evolution_changes.get("retired"):
-                    growth_notes.append("放下了：" + "、".join(evolution_changes["retired"]))
-                if evolution_changes.get("adopted"):
-                    growth_notes.append(
-                        "受身边人影响开始尝试：" + "、".join(evolution_changes["adopted"])
-                    )
-                if growth_notes:
-                    print(f"🌱 {agent['name']} 的成长变化：{'；'.join(growth_notes)}")
+        # K3d: growth day-tick (decay + interest-set evolution) now rides
+        # `on_day_end` at priority=10 (gaworld/interests_plugin.py), keeping
+        # it ahead of the economy's config-registered day-end settlement.
         hook_bus.emit(
             "on_day_end",
             day=day,

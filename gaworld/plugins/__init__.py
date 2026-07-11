@@ -14,7 +14,8 @@ from __future__ import annotations
 
 def builtin_plugins():
     """Instantiate the built-in plugins (K3 migration adds one per stage)."""
+    from gaworld.interests_plugin import InterestsPlugin
     from gaworld.policy.plugin import InterventionPlugin
     from gaworld.skills.plugin import SkillsPlugin
 
-    return [InterventionPlugin(), SkillsPlugin()]
+    return [InterventionPlugin(), SkillsPlugin(), InterestsPlugin()]
