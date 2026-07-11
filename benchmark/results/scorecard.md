@@ -1,6 +1,6 @@
 # GAWorld-Bench Scorecard
 
-- generated: 2026-07-11T09:03:55
+- generated: 2026-07-11T16:02:52
 - **trust gate: UNVERIFIED**
 - composite hint: None  _(trend only, 弱证据)_
 - headline (weakest passing track): None
