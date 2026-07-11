@@ -42,6 +42,29 @@ The command is offline once the TeX dependencies are installed. `main.pdf` and
 figure PDFs are deliverables and are intentionally not ignored. Auxiliary TeX
 files and the generated arXiv source tree are ignored.
 
+## Bibliography coverage
+
+The verified bibliography is organized around:
+
+- generative agents and grounded or synthetic populations;
+- LLM-agent memory, planning, reflection, and situated action;
+- social-agent and general agent evaluation;
+- agent-based models, artificial societies, and empirical validation;
+- negative controls and reproducibility boundaries.
+
+Primary papers, proceedings, publishers, DOI records, and official project
+pages are preferred over surveys. A citation is included only when it supports
+the specific sentence in which it appears.
+
+## arXiv packaging
+
+The final upload tree is generated under `arxiv-source/` and tested in
+isolation. It contains the manuscript sources, bibliography inputs, and the
+six figure PDFs required by `main.tex`; it excludes the compiled manuscript,
+figure-generation sources, logs, caches, hidden files, repository data, and
+unrelated project material. See `ARXIV_SUBMISSION.md` for the author-facing
+checklist.
+
 ## Audit utilities
 
 Verify an artifact snapshot with:
