@@ -3187,7 +3187,14 @@ def run_simulation():
             for _enc in _dyn_result["social_encounters"]:
                 _LOG.debug("agent_%s social_encounter: %s", agent_id, _enc.get("activity", ""))
 
-        activity = step.get("activity", activity)
+        # A pre-step hook may force an activity (e.g. economy income-seek);
+        # it wins only when it actually changed the seeded value. The pre-K2
+        # code re-read step["activity"] unconditionally, letting the seeded
+        # scheduled_activity clobber the LLM/dynamic adjustment above —
+        # which silently disabled routine changes on the mainline path.
+        hook_activity = step.get("activity", scheduled_activity)
+        if hook_activity != scheduled_activity:
+            activity = hook_activity
         if activity != scheduled_activity and not changed:
             changed = True
             hook_reason = str(step.get("change_reason", "")).strip()
