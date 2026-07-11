@@ -19,6 +19,15 @@ Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design 
 
 - **`generative_city_sim.py::run_simulation`** — hook dispatch now goes through `gaworld.kernel.EventBus`; `sim_ctx.clock` is advanced at day start and each timeline tick; plugin `setup_all`/`teardown_all` wrap the simulation lifecycle. `gaworld/hooks.py` (HookBus) remains for legacy callers.
 
+### K2 — cognition pipeline (configurable agent step)
+
+- **`gaworld/sim/pipeline.py`** (`StagePipeline`, `DEFAULT_AGENT_STEP_ORDER`) — the ~770-line inline per-agent step body in `run_simulation` is now 12 named stages: `prepare / perceive / interrupts / plan / adjust_activity / move / select_action / reflect / update_state / broadcast / memorize / record`. Stage bodies are verbatim moves (closures over the loop's locals); cross-stage data rides the step dict — hook-visible keys keep their legacy names, working keys are underscore-prefixed, so pre/post-step hook consumers (economy, intervention plugin) are untouched.
+- **Pipeline order is configuration**: `CONFIG["pipeline"]["agent_step"]` accepts builtin stage names, `"module:function"` import paths (custom stages), and `{"name", "call"}` dicts. Omitting a builtin name ablates that stage. Acceptance tests (`tests/test_pipeline_ablation.py`): removing `reflect` runs a full mock-LLM simulation with zero reflection LLM calls; a path-inserted custom stage runs once per agent-step with the step data bus and kernel clock visible.
+
+### Fixed
+
+- **Routine changes were silently disabled on the mainline path** (since commit `3f7edba`, ~5 months): the loop re-read `step_ctx["activity"]` unconditionally after `maybe_adjust_activity`, and the key was seeded with `scheduled_activity` at step start — so absent a pre-step hook override, the seeded value clobbered every LLM/dynamic activity adjustment. Fixed post-K2: a hook override wins only when it actually changed the seeded value. Red-green verified in `tests/test_routine_change_mainline.py`. **This changes simulation dynamics — agents now actually execute routine changes; re-baseline ongoing experiments.**
+
 ### K3a — intervention subsystem migrated to a plugin
 
 - **`gaworld/policy/plugin.py`** (`InterventionPlugin`) + **`gaworld/plugins/__init__.py`** (`builtin_plugins()`, the one domain-side aggregation point). The inline feed/metrics/init code is removed from `run_simulation`; the plugin rides `agents.built` (new pre-snapshot observe event), `perception.compose`, and `on_agent_post_step`. Metric state keys are still seeded when the feature is disabled (schema parity). `tests/test_intervention_plugin.py` pins the wiring both ways.

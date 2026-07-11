@@ -403,14 +403,19 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > `gaworld/plugins/`（内置聚合点）+ 新增 `agents.built` 事件
 > （agent 构建后、初始快照前）。env_context 覆盖 life_event_context
 > 的既有行为按 bug 修正处理（改为追加语义），CHANGELOG 有记录。
-> ⬜ K2 完整认知管线（CognitionStage + StepContext）
-> ⬜ K3 余下插件：life_events → local_physical → real_work →
+> ✅ K2 完整认知管线（commit `5014d2f`）——step 体拆为 12 个命名阶段
+> （StagePipeline，`gaworld/sim/pipeline.py`），顺序/替换/插入/删除
+> 全部配置化；验收测试：reflect 消融零反思调用、路径插入自定义阶段。
+> 与设计的偏差：StepContext 以 dict 实现（保持既有 hook 消费者兼容，
+> typed wrapper 留待 hook 全量迁移后）；阶段暂为 run_simulation 内闭包
+> （变量晚绑定，后续可机械地逐个毕业为模块函数）。
+> ✅ 顺带修复重大潜在 bug（commit `352b2f1`）：3f7edba 起
+> `step_ctx["activity"]` 种子值无条件覆盖 LLM/动态活动调整，
+> RoutineChange 在主线路径失效约 5 个月；修复后 hook 覆盖仅在
+> 实际改写种子值时生效。**该修复改变模拟动力学，进行中的实验需重新基线。**
+> ⬜ K3 余下插件：skills/interests（K2 就绪后解锁）→ life_events
+> （需先增 `env.events.compose` 征集点）→ local_physical → real_work →
 > dynamic_behavior → economy。
-> **skills / interests 调整为随 K2 一并迁移**——调研发现二者的注入点
-> 已内嵌在 `sim/_cognition.py::perception` 与 `memory/lifecycle.py`
-> 日终序列内部（不在主循环），插件化前置条件是 perception 阶段化与
-> `memory.consolidate` 事件，均为 K2 交付物；现在强迁只会改变 prompt
-> 结构而无解耦收益。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）

@@ -89,6 +89,37 @@ class RumorPlugin(Plugin):
 第一个内置子系统——感知注入 + post_step 指标落盘 + agents.built 播种，
 三种钩子用法齐全）。
 
+## 认知管线（K2）：替换 / 插入 / 消融阶段
+
+agent 每步认知是 12 个命名阶段的序列（`gaworld/sim/pipeline.py`）：
+
+```
+prepare → perceive → interrupts → plan → adjust_activity → move →
+select_action → reflect → update_state → broadcast → memorize → record
+```
+
+顺序由配置声明，缺省即以上全序：
+
+```python
+CONFIG["pipeline"]["agent_step"] = [
+    "prepare", "perceive",
+    "my_pkg.stages:deliberate",          # 插入自定义阶段（三思型 agent）
+    "interrupts", "plan", "adjust_activity", "move",
+    "select_action",                      # "reflect" 被省略 = 消融反思
+    "update_state", "broadcast", "memorize", "record",
+]
+```
+
+自定义阶段签名 `fn(agent, step, ctx)`：`step` 是本步数据总线（dict——
+hook 可见键沿用旧名，阶段间工作键以下划线开头，如 `_perception` /
+`_plan_text` / `_act`），`ctx` 是 SimContext。阶段错误**会传播**
+（阶段是控制流本体，不同于 observer 的信任边界）。
+
+注意：`prepare`（pre-step 钩子在此发射）与 `record`（日志/最终
+step 键在此写入）是结构性阶段，消融目标应是中间的认知阶段。
+消融后下游阶段以默认值容错（如去掉 `reflect` 后 `reflection` 为空串）。
+参考测试：`tests/test_pipeline_ablation.py`。
+
 后续 K 阶段将新增 `interrupt.candidates`、`schedule.compose`、`plan.prompt`
 等事件（见设计文档第 5.7 节事件目录）。
 
