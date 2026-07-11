@@ -1,13 +1,14 @@
 {
-  "generated": "2026-07-04T09:03:01",
+  "generated": "2026-07-11T09:03:55",
   "trust_gate": "UNVERIFIED",
+  "fast": false,
   "composite_hint": null,
   "headline_track": null,
   "tracks": {
     "C": {
       "track": "C",
-      "status": "incomplete",
-      "note": "compare-event 在 traffic_restriction/seed=1 失败（可能 API 用量超限）。已保存进度 0/15 → 配额恢复后用 `--continue`（相同 --seeds/--days）续跑。"
+      "status": "n/a",
+      "note": "live compare-event runs failed — check LLM provider / config"
     },
     "B": {
       "status": "n/a",

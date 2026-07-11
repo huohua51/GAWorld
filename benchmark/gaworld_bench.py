@@ -236,6 +236,20 @@ def _metrics_path(src: Path) -> Path:
     return src / "comparison_metrics.csv" if src.is_dir() else src
 
 
+def _dir_is_fast(comparison_dir: Path | None) -> bool:
+    """True if a comparison dir was produced with --fast (from its run_meta.json)."""
+    if not comparison_dir:
+        return False
+    d = comparison_dir if comparison_dir.is_dir() else comparison_dir.parent
+    meta = d / "run_meta.json"
+    if meta.exists():
+        try:
+            return bool(json.loads(meta.read_text(encoding="utf-8")).get("fast", False))
+        except (json.JSONDecodeError, OSError):
+            return False
+    return False
+
+
 def track_c_causal(sign_sources: dict[str, Path], placebo_dir: Path | None,
                    det_a: Path | None, det_b: Path | None,
                    incomplete: list[Path] | None = None) -> dict:
@@ -269,6 +283,8 @@ def track_c_causal(sign_sources: dict[str, Path], placebo_dir: Path | None,
     det_score, out["determinism"] = _determinism_block(det_a, det_b)
     if incomplete:  # A5
         out["incomplete"] = [p.name for p in incomplete]
+    # low-fidelity flag: any scored comparison dir produced with --fast
+    out["fast"] = any(_dir_is_fast(d) for d in list(sign_sources.values()) + [placebo_dir])
 
     coverage = n_eval / len(SIGN_TESTS)
     out["coverage"] = round(coverage, 4)
@@ -359,7 +375,7 @@ def resolve_from_comparisons(
 
 
 def _run_compare_event(name: str, desc: str, days: int, seed: int,
-                       provider: str | None) -> Path | None:
+                       provider: str | None, fast: bool = False) -> Path | None:
     """Invoke `generative_city_sim.py compare-event`; return the new comparison dir."""
     cmd = [sys.executable, str(SIMULATOR), "compare-event",
            "--event-name", name, "--event-description", desc,
@@ -367,6 +383,8 @@ def _run_compare_event(name: str, desc: str, days: int, seed: int,
            "--sim-days", str(days), "--seed", str(seed)]
     if provider:
         cmd += ["--llm-provider", provider]
+    if fast:
+        cmd += ["--fast"]
     print(f"[bench] compare-event: {name} (days={days}, seed={seed})")
     before = {p.name for p in COMPARISONS_OUT.glob("*")} if COMPARISONS_OUT.exists() else set()
     r = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
@@ -379,7 +397,8 @@ def _run_compare_event(name: str, desc: str, days: int, seed: int,
 
 
 def orchestrate_track_c(days: int, seed: int, provider: str | None,
-                        det_a: Path | None, det_b: Path | None) -> dict:
+                        det_a: Path | None, det_b: Path | None,
+                        fast: bool = False) -> dict:
     """Live Track C: run compare-event for each intervention + placebo, then score.
 
     Requires a working LLM provider; each call runs a full paired simulation.
@@ -387,10 +406,10 @@ def orchestrate_track_c(days: int, seed: int, provider: str | None,
     """
     sign_sources: dict[str, Path] = {}
     for key, (name, desc) in INTERVENTIONS.items():
-        d = _run_compare_event(name, desc, days, seed, provider)
+        d = _run_compare_event(name, desc, days, seed, provider, fast=fast)
         if d:
             sign_sources[key] = d
-    placebo_dir = _run_compare_event(*PLACEBO_EVENT, days, seed, provider)
+    placebo_dir = _run_compare_event(*PLACEBO_EVENT, days, seed, provider, fast=fast)
     if not sign_sources and placebo_dir is None:
         return {"track": "C", "status": "n/a",
                 "note": "live compare-event runs failed — check LLM provider / config"}
@@ -427,11 +446,12 @@ def _metrics_for_intervention(name: str) -> list[str]:
 
 def track_c_multiseed(samples_by_test: dict[tuple[str, str], list[float]],
                       placebo_dir: Path | None, det_a: Path | None,
-                      det_b: Path | None, incomplete: list[Path] | None = None) -> dict:
+                      det_b: Path | None, incomplete: list[Path] | None = None,
+                      fast: bool = False) -> dict:
     """Significance-aware Track C: score the sign only on tests whose effect is
     significant across seeds (95% CI excludes 0). Non-significant tests are
     reported as 'ns' and excluded from the sign numerator/denominator (A2)."""
-    out = {"track": "C", "status": "ok", "mode": "multiseed"}
+    out = {"track": "C", "status": "ok", "mode": "multiseed", "fast": bool(fast)}
     tests = []
     n_sig = n_correct = n_data = 0
     for t in SIGN_TESTS:
@@ -459,6 +479,11 @@ def track_c_multiseed(samples_by_test: dict[tuple[str, str], list[float]],
 
     coverage = n_data / len(SIGN_TESTS)
     sig_coverage = n_sig / len(SIGN_TESTS)
+    max_n = max((len(s) for s in samples_by_test.values()), default=0)
+    out["max_samples"] = max_n
+    out["insufficient_seeds"] = max_n < 2  # significance needs ≥2 seeds per test
+    if out["insufficient_seeds"]:
+        out["note"] = f"每项最多 {max_n} 个样本；显著性检验需 ≥2 个 seed。用 --seeds a,b,c 多 seed 重跑。"
     out["coverage"] = round(coverage, 4)
     out["significance_coverage"] = round(sig_coverage, 4)
     base, out["score"] = _aggregate_c(sign_score, placebo_score, det_score, coverage)
@@ -490,7 +515,7 @@ def _save_checkpoint(state: dict) -> None:
 
 def orchestrate_track_c_multiseed(seeds: list[int], days: int, provider: str | None,
                                   det_a: Path | None, det_b: Path | None,
-                                  resume: bool = False) -> dict:
+                                  resume: bool = False, fast: bool = False) -> dict:
     """Run each intervention across seeds and score with significance.
 
     Checkpoint/resume (--continue): progress is saved to CHECKPOINT_PATH after
@@ -524,7 +549,7 @@ def orchestrate_track_c_multiseed(seeds: list[int], days: int, provider: str | N
         if (key, seed) in completed:
             continue
         name, desc = INTERVENTIONS[key]
-        d = _run_compare_event(name, desc, days, seed, provider)
+        d = _run_compare_event(name, desc, days, seed, provider, fast=fast)
         mcsv = (d / "comparison_metrics.csv") if d else None
         if not (mcsv and mcsv.exists()):
             _persist()  # save progress so far, then stop for the user to retry later
@@ -544,7 +569,7 @@ def orchestrate_track_c_multiseed(seeds: list[int], days: int, provider: str | N
         return {"track": "C", "status": "n/a",
                 "note": "multi-seed runs produced no data — check LLM provider / config"}
     CHECKPOINT_PATH.unlink(missing_ok=True)  # done -> clear checkpoint
-    return track_c_multiseed(samples, None, det_a, det_b, None)
+    return track_c_multiseed(samples, None, det_a, det_b, None, fast=fast)
 
 
 # ── Scorecard ────────────────────────────────────────────────────────────────
@@ -563,6 +588,7 @@ def build_scorecard(tracks: dict) -> dict:
     return {
         "generated": datetime.now().isoformat(timespec="seconds"),
         "trust_gate": trust,
+        "fast": bool(tracks.get("C", {}).get("fast", False)),  # low-fidelity (--fast) run?
         "composite_hint": round(composite, 4) if composite is not None else None,
         "headline_track": headline,
         "tracks": tracks,
@@ -575,8 +601,11 @@ def render_scorecard_md(sc: dict) -> str:
          f"- generated: {sc['generated']}",
          f"- **trust gate: {sc['trust_gate']}**",
          f"- composite hint: {sc['composite_hint']}  _(trend only, 弱证据)_",
-         f"- headline (weakest passing track): {sc['headline_track']}", "",
-         "| Track | 命题 | score | pass |", "|---|---|---|---|"]
+         f"- headline (weakest passing track): {sc['headline_track']}"]
+    if sc.get("fast"):
+        L.append("- ⚡ **低保真运行（--fast）**：确定性认知 + 跳过每日总结/日记 + 3 agent；"
+                 "结论仅供快速定向，勿当全保真结果。")
+    L += ["", "| Track | 命题 | score | pass |", "|---|---|---|---|"]
     names = {"A": "宏观经验拟合", "B": "Stylized-facts", "C": "因果反事实 ⭐",
              "D": "可信度一致性", "E": "可复现/成本"}
     for k in ("A", "B", "C", "D", "E"):
@@ -592,8 +621,12 @@ def render_scorecard_md(sc: dict) -> str:
         plc = c.get("placebo", {}).get("score")
         det_status = c.get("determinism", {}).get("status", "未评估")
         if c.get("mode") == "multiseed":  # A2: significant-only sign + significance coverage
-            head = (f"- Track C[多seed]: 符号 {sign.get('n_correct')}/{sign.get('n_significant')} 显著且正确"
-                    f"（显著覆盖 {c.get('significance_coverage')}，数据覆盖 {c.get('coverage')}，95%CI）")
+            if c.get("insufficient_seeds"):
+                head = (f"- Track C[多seed]: ⚠️ 样本不足——每项最多 {c.get('max_samples')} 个，"
+                        f"显著性需 ≥2 个 seed（数据覆盖 {c.get('coverage')}）。用 --seeds a,b,c 重跑")
+            else:
+                head = (f"- Track C[多seed]: 符号 {sign.get('n_correct')}/{sign.get('n_significant')} 显著且正确"
+                        f"（显著覆盖 {c.get('significance_coverage')}，数据覆盖 {c.get('coverage')}，95%CI）")
         else:
             head = (f"- Track C: 符号 {sign.get('n_correct')}/{sign.get('n_eval')} 正确"
                     f"（覆盖 {c.get('coverage')}，按 `{sign.get('effect_col')}` 事件后效应）")
@@ -642,6 +675,11 @@ def _report_track_a(t: dict) -> tuple[list[str], list[str]]:
 def _report_track_c_multiseed(t: dict) -> tuple[list[str], list[str]]:
     lines, recs = [], []
     sign = t.get("sign", {})
+    if t.get("insufficient_seeds"):
+        lines.append(f"⚠️ 样本不足：每项最多 {t.get('max_samples')} 个样本，无法评估显著性（需 ≥2 个 seed）。")
+        lines.append("（数据已产出，说明 provider 正常；这不是模型失败，只是 seed 太少。）")
+        recs.append("用 ≥2（建议 ≥3）个 seed 重跑：`--seeds 1,2,3 [--continue]`，才能算 95%CI 与显著性。")
+        return lines, recs
     lines.append(f"符号 {sign.get('n_correct')}/{sign.get('n_significant')} 显著且正确"
                  f"（显著覆盖 {t.get('significance_coverage')}，数据覆盖 {t.get('coverage')}，95%CI）。")
     ns = []
@@ -855,6 +893,8 @@ def main() -> int:
     p.add_argument("--seeds", help="A2 multi-seed significance mode: comma list, e.g. 1,2,3,4,5")
     p.add_argument("--continue", dest="resume", action="store_true",
                    help="resume a multi-seed --run from its saved checkpoint (after a quota/API failure)")
+    p.add_argument("--fast", action="store_true",
+                   help="fast mode for --run: fewer LLM calls + 3-agent cohort (for local models; lower fidelity)")
     p.add_argument("--llm-provider", help="provider passed to compare-event (e.g. minimax)")
     args = p.parse_args()
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()] if args.seeds else None
@@ -885,7 +925,7 @@ def main() -> int:
             elif args.run or args.resume:
                 tracks["C"] = orchestrate_track_c_multiseed(
                     seeds, args.days, args.llm_provider, args.det_a, args.det_b,
-                    resume=args.resume)
+                    resume=args.resume, fast=args.fast)
             else:
                 tracks["C"] = {"track": "C", "status": "n/a",
                                "note": "--seeds 多seed模式需配 --run（实跑，需 provider）或 --synthetic"}
@@ -894,7 +934,7 @@ def main() -> int:
                                          args.det_a, args.det_b)
         elif args.run:
             tracks["C"] = orchestrate_track_c(args.days, args.seed, args.llm_provider,
-                                              args.det_a, args.det_b)
+                                              args.det_a, args.det_b, fast=args.fast)
         else:
             root = args.comparisons_root or COMPARISONS_OUT  # default: scan output/comparisons
             ss, auto_placebo, incomplete = resolve_from_comparisons(root)

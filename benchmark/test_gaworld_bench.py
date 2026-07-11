@@ -61,7 +61,7 @@ class TestCheckpointResume(unittest.TestCase):
         import tempfile as _tf
         from pathlib import Path
 
-        def fake_run(name, desc, days, seed, provider):
+        def fake_run(name, desc, days, seed, provider, fast=False):
             calls["n"] += 1
             if calls["n"] > fail_after:
                 return None  # simulate compare-event failure (e.g. API quota)
@@ -113,6 +113,64 @@ class TestCheckpointResume(unittest.TestCase):
             with patch.object(gb, "CHECKPOINT_PATH", ckpt):
                 res = gb.orchestrate_track_c_multiseed([1, 2], 3, None, None, None, resume=True)
             self.assertEqual(res["status"], "n/a")  # days mismatch (3 vs 30) refused
+
+
+class TestFastAnnotation(unittest.TestCase):
+    def test_marker_detected_and_flagged_in_scorecard(self):
+        import csv
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d = root / "layoff_shock"
+            d.mkdir()
+            (d / "run_meta.json").write_text(json.dumps({"fast": True}))
+            with open(d / "comparison_metrics.csv", "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["metric", "delta_final", "delta_mean"])
+                w.writerow(["econ_security", -0.05, -0.05])
+            self.assertTrue(gb._dir_is_fast(d))
+            res = gb.track_c_causal({t["name"]: root / t["name"] for t in gb.SIGN_TESTS},
+                                    None, None, None)
+            self.assertTrue(res["fast"])
+            sc = gb.build_scorecard({"C": res})
+            self.assertTrue(sc["fast"])
+            self.assertIn("低保真", gb.render_scorecard_md(sc))
+
+    def test_no_marker_means_not_fast(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(gb._dir_is_fast(Path(tmp)))  # no run_meta.json
+
+    def test_multiseed_fast_param(self):
+        ms = gb.track_c_multiseed({("layoff_shock", "stress"): [0.1, 0.11]},
+                                  None, None, None, fast=True)
+        self.assertTrue(ms["fast"])
+
+
+class TestFastFlag(unittest.TestCase):
+    def _capture_cmd(self, fast):
+        from unittest.mock import patch
+        captured = {}
+
+        class _R:
+            returncode = 1  # force early return after capturing the command
+
+        def fake(cmd, cwd=None):
+            captured["cmd"] = cmd
+            return _R()
+
+        with patch.object(gb.subprocess, "run", side_effect=fake):
+            gb._run_compare_event("裁员", "desc", 30, 1, "ollama_gemma4", fast=fast)
+        return captured["cmd"]
+
+    def test_fast_true_adds_flag(self):
+        self.assertIn("--fast", self._capture_cmd(True))
+
+    def test_fast_false_omits_flag(self):
+        self.assertNotIn("--fast", self._capture_cmd(False))
 
 
 if __name__ == "__main__":

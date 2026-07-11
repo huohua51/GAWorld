@@ -213,8 +213,11 @@ class XMCPClient:
                     },
                 )
             except XMCPAuthError as exc:
-                self._disabled = True
-                _LOG.warning("x_mcp: auth failed, disabling: %s", exc)
+                # Live-observed: the X gateway intermittently returns 401 for
+                # a token that authenticates fine minutes later, so a long
+                # cooldown beats a permanent disable.
+                self._cooldown_until = time.monotonic() + 3600.0
+                _LOG.warning("x_mcp: auth rejected (%s), 1h cooldown", exc)
                 return []
             except XMCPRateLimited:
                 self._cooldown_until = time.monotonic() + self.cooldown_on_429

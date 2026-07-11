@@ -206,6 +206,9 @@ python gaworld_bench.py --track A --output-dir ../output
 # Track C（实跑）：调 compare-event，需要配置好 LLM provider
 python gaworld_bench.py --track C --run --days 3 --seed 42 [--llm-provider minimax]
 
+# 快速档（本地模型友好）：确定性认知 + 跳过每日总结/日记 + 3 agent，LLM 调用大减、保真度降低
+python gaworld_bench.py --track C --run --days 30 --fast --llm-provider ollama_gemma4
+
 # Track C（A2 多 seed 显著性）：每个干预跨多 seed，输出 95%CI，只对显著项计分
 python gaworld_bench.py --track C --run --seeds 1,2,3,4,5 --days 30 [--llm-provider minimax]
 
@@ -261,8 +264,10 @@ python gaworld_bench.py --all --run --days 3 --seed 42
 
 - **v0.1**：Track A（真实锚点 + schema 修正）、Track C（符号 + 安慰剂 + 确定性）、scorecard 聚合、合成模式。
 - **v0.1.1（已落地）**：A1 事件后效应 `delta_final`、A3 覆盖度折扣、A4 确定性三态 gate（UNVERIFIED）、A5 未完成运行检测、每次运行自动报告。
-- **v0.1.2（已落地）**：A2 跨 seed 显著性——`--seeds` 多 seed 模式，每个干预算 95%CI，**只对显著（CI 不含 0）的符号检验计分**，不显著记 `ns`；新增 `significance_coverage`。
+- **v0.1.2（已落地）**：A2 跨 seed 显著性——`--seeds` 多 seed 模式，每个干预算 95%CI，**只对显著（CI 不含 0）的符号检验计分**，不显著记 `ns`；新增 `significance_coverage`。单 seed（每项 <2 样本）显示"样本不足"提示而非误导性的 0/0。快速点估计请用**单跑模式**（`--run` 不加 `--seeds`，按 `delta_final` 出 符号 X/4）。
 - **v0.1.3（已落地）**：`--continue` 断点续跑——多 seed 实跑每完成一个 (干预,seed) 单元就存 checkpoint（`benchmark/results/checkpoint_multiseed.json`）；中途失败（API 用量等）保存进度并提示，配额恢复后续跑跳过已完成单元。
+- **v0.1.4（已落地）**：`--fast` 快速档——透传给 `compare-event`，启用项目内置 `fos_fast_mode`（确定性认知 + 跳过每日总结/日记）并缩减到 3 agent，大幅减少 LLM 调用；为本地小模型跑更长 horizon 换速度、降保真度。
+- **v0.1.5（已落地）**：`--fast` 自动标注——`compare-event` 在每个对照目录写 `run_meta.json`（含 `fast` 标记）；harness 读取后，scorecard/report 顶部显示"⚡ 低保真运行（--fast）"横幅，避免把快速档结果误当全保真结论。
 - **v0.2**：Track E 成本/失败率解析、CV。
 - **v0.3**：Track B stylized-facts 判据（接 emotion_contagion / network_evolution）。
 - **v0.4**：Track D LLM-judge 评分卡（接 interview / memory_consistency）。

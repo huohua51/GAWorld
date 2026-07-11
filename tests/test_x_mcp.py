@@ -186,12 +186,16 @@ class TestXMCPClient(unittest.TestCase):
         self.assertEqual(client.search_posts("q2"), [])
         self.assertEqual(client._session.post.call_count, calls)
 
-    def test_auth_failure_disables_client(self):
+    def test_auth_failure_sets_long_cooldown_not_disable(self):
         client = self._client()
         client._session = mock.Mock()
         client._session.post = mock.Mock(return_value=_FakeResponse(status_code=401, headers={}))
         self.assertEqual(client.search_posts("q"), [])
-        self.assertTrue(client._disabled)
+        # Cooldown, not permanent disable: intermittent gateway 401s recover.
+        self.assertFalse(client._disabled)
+        calls = client._session.post.call_count
+        self.assertEqual(client.search_posts("q2"), [])
+        self.assertEqual(client._session.post.call_count, calls)
 
     def test_sse_response_parsed(self):
         client = self._client()

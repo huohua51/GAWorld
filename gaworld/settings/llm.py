@@ -27,7 +27,9 @@ def llm_settings() -> dict[str, Any]:
                     "type": "ollama",
                     "url": "http://localhost:11434/api/generate",
                     "model": "gemma4:e4b",
-                    "timeout": 120,
+                    # Local generation is slow; 120s often times out on long agent
+                    # prompts and would trip the multi-seed checkpoint-stop.
+                    "timeout": 600,
                 },
                 "ollama_qwen": {
                     "type": "ollama",

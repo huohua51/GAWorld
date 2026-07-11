@@ -4615,6 +4615,16 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
         overrides["sim_days"] = int(args.sim_days)
     if args.agent_ids:
         overrides["agent_ids"] = list(args.agent_ids)
+    if getattr(args, "fast", False):
+        # Fast mode: cut LLM calls per agent-day (deterministic cognition, skip
+        # daily summary/diary) and shrink the cohort. Trades fidelity for speed
+        # so local models can run longer horizons.
+        overrides["fos_fast_mode"] = {
+            "deterministic_cognition": True,
+            "skip_daily_summary": True,
+            "skip_daily_diary": True,
+        }
+        overrides.setdefault("agent_ids", [1, 2, 3])  # unless --agent-id was given
     if getattr(args, "llm_provider", None):
         routing = CONFIG.get("llm", {}).get("routing", {})
         task_map = routing.get("tasks", {})
@@ -4821,6 +4831,16 @@ def _cli_compare_event(args):
     os.makedirs(baseline_dir, exist_ok=True)
     os.makedirs(event_dir, exist_ok=True)
 
+    # Stamp run metadata so downstream scoring can flag low-fidelity (--fast) runs.
+    with open(os.path.join(root, "run_meta.json"), "w", encoding="utf-8") as _meta:
+        json.dump({
+            "fast": bool(getattr(args, "fast", False)),
+            "sim_days": args.sim_days,
+            "seed": getattr(args, "seed", None),
+            "llm_provider": getattr(args, "llm_provider", None),
+            "event_name": str(args.event_name),
+        }, _meta, ensure_ascii=False, indent=2)
+
     baseline_overrides = _build_compare_overrides(
         baseline_dir,
         include_event=False,
@@ -5001,6 +5021,12 @@ def _build_arg_parser():
         "--output-root",
         default="output/comparisons",
         help="Output root for comparison artifacts",
+    )
+    compare_event.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: deterministic cognition + skip daily summary/diary + 3-agent cohort "
+             "(fewer LLM calls; trades fidelity for speed, e.g. for local models).",
     )
 
     serve_viz = subparsers.add_parser(
