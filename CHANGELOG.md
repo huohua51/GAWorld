@@ -28,6 +28,10 @@ Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design 
 
 - **Routine changes were silently disabled on the mainline path** (since commit `3f7edba`, ~5 months): the loop re-read `step_ctx["activity"]` unconditionally after `maybe_adjust_activity`, and the key was seeded with `scheduled_activity` at step start — so absent a pre-step hook override, the seeded value clobbered every LLM/dynamic activity adjustment. Fixed post-K2: a hook override wins only when it actually changed the seeded value. Red-green verified in `tests/test_routine_change_mainline.py`. **This changes simulation dynamics — agents now actually execute routine changes; re-baseline ongoing experiments.**
 
+### K3h — real-work task system migrated to a plugin
+
+- **`gaworld/work/plugin.py`** (`RealWorkPlugin`) — owns the `RealWorkRuntime` lifecycle: create/start on `on_simulation_start`, job-market day tick on `on_day_start`, and dispatch/absorption on the new **`action.outcome`** filter event (fires in the select_action stage after the outcome line is built). Disabled runs store a `None` runtime and every hook no-ops, as before. Small improvement over the inline code: `teardown` now actually stops the worker pool (it previously leaked past simulation end).
+
 ### K3g — local physical perception migrated to a plugin
 
 - **`gaworld/world/plugin.py`** (`LocalPhysicalPlugin`) — the P0 physical-perception layer rides the plugin surface: per-tick map refresh (sim time + occupancy) on `on_time_tick`, and the per-agent snapshot on `perception.compose` at priority 30 (stores `agent["_local_physical"]` for the interrupt engine and contributes the "身边的物理环境：…" line ahead of the life-event/intervention contributions — text order preserved exactly). `env_system` joins `city_map` in `sim_ctx.extras`. The spatial-preference layer (P4) deliberately stays inline: it is entangled with dynamic-behavior interrupt results and migrates together with that plugin.

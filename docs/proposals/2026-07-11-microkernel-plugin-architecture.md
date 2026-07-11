@@ -433,7 +433,9 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > 刷新 + 感知快照，priority 30 保持注入文本顺序不变）；
 > spatial_preferences（P4）与 dynamic_behavior 中断结果深耦合，
 > 留待与其一并迁移。
-> ⬜ K3 余下插件：real_work → dynamic_behavior（含 spatial_preferences）。
+> ✅ K3h real_work 上岸——`gaworld/work/plugin.py`；新增
+> `action.outcome` 过滤事件；teardown 顺手修复 worker 池泄漏。
+> ⬜ K3 余下插件：dynamic_behavior（含 spatial_preferences）——最后一个。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）

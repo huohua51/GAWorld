@@ -71,8 +71,6 @@ from gaworld.kernel import build_kernel
 from gaworld.sim.pipeline import DEFAULT_AGENT_STEP_ORDER, StagePipeline
 from environment import EnvironmentSystem, RemoteEnvironmentClient
 from gaworld.llm.providers import call_llm
-from gaworld.work.runtime import RealWorkRuntime
-from gaworld.work.ingest import summarise_for_outcome as _rw_summarise
 from gaworld.apps.visualizer import (
     SimulationVisualizer,
     build_agent_step_payload,
@@ -2747,12 +2745,8 @@ def run_simulation():
         a["id"]: take_initial_snapshot(a, schedule=schedules.get(a["id"]))
         for a in agents
     }
-    # Real-work runtime: bootstrap capabilities + queue + market + workers.
-    # Returns None when CONFIG.real_work.enabled is False, in which case
-    # all real-work code paths are no-ops.
-    real_work_runtime = RealWorkRuntime.create(CONFIG, agents, llm_fn=call_llm)
-    if real_work_runtime is not None:
-        real_work_runtime.start()
+    # K3h: the real-work runtime (capabilities + queue + market + workers)
+    # is created and started by RealWorkPlugin on `on_simulation_start`.
     hook_bus.emit(
         "on_simulation_start",
         config=CONFIG,
@@ -3205,18 +3199,18 @@ def run_simulation():
                 location=resolved_location,
             )
             outcome = f"在【{activity}】中执行了【{act}】"
-            if real_work_runtime is not None:
-                rw_outcome = real_work_runtime.router.maybe_dispatch(
-                    agent, activity=activity, chosen_action=act,
-                    sim_day=day, sim_time=time_str,
-                )
-                if rw_outcome:
-                    outcome = rw_outcome
-                rw_done = real_work_runtime.absorb_for(
-                    agent, sim_day=day, sim_time=time_str,
-                )
-                if rw_done:
-                    outcome = f"{outcome}｜回收：{_rw_summarise(rw_done)}"
+            # K3h: plugins may rewrite the outcome (real-work dispatch and
+            # artifact absorption ride this filter).
+            outcome = hook_bus.filter(
+                "action.outcome",
+                outcome,
+                agent=agent,
+                activity=activity,
+                action=act,
+                day=day,
+                time_str=time_str,
+                location=resolved_location,
+            )
         step["_effective_activity"] = effective_activity
         step["_act"] = act
         step["_action_meta"] = action_meta
@@ -3643,9 +3637,8 @@ def run_simulation():
     # ----- PHASE 3: DAY LOOP — runs once per simulated day -----
     for day in range(start_day, start_day + SIM_DAYS):
         sim_ctx.clock.start_day(day)
-        # ----- PHASE 3a: Per-day setup (real-work tick, day context, schedule/routine generation, action space) -----
-        if real_work_runtime is not None:
-            real_work_runtime.tick_day(day)
+        # ----- PHASE 3a: Per-day setup (day context, schedule/routine generation, action space) -----
+        # K3h: the real-work market day tick rides `on_day_start`.
         day_context = _resolve_day_context(
             day,
             start_weekday_idx=SIM_START_WEEKDAY_INDEX,
