@@ -60,7 +60,7 @@ from gaworld.distributed.comm import (
 from gaworld.behavior.dynamic import (
     insert_activity_into_schedule as dynamic_insert_activity,
 )
-from gaworld.kernel import build_kernel
+from gaworld.kernel import ActionRequest, build_kernel
 from gaworld.sim.pipeline import DEFAULT_AGENT_STEP_ORDER, StagePipeline
 from environment import EnvironmentSystem, RemoteEnvironmentClient
 from gaworld.llm.providers import call_llm
@@ -2832,6 +2832,16 @@ def run_simulation():
         policy_desc = step.get("policy_desc")
         agent_env_events = step.get("_env_events", [])
         step_env_context = step.get("_env_context", "")
+        # K4: surface Controller denials from the previous step so the
+        # agent can perceive why its action didn't happen.
+        _denials = agent.pop("_action_denials", None)
+        if _denials:
+            _denial_text = "；".join(str(d) for d in _denials)
+            step_env_context = (
+                f"{step_env_context}\n刚才的行动受阻：{_denial_text}"
+                if step_env_context
+                else f"刚才的行动受阻：{_denial_text}"
+            )
         # K3g: the local-physical snapshot (agent["_local_physical"] + the
         # "身边的物理环境" line) rides perception.compose at priority 30.
         # K2: plugins contribute perception snippets (collect semantics —
@@ -3077,6 +3087,25 @@ def run_simulation():
             day=day,
             time_str=time_str,
         )
+        # K4: structured moves pass the Controller's validation gate. A
+        # denial keeps the agent where it is (move_agent falls back to the
+        # origin) and surfaces the reason in its next perception.
+        if desired_location:
+            _verdict = sim.controller.validate(
+                ActionRequest(
+                    agent_id=agent["id"],
+                    name="move",
+                    params={"to": desired_location, "activity": activity},
+                ),
+                sim,
+            )
+            if not _verdict.allowed:
+                agent.setdefault("_action_denials", []).append(
+                    f"你想前往【{desired_location}】，但没能成行：{_verdict.reason}"
+                )
+                desired_location = None
+            elif _verdict.rewritten is not None:
+                desired_location = _verdict.rewritten.params.get("to", desired_location)
         movement = move_agent(
             agent,
             desired_location=desired_location,

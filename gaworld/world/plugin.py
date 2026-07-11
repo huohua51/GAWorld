@@ -21,7 +21,7 @@ filter, and anomaly-experience recording on ``interrupt.applied``.
 
 from __future__ import annotations
 
-from gaworld.kernel import Plugin
+from gaworld.kernel import Plugin, Verdict
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.world.plugin")
@@ -58,8 +58,44 @@ class LocalPhysicalPlugin(Plugin):
         self._anomaly_jump = float(cfg.get("crowd_anomaly_jump", 0.25))
         ctx.bus.on("on_time_tick", self._refresh_map)
         ctx.bus.on("perception.compose", self._snapshot, priority=30)
+        # K4 validators. location_exists is on by default — resolve_location
+        # only yields map nodes, so in normal operation it never fires; it
+        # catches rogue rewrites from plugins/hooks. venue_open is OFF by
+        # default: hard-blocking closed venues would change dynamics (the
+        # P0/P2 layers handle closures reactively) — opt in via
+        # CONFIG["controller"]["validators"]["venue_open"] = True.
+        vcfg = ctx.config.get("controller", {}) or {}
+        vcfg = vcfg.get("validators", {}) if isinstance(vcfg, dict) else {}
+        if vcfg.get("location_exists", True):
+            ctx.controller.register_validator(self._validate_location_exists, priority=10)
+        if vcfg.get("venue_open", False):
+            ctx.controller.register_validator(self._validate_venue_open)
 
     # -- hooks ---------------------------------------------------------------
+
+    def _validate_location_exists(self, request, ctx):
+        if request.name != "move":
+            return None
+        to = str(request.params.get("to", "") or "")
+        if not to:
+            return None
+        city_map = ctx.extras.get("city_map")
+        if not city_map:
+            return None
+        if self._cm.node_by_name(city_map, to) is None:
+            return Verdict.deny(f"目的地【{to}】在这座城市里并不存在")
+        return None
+
+    def _validate_venue_open(self, request, ctx):
+        if request.name != "move":
+            return None
+        to = str(request.params.get("to", "") or "")
+        city_map = ctx.extras.get("city_map")
+        if not to or not city_map:
+            return None
+        if not self._cm.is_open(city_map, to, ctx.clock.time_str):
+            return Verdict.deny(f"【{to}】目前不在营业时间")
+        return None
 
     def _refresh_map(self, hook_ctx):
         if not self._enabled:

@@ -441,7 +441,12 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > dyn_result 应用逻辑留 adjust 阶段作为中断生产者与管线间的通用契约。
 > 9 个内置插件全部上岸，主循环只剩管线骨架、legacy 自发性回退和
 > 通用契约应用。
-> ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
+> ✅ K4 校验门上岸——move 阶段接入 `Controller.validate`，deny 审计
+> 落盘并在下一 tick 感知回注；`location_exists`（默认开，常态零触发）
+> 与 `venue_open`（默认关，opt-in——硬拦会改动力学）两个校验器由
+> LocalPhysicalPlugin 注册；经济可负担校验器待具体规则定义后再做。
+> ActionProvider 动作菜单（LLM 从注册动作中选择）留作后续方向。
+> ⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）
 - 新建 `gaworld/kernel/`：SimContext、Clock、EventBus（含 HookBus 兼容层）、
