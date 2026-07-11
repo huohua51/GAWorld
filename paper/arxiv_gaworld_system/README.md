@@ -14,9 +14,9 @@ used only as capability cases and boundary evidence.
 - Every reported number must cite a byte-level SHA-256 snapshot in the ledger.
 - A single run, incomplete treatment, or diagnostic fixture is not presented as
   statistical, causal, population-valid, or real-policy evidence.
-- The audited repository has uncommitted changes. The commit and dirty paths are
-  recorded in the ledger; hashes, rather than the commit alone, identify the
-  exact audited evidence snapshot.
+- The audit started while architecture migration was in progress and was
+  refreshed after the committed Life Events plugin migration. Runtime and
+  artifact hashes, rather than a commit alone, identify the audited evidence.
 - Author names, affiliations, email addresses, and ORCIDs remain explicit
   placeholders until supplied by the authors.
 

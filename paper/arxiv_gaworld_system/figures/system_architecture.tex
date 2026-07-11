@@ -24,10 +24,10 @@
 
 \node[item,below=11mm of bus] (policy) {Intervention\\plugin};
 \node[item,below=11mm of registry] (skills) {Skills + Interests\\plugins};
-\node[item,below=11mm of skeleton,dashed] (life) {Life-events plugin\\working tree; not claimed};
+\node[item,below=11mm of skeleton] (life) {Life-events\\plugin};
 \draw[flow] (registry) -- (policy);
 \draw[flow] (registry) -- (skills);
-\draw[hook] (registry) -- (life);
+\draw[flow] (registry) -- (life);
 
 \node[item,below=12mm of policy] (economy) {Economy\\\textit{hook-based}};
 \node[item,below=12mm of skills] (memory) {Memory\\\textit{direct}};
@@ -37,6 +37,6 @@
 \node[draw=black!45,fit=(economy)(work),inner sep=3mm] (substrate) {};
 \node[font=\bfseries,anchor=south] at (substrate.north) {Societal substrate};
 
-\node[font=\tiny,anchor=west,below=8mm of economy.west] {solid = connected/stable \quad dotted = hook dispatch \quad dashed = partial, skeleton, or unclaimed working-tree path};
+\node[font=\tiny,anchor=west,below=8mm of economy.west] {solid = connected/stable \quad dotted = hook dispatch \quad dashed = partial or skeleton path};
 \end{tikzpicture}
 \end{document}

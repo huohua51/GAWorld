@@ -6,17 +6,15 @@ that the current working tree is a released simulator version.
 
 ## Repository snapshot
 
-- Git commit: `943f2eaecdddb6158374196ccb7fb03078499d45`
+- Architecture refresh commit: `4f296e8be521f026e919610fc0c49b8155e44448`
+- Runtime baseline includes committed migration: `68fc0ac` (`LifeEventsPlugin`)
 - Branch: `Dev`
-- Pre-existing dirty paths at audit start:
-  - `M gaworld/plugins/__init__.py`
-  - `M generative_city_sim.py`
-  - `?? gaworld/events/plugin.py`
-  - `?? website/`
-- Consequence: the commit alone does **not** identify the audited runtime. The
-  hashes below identify individual byte snapshots. In particular, plugin
-  assembly observations include uncommitted migration work and may change
-  before release.
+- The initial audit began before the Life Events migration was committed. A
+  final read-only refresh verified the committed runtime wiring. Unrelated
+  untracked `website/` content and generated paper files are outside the
+  architecture snapshot.
+- Consequence: hashes below remain the controlling byte identifiers for every
+  source and result artifact used by the manuscript.
 
 ## Status semantics
 
@@ -35,8 +33,9 @@ artifact is adequate for its narrowly stated descriptive use.
 
 | Claim ID | Status | Current sources | Allowed claim and audit note |
 |---|---|---|---|
-| S-KERNEL | PARTIALLY_INTEGRATED | `gaworld/kernel/{context,registry,bus,clock,controller,recorder}.py`; `gaworld/sim/pipeline.py`; `generative_city_sim.py:2647-2660,4123` | Six kernel services, plugin setup, and cognition-stage dispatch are connected in the current tree; compatibility helpers and domain logic remain in the monolithic entrypoint, so migration is not complete. |
+| S-KERNEL | PARTIALLY_INTEGRATED | `gaworld/kernel/{context,registry,bus,clock,controller,recorder}.py`; `gaworld/sim/pipeline.py`; `generative_city_sim.py` | Six kernel services, plugin setup, and cognition-stage dispatch are connected in the current tree; compatibility helpers and domain logic remain in the monolithic entrypoint, so migration is not complete. |
 | S-PLUGIN-POLICY | IMPLEMENTED | `gaworld/policy/plugin.py`; `gaworld/policy/intervention.py`; current `gaworld/plugins/__init__.py` | The intervention adapter registers runtime bus hooks and delegates feed/metric persistence to the existing intervention implementation. |
+| S-PLUGIN-LIFE | IMPLEMENTED | `gaworld/events/plugin.py`; `gaworld/events/life.py`; current `gaworld/plugins/__init__.py`; `generative_city_sim.py` | The committed Life Events plugin is the fourth built-in and the first event-producing migration; it connects day/tick, environment, perception, and state-effect boundaries while retaining the established domain store. Archived experiments predate this migration. |
 | S-AGENT | PARTIALLY_INTEGRATED | `gaworld/core/agent.py`; `gaworld/sim/agents_loader.py`; `generative_city_sim.py` | A typed dictionary-compatible adapter and profile parsing exist, but agent construction and many call sites still use legacy dictionaries in the entrypoint. |
 | S-MEMORY | IMPLEMENTED | `gaworld/memory/`; `gaworld/sim/_memory_recall.py` | File-backed episodic storage, recall, lifecycle maintenance, consolidation, and decay paths exist. This is an implementation claim, not evidence of human memory validity. |
 | S-WORLD | IMPLEMENTED | `gaworld/world/city_map.py`; `gaworld/world/local_physical.py`; `gaworld/env/system.py` | Graph-based city locations, local physical state, weather, and environmental event mechanisms are implemented. |
@@ -98,7 +97,7 @@ file in a directory.
 | S-KERNEL | `generative_city_sim.py` | `5593d3861a38b74792fd1a428d2d8b6b538c785ca5dfc12de584cc5e4637c624` |
 | S-PLUGIN-POLICY | `gaworld/policy/plugin.py` | `8d06e8786141813ef9e60352ded4835be4d5ed22c216593dbab7d2e1da7a68b2` |
 | S-PLUGIN-POLICY | `gaworld/plugins/__init__.py` | `70be4a204c74c44c955a495910f85ffe877094fea4406879c5f4d2683b63a2c6` |
-| S-SOCIETY | `gaworld/events/plugin.py` | `2175a430b073349eb1b38afe312640832aa4689fac1a02201a991b83afc8ce7d` |
+| S-PLUGIN-LIFE | `gaworld/events/plugin.py` | `2175a430b073349eb1b38afe312640832aa4689fac1a02201a991b83afc8ce7d` |
 | S-AGENT | `gaworld/core/agent.py` | `2ee145d9284675c0c53cb336935679b137c5c182bf78be1b4ef389962d1507ff` |
 | S-AGENT | `gaworld/sim/agents_loader.py` | `69611a90380445dcc0042643c47f6022aac130dd8b31f2a75a05558943d8acd0` |
 | S-MEMORY | `gaworld/memory/store.py` | `fc536ecb014118d5ccd7c23fb47287d14ce068f9d10184850fc2268058c3bc98` |
@@ -114,7 +113,7 @@ file in a directory.
 | S-INTERFACE | `site/simviz/index.html` | `ec619680496331c742fb422a92dbd97ad1097e07efce78801b06d105f5296a56` |
 | S-DISTRIBUTED | `gaworld/distributed/comm.py` | `504cac27b55869192506acecffa1f91d2024f1d929b4d0194adc9f41e30d75c4` |
 | S-DISTRIBUTED | `gaworld/apps/distributed_comm_server.py` | `6817f215954784d14b2de18defe728f3a18ebfee3b51ef85af53816bb4ef6243` |
-| S-FULL-PLUGIN-MIGRATION | `docs/proposals/2026-07-11-microkernel-plugin-architecture.md` | `ca3da41bbef6683dc57dd98e1a43074c87c9d582a83abaf291d1b6e044a2e85e` |
+| S-FULL-PLUGIN-MIGRATION | `docs/proposals/2026-07-11-microkernel-plugin-architecture.md` | `e8a5478fee4d61560e4e55e48fb5a7e32b1e3549e856faaf38fbb5a2d4084332` |
 
 ## Drafting rules derived from the audit
 

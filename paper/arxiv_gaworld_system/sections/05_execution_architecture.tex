@@ -12,9 +12,9 @@ other runtime behavior.
   \centering
   \includegraphics[width=\linewidth]{system_architecture.pdf}
   \caption{Audited execution architecture.  Solid paths denote connected
-  implementation surfaces; dashed paths denote a partial, skeleton, or
-  unclaimed working-tree path.  The committed built-in plugins are
-  Intervention, Skills, and Interests.  Memory, world, social, and work logic
+  implementation surfaces; dashed paths denote a partial or skeleton path.
+  The committed built-in plugins are Intervention, Skills, Interests, and Life
+  Events.  Memory, world, social, and work logic
   retain direct paths, while economy integration is primarily hook-based.}
   \label{fig:system-architecture}
 \end{figure}
@@ -91,13 +91,15 @@ at \texttt{on\_agent\_post\_step}.  The plugin delegates domain calculations
 to the existing policy implementation; migration changes orchestration and
 ownership rather than reimplementing the research mechanism.
 
-Skills and Interests are also committed built-in plugins and use event
-boundaries for their lifecycle contributions.  By contrast, the
-\texttt{LifeEventsPlugin} visible in the audited working tree was not committed
-in the frozen repository snapshot.  The paper therefore treats life events as
-an implemented societal mechanism on its established path, not as a stable
-plugin migration.  Similarly, no completed plugin claim is made for economy,
-memory, world, social, or work.
+Skills, Interests, and Life Events are also committed built-in plugins.  The
+\texttt{LifeEventsPlugin}, the fourth built-in and the first event-producer
+migration, subscribes to day and tick boundaries, composes environmental event
+views, contributes agent-specific event context to perception, and applies
+declared state effects.  It delegates queue persistence and domain operations
+to the established life-event implementation, so the migration changes
+orchestration rather than validating event realism.  Archived runs in this
+paper predate that migration and are not attributed to it.  No completed plugin
+claim is made for economy, memory, world, social, or work.
 
 \subsection{Migration-state audit}
 
@@ -124,7 +126,7 @@ Economy & Finance module and configured callbacks & Hook-based & Specialized sta
 Work & Runtime, router, queue, market, and adapters & Directly integrated & Day-level and action-side calls & Artifact production exists without a plugin boundary \\
 Controller & Validation and named-intervention API & Skeleton off main action path & Established selection/execution logic & No universal validation-gate claim \\
 Recorder & Clocked JSONL writer & Skeleton off main trace path & Multiple direct and plugin-owned writers & No single-log replay claim \\
-Life events & Established mechanism; uncommitted plugin adapter in audit tree & Plugin migration unclaimed & Existing event path & Do not attribute archived runs to a stable life-event plugin \\
+Life events & Committed plugin plus established event queue & Plugin-integrated & Domain implementation and specialized writers retained & Archived runs predate migration; mechanism validity is separate \\
 \bottomrule
 \end{tabular}
 \caption{Implementation and migration state in the audited repository.  A
