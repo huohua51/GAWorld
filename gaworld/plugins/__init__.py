@@ -19,6 +19,7 @@ def builtin_plugins():
     from gaworld.interests_plugin import InterestsPlugin
     from gaworld.policy.plugin import InterventionPlugin
     from gaworld.skills.plugin import SkillsPlugin
+    from gaworld.world.plugin import LocalPhysicalPlugin
 
     return [
         InterventionPlugin(),
@@ -26,4 +27,5 @@ def builtin_plugins():
         InterestsPlugin(),
         LifeEventsPlugin(),
         EconomyPlugin(),
+        LocalPhysicalPlugin(),
     ]

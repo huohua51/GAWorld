@@ -51,12 +51,6 @@ from gaworld.world.city_map import (
     area_price_level,
     calc_transport_cost,
     is_rush_hour,
-    set_sim_time,
-)
-from gaworld.world.local_physical import (
-    local_physical_state,
-    physical_state_text,
-    update_occupancy_from_agents,
 )
 from gaworld.memory.spatial_preferences import (
     decay_preferences as decay_env_preferences,
@@ -552,13 +546,8 @@ def _maybe_curiosity_seek(
     return True
 
 
-LOCAL_PHYSICAL_CONFIG = CONFIG.get("local_physical", {}) if isinstance(CONFIG, dict) else {}
-LOCAL_PHYSICAL_ENABLED = bool(LOCAL_PHYSICAL_CONFIG.get("enabled", True))
-LOCAL_PHYSICAL_INJECT = bool(LOCAL_PHYSICAL_CONFIG.get("inject_into_perception", True))
-LOCAL_PHYSICAL_BUSY_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_busy_ratio", 0.6))
-LOCAL_PHYSICAL_PACKED_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_packed_ratio", 0.9))
-LOCAL_PHYSICAL_ANOMALY_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_anomaly_ratio", 0.9))
-LOCAL_PHYSICAL_ANOMALY_JUMP = float(LOCAL_PHYSICAL_CONFIG.get("crowd_anomaly_jump", 0.25))
+# Local-physical snapshot/injection constants moved to
+# gaworld.world.plugin.LocalPhysicalPlugin (K3g).
 REPLAN_CONFIG = CONFIG.get("replan", {}) if isinstance(CONFIG, dict) else {}
 REPLAN_ENABLED = bool(REPLAN_CONFIG.get("enabled", True))
 REPLAN_WINDOW_MINUTES = max(1, int(REPLAN_CONFIG.get("window_minutes", 120)))
@@ -568,17 +557,6 @@ SPATIAL_PREF_ENABLED = bool(SPATIAL_PREF_CONFIG.get("enabled", True))
 SPATIAL_PREF_WEIGHT = float(SPATIAL_PREF_CONFIG.get("anomaly_weight", 1.0))
 SPATIAL_PREF_THRESHOLD = float(SPATIAL_PREF_CONFIG.get("avoid_threshold", 1.5))
 SPATIAL_PREF_HALF_LIFE = float(SPATIAL_PREF_CONFIG.get("half_life_days", 7.0))
-
-
-def _env_weather_state(env_system) -> str:
-    """Best-effort read of the environment's current weather label."""
-    try:
-        state = env_system.export_runtime_state()
-        if isinstance(state, dict):
-            return str(state.get("weather_state", "") or "")
-    except Exception:  # noqa: BLE001 — remote client may lack this method
-        pass
-    return str(getattr(env_system, "_weather_state", "") or "")
 
 
 DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
@@ -2620,6 +2598,7 @@ def run_simulation():
         env_system = RemoteEnvironmentClient(env_service_cfg)
     else:
         env_system = EnvironmentSystem(CONFIG, llm_fn=call_llm)
+    sim_ctx.extras["env_system"] = env_system
     os.makedirs(ENV_OUTPUT_DIR, exist_ok=True)
     env_timeline_path = os.path.join(ENV_OUTPUT_DIR, "timeline.jsonl")
     if os.path.exists(env_timeline_path):
@@ -2871,31 +2850,8 @@ def run_simulation():
         policy_desc = step.get("policy_desc")
         agent_env_events = step.get("_env_events", [])
         step_env_context = step.get("_env_context", "")
-        # P0: localized physical snapshot of the agent's *current*
-        # surroundings (crowding / open-closed / local weather).
-        # Stored on the agent so later behaviour stages can read it.
-        if LOCAL_PHYSICAL_ENABLED:
-            local_physical = local_physical_state(
-                city_map,
-                agent,
-                time_str=time_str,
-                weather_state=_env_weather_state(env_system),
-                busy_ratio=LOCAL_PHYSICAL_BUSY_RATIO,
-                packed_ratio=LOCAL_PHYSICAL_PACKED_RATIO,
-                anomaly_ratio=LOCAL_PHYSICAL_ANOMALY_RATIO,
-                anomaly_jump=LOCAL_PHYSICAL_ANOMALY_JUMP,
-            )
-            agent["_local_physical"] = local_physical
-            if LOCAL_PHYSICAL_INJECT:
-                _lp_text = physical_state_text(local_physical)
-                if _lp_text:
-                    step_env_context = (
-                        f"{step_env_context}\n身边的物理环境：{_lp_text}"
-                        if step_env_context
-                        else f"身边的物理环境：{_lp_text}"
-                    )
-        else:
-            agent["_local_physical"] = {}
+        # K3g: the local-physical snapshot (agent["_local_physical"] + the
+        # "身边的物理环境" line) rides perception.compose at priority 30.
         # K2: plugins contribute perception snippets (collect semantics —
         # with no subscribers this is a no-op and behavior is unchanged).
         for _snippet in hook_bus.collect(
@@ -3878,11 +3834,8 @@ def run_simulation():
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
-            # P0: refresh the city map's physical state so agents can perceive
-            # their actual surroundings (crowding / opening hours) this tick.
-            if LOCAL_PHYSICAL_ENABLED and city_map:
-                set_sim_time(city_map, time_str)
-                update_occupancy_from_agents(city_map, agents)
+            # K3g: the per-tick map state refresh (sim time + occupancy)
+            # rides on_time_tick (gaworld/world/plugin.py).
             frame_steps = []
             if env_events:
                 append_jsonl(

@@ -429,7 +429,11 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > ✅ K3f economy 正式化——`gaworld/economy/plugin.py`；
 > `integrations.py` 的 hooks 声明清空（回归纯用户扩展入口），
 > 内置装配统一收敛到 `gaworld.plugins.builtin_plugins()`（现 6 个）。
-> ⬜ K3 余下插件：local_physical → real_work → dynamic_behavior。
+> ✅ K3g local_physical 上岸——`gaworld/world/plugin.py`（tick 级地图
+> 刷新 + 感知快照，priority 30 保持注入文本顺序不变）；
+> spatial_preferences（P4）与 dynamic_behavior 中断结果深耦合，
+> 留待与其一并迁移。
+> ⬜ K3 余下插件：real_work → dynamic_behavior（含 spatial_preferences）。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）
