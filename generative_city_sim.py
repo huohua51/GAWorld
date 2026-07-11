@@ -80,7 +80,7 @@ from gaworld.behavior.dynamic import (
     evaluate_step_dynamics,
     insert_activity_into_schedule as dynamic_insert_activity,
 )
-from gaworld.hooks import HookBus
+from gaworld.kernel import build_kernel
 from environment import EnvironmentSystem, RemoteEnvironmentClient
 from gaworld.llm.providers import call_llm
 from gaworld.work.runtime import RealWorkRuntime
@@ -2655,9 +2655,15 @@ def run_simulation():
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
     city_map_text = load_city_map_text(MAP_PATH)
-    hook_bus = HookBus(CONFIG.get("extensions", {}))
+    # Kernel bootstrap (K1): EventBus is a drop-in superset of HookBus — the
+    # same CONFIG["extensions"] hooks load and the 7 legacy phases keep firing.
+    sim_ctx = build_kernel(CONFIG, llm=call_llm)
+    hook_bus = sim_ctx.bus
     extension_state = {}
     agents = [build_agent(i, df, city_map=city_map) for i in AGENT_IDS]
+    sim_ctx.set_agents(agents)
+    sim_ctx.extras["city_map"] = city_map
+    sim_ctx.extras["city_map_text"] = city_map_text
     for agent in agents:
         initialize_agent_intervention_state(agent, INTERVENTION_CONFIG)
     if PRINT_AGENT_PROFILE:
@@ -2906,6 +2912,9 @@ def run_simulation():
     real_work_runtime = RealWorkRuntime.create(CONFIG, agents, llm_fn=call_llm)
     if real_work_runtime is not None:
         real_work_runtime.start()
+    active_plugins = sim_ctx.registry.setup_all(sim_ctx)
+    if active_plugins:
+        print(f"🧩 已装配插件：{', '.join(active_plugins)}")
     hook_bus.emit(
         "on_simulation_start",
         config=CONFIG,
@@ -2920,6 +2929,7 @@ def run_simulation():
 
     # ----- PHASE 3: DAY LOOP — runs once per simulated day -----
     for day in range(start_day, start_day + SIM_DAYS):
+        sim_ctx.clock.start_day(day)
         # ----- PHASE 3a: Per-day setup (real-work tick, day context, schedule/routine generation, action space) -----
         if real_work_runtime is not None:
             real_work_runtime.tick_day(day)
@@ -3106,6 +3116,7 @@ def run_simulation():
 
         # ----- PHASE 3b: STEP LOOP — the megaloop, runs once per timeline tick (default 10-30 min steps) -----
         for time_index, time_str in enumerate(timeline):
+            sim_ctx.clock.advance(time_str, time_index)
             step_minutes = _timeline_step_minutes(timeline, time_index)
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
             due_life_events = drain_due_life_events(day, time_str, CONFIG)
@@ -4216,6 +4227,8 @@ def run_simulation():
         state_history=state_history,
         extension_state=extension_state,
     )
+    sim_ctx.registry.teardown_all(sim_ctx)
+    sim_ctx.recorder.close()
     visualize_social_network(agents, output_dir=NETWORK_OUTPUT_DIR)
     save_state_history(state_history, output_dir=STATE_OUTPUT_DIR)
     visualize_agent_state_changes(
