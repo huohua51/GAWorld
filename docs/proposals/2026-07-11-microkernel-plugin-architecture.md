@@ -417,10 +417,13 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > `perception.sections`（感知 prompt 内部段落征集，与污染环境上下文的
 > `perception.compose` 区分）与 `memory.consolidate`（日终逐 agent）
 > 两个事件；`_cognition.py` 不再 import skills 域。
-> ⬜ K3 余下插件：interests（涉及 bootstrap/memorize 阶段/日终/日程/
-> 动作偏置五处，需要独立一轮）→ life_events（需先增
-> `env.events.compose` 征集点）→ local_physical → real_work →
-> dynamic_behavior → economy。
+> ✅ K3d interests 上岸——`gaworld/interests_plugin.py`；新增
+> `episode.compose` 事件（episode 构建后、入库前）。成长画像生命周期
+> （bootstrap/逐步进度/日终衰减演化）归插件；两处读端消费者
+> （日程 prompt 上下文、位置/动作匹配）暂留内联，`growth_profile`
+> 键位随之保留在 agent 顶层，待读端迁移后一并入 ext 命名空间。
+> ⬜ K3 余下插件：life_events（需先增 `env.events.compose` 征集点）
+> → local_physical → real_work → dynamic_behavior → economy。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）
