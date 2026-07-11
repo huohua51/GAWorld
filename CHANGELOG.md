@@ -28,6 +28,11 @@ Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design 
 
 - **Routine changes were silently disabled on the mainline path** (since commit `3f7edba`, ~5 months): the loop re-read `step_ctx["activity"]` unconditionally after `maybe_adjust_activity`, and the key was seeded with `scheduled_activity` at step start — so absent a pre-step hook override, the seeded value clobbered every LLM/dynamic activity adjustment. Fixed post-K2: a hook override wins only when it actually changed the seeded value. Red-green verified in `tests/test_routine_change_mainline.py`. **This changes simulation dynamics — agents now actually execute routine changes; re-baseline ongoing experiments.**
 
+### K3e — life events migrated to a plugin (first event *producer*)
+
+- **`gaworld/events/plugin.py`** (`LifeEventsPlugin`) — the life-event queue and its five consumers now ride dispatch points: ghost injection on `on_day_start` (human_realism-gated, same 0.18 dice), tick drain + env-timeline mirror on `on_time_tick` (priority 10), per-agent contribution/recording/`step["life_events"]` on the new **`env.events.compose`** collect event, the "人生事件：…" context line on `perception.compose` (priority 20), state deltas on the new **`state.effects`** observe event (emitted in the update_state stage before social influence), and the visualizer frame merge on the new **`env.events.tick`** collect event. Five inline sites and four helper functions removed from `run_simulation`.
+- Behavior note: the perception context line now renders after the local-physical snippet instead of before it (same reordering class as the K3a intervention note).
+
 ### K3d — interest/skill-growth lifecycle migrated to a plugin
 
 - **`gaworld/interests_plugin.py`** (`InterestsPlugin`) — owns the growth-profile lifecycle: bootstrap on `agents.built` (disabled runs still seed `{}` for schema parity), per-episode progress on the new **`episode.compose`** observe event (the memorize stage pre-sets empty `growth_matches`/`growth_progress` defaults, so the episode schema survives without the plugin), and day-end decay/evolution/🌱 line on `on_day_end` at priority 10 (ahead of the economy's config-registered settlement, matching the old inline order). Three inline blocks removed from `run_simulation`.

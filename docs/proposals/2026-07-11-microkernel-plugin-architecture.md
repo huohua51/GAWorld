@@ -422,8 +422,12 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > （bootstrap/逐步进度/日终衰减演化）归插件；两处读端消费者
 > （日程 prompt 上下文、位置/动作匹配）暂留内联，`growth_profile`
 > 键位随之保留在 agent 顶层，待读端迁移后一并入 ext 命名空间。
-> ⬜ K3 余下插件：life_events（需先增 `env.events.compose` 征集点）
-> → local_physical → real_work → dynamic_behavior → economy。
+> ✅ K3e life_events 上岸——`gaworld/events/plugin.py`，首个事件
+> *生产者*插件；新增 `env.events.compose`（per-agent 环境事件贡献）、
+> `env.events.tick`（tick 级贡献）、`state.effects`（状态增量施加）
+> 三个事件。
+> ⬜ K3 余下插件：local_physical → real_work → dynamic_behavior →
+> economy 正式化。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）

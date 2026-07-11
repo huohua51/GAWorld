@@ -87,6 +87,9 @@ class RumorPlugin(Plugin):
 | `action.selected` | **filter**（value=动作字符串） | `agent` `activity` `day` `time_str` `location` |
 | `memory.consolidate` | observe | `agent` `day`（日终逐 agent 发射，插件自管节奏门控——技能蒸馏用这里） |
 | `episode.compose` | observe（可改写 episode） | `agent` `episode` `step_minutes` `day` `time_str`（episode 构建后、入库前；interests 插件在此填充成长键） |
+| `env.events.compose` | **collect** | `agent` `day` `time_str` `step` `daily_logs`（事件生产者在此贡献 per-agent 环境事件，与当日/当 tick 环境流合并——life_events 插件用这里） |
+| `env.events.tick` | **collect** | `day` `time_str`（tick 级环境事件贡献，供可视化帧合并等 tick 级消费者） |
+| `state.effects` | observe | `agent` `step` `day` `time_str`（update_state 阶段内、社会影响之前——插件在此施加自己的状态增量） |
 
 内置参考实现：`gaworld/policy/plugin.py`（InterventionPlugin，K3a 迁移的
 第一个内置子系统——感知注入 + post_step 指标落盘 + agents.built 播种，

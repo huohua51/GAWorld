@@ -113,69 +113,13 @@ from gaworld.social.network import (
     bootstrap_social_roster,
     decay_relationships,
     enforce_dunbar,
-    generate_ghost_event,
     migrate_relationships,
 )
-from gaworld.events.life import (
-    add_life_event as _add_life_event,
-    life_events_for_agent,
-    list_life_events,
-)
+from gaworld.events.life import list_life_events
 
-
-# Probability per (agent, day) of an off-screen ghost reaching out.
-GHOST_EVENT_DAILY_P = 0.18
-
-
-def _maybe_inject_ghost_event(agent, day, time_str):
-    """If the dice roll favours it, generate one off-screen ghost event
-    and push it through the life-events pipeline. Returns the event dict
-    or ``None``. Failures are swallowed — the sim must never block on
-    this path.
-    """
-    try:
-        if random.random() > GHOST_EVENT_DAILY_P:
-            return None
-        ev = generate_ghost_event(
-            agent,
-            current_day=day,
-            llm_call=lambda prompt, task=None, agent_id=None: call_llm(
-                prompt, task=task, agent_id=agent_id
-            ),
-            rng=random,
-        )
-        if not ev:
-            return None
-        agent_id = agent.get("id")
-        payload = {
-            "title": ev["title"],
-            "description": ev["description"],
-            "severity": ev.get("severity", 0.55),
-            "impact_tags": ev.get("impact_tags", ["relationship", "off_screen"]),
-            "state_effects": ev.get("state_effects", {}),
-            "schedule_mode": "scheduled",
-            "day": int(day),
-            "time": str(time_str or "08:30"),
-            "agent_ids": [int(agent_id)] if agent_id is not None else [],
-            "template_key": ev.get("template_key", "ghost_event"),
-            "created_by": "social_network",
-        }
-        return _add_life_event(payload, CONFIG)
-    except Exception as exc:  # noqa: BLE001
-        _LOG.warning(
-            "ghost event injection failed for %s: %s",
-            agent.get("name", "?"),
-            exc,
-        )
-        return None
 from gaworld.policy.intervention import INTERVENTION_METRICS
 from gaworld.plugins import builtin_plugins
-from gaworld.events.life import (
-    drain_due_life_events,
-    format_life_event,
-    life_event_dir,
-    life_events_for_agent,
-)
+from gaworld.events.life import life_event_dir
 from gaworld.memory.store import (
     append_agent_log,
     load_agent_actions,
@@ -453,66 +397,6 @@ def append_jsonl(path, row):
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-
-def _life_event_as_env_event(event):
-    return {
-        "id": str(event.get("id", "")),
-        "type": "life_event",
-        "topic": str(event.get("template_key", "custom") or "custom"),
-        "name": str(event.get("title", "人生事件") or "人生事件"),
-        "description": str(event.get("description", "") or ""),
-        "severity": float(event.get("severity", 0.6) or 0.6),
-        "scope": "agent",
-        "impact_tags": list(event.get("impact_tags", []) or []),
-        "life_event": True,
-    }
-
-
-def _format_life_event_context(events):
-    lines = [format_life_event(event) for event in (events or [])]
-    lines = [line for line in lines if line]
-    if not lines:
-        return ""
-    return "人生事件：" + "；".join(lines)
-
-
-def _record_life_events_for_agent(agent, events, day, time_str, daily_logs):
-    recorded_ids = agent.setdefault("_recorded_life_event_ids", set())
-    for event in events or []:
-        event_id = str(event.get("id", ""))
-        if event_id and event_id in recorded_ids:
-            continue
-        if event_id:
-            recorded_ids.add(event_id)
-        text = (
-            f"[LifeEvent Day {day} {time_str}] "
-            f"{agent.get('name', agent.get('id', 'agent'))}: {format_life_event(event)}"
-        )
-        print(text)
-        daily_logs[agent["id"]] += text + "\n"
-        append_agent_log(agent, text + "\n")
-        _append_memory_record(
-            agent,
-            text,
-            entry_type="life_event",
-            day=day,
-            time_str=time_str,
-        )
-
-
-def _apply_life_event_state_effects(agent, events):
-    state = agent.setdefault("state", {})
-    for event in events or []:
-        effects = event.get("state_effects", {})
-        if not isinstance(effects, dict):
-            continue
-        for key, delta in effects.items():
-            if key not in state:
-                continue
-            try:
-                state[key] = _clip01(float(state.get(key, 0.5)) + float(delta))
-            except (TypeError, ValueError):
-                continue
 
 
 # =========================================================
@@ -1403,8 +1287,8 @@ from gaworld.sim._schedule import (  # noqa: E402
 #
 # Re-exported because the legacy ``RECALL_STAGE_HINTS`` etc. constants
 # at L612–L646 of this file are now dead — but ``choose_action``,
-# ``planning``, ``reflection``, ``interview_agent``, ``infer_event_effect``,
-# and ``_apply_life_event_state_effects`` all call these helpers as
+# ``planning``, ``reflection``, ``interview_agent``, and
+# ``infer_event_effect`` all call these helpers as
 # bare names.  Tests do ``patch.object(sim, "evoke_memory", ...)`` so
 # the binding must live in this module's globals.
 #
@@ -2912,18 +2796,18 @@ def run_simulation():
 
     def _stage_prepare(agent, step, sim):
         agent_id = agent["id"]
-        agent_life_events = life_events_for_agent(due_life_events, agent_id)
-        if agent_life_events:
-            _record_life_events_for_agent(
-                agent,
-                agent_life_events,
-                day,
-                time_str,
-                daily_logs,
-            )
-        agent_env_events = list(env_events or []) + [
-            _life_event_as_env_event(event) for event in agent_life_events
-        ]
+        # K3e: event-producer plugins contribute per-agent env events here
+        # (life events, ...); contributions merge with the day/tick env feed.
+        # The life-events plugin also records its events and exposes them as
+        # step["life_events"].
+        agent_env_events = list(env_events or []) + hook_bus.collect(
+            "env.events.compose",
+            agent=agent,
+            day=day,
+            time_str=time_str,
+            step=step,
+            daily_logs=daily_logs,
+        )
         scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
         inbox_messages = distributed_inbox.get(agent_id, [])
         social_context = get_social_context(agent, agents_by_id)
@@ -2953,7 +2837,7 @@ def run_simulation():
             "activity": scheduled_activity,
             "social_context": social_context,
             "policy_desc": policy_desc,
-            "life_events": agent_life_events,
+            "life_events": step.get("life_events", []),
         })
         hook_bus.emit(
             "on_agent_pre_step",
@@ -2974,14 +2858,9 @@ def run_simulation():
             extension_state=extension_state,
         )
         scheduled_activity = step.get("scheduled_activity", scheduled_activity)
+        # K3e: the "人生事件：…" context line now rides perception.compose
+        # (LifeEventsPlugin) and renders after the local-physical snippet.
         step_env_context = env_context
-        life_event_context = _format_life_event_context(agent_life_events)
-        if life_event_context:
-            step_env_context = (
-                f"{step_env_context}\n{life_event_context}"
-                if step_env_context
-                else life_event_context
-            )
         step["_env_events"] = agent_env_events
         step["_inbox_messages"] = inbox_messages
         step["_env_context"] = step_env_context
@@ -3426,15 +3305,15 @@ def run_simulation():
 
     def _stage_update_state(agent, step, sim):
         agent_env_events = step.get("_env_events", [])
-        agent_life_events = step.get("life_events", [])
         policy_desc = step.get("policy_desc")
         if agent_env_events:
             for ev in agent_env_events:
                 inferred = infer_event_effect(agent, ev.get("description", ev.get("name", "")), ev.get("type", "event"))
                 for k, v in inferred.items():
                     agent["state"][k] += v
-        if agent_life_events:
-            _apply_life_event_state_effects(agent, agent_life_events)
+        # K3e: plugins apply their own state deltas here (life-event
+        # state_effects, ...), before social influence and the state update.
+        hook_bus.emit("state.effects", agent=agent, step=step, day=day, time_str=time_str)
 
         if policy:
             inferred = infer_event_effect(agent, policy_desc, "policy")
@@ -3825,9 +3704,8 @@ def run_simulation():
         print(f"\n================= Day {day} ({day_desc}) =================")
         if distributed_client.enabled:
             distributed_client.refresh_directory()
-        if HUMAN_REALISM_ENABLED:
-            for _a in agents:
-                _maybe_inject_ghost_event(_a, day, "08:30")
+        # K3e: off-screen ghost-event injection now rides `on_day_start`
+        # (gaworld/events/plugin.py), before the first tick's queue drain.
         daily_logs = defaultdict(str)
         day_env_events = env_system.start_day(day, day_context=day_context, agents=agents)
         day_env_context = env_system.get_day_context_text()
@@ -3997,7 +3875,6 @@ def run_simulation():
             sim_ctx.clock.advance(time_str, time_index)
             step_minutes = _timeline_step_minutes(timeline, time_index)
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
-            due_life_events = drain_due_life_events(day, time_str, CONFIG)
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
@@ -4007,17 +3884,6 @@ def run_simulation():
                 set_sim_time(city_map, time_str)
                 update_occupancy_from_agents(city_map, agents)
             frame_steps = []
-            if due_life_events:
-                append_jsonl(
-                    env_timeline_path,
-                    {
-                        "scope": "life_event",
-                        "day": int(day),
-                        "date": day_context.get("sim_date", ""),
-                        "time": str(time_str),
-                        "events": due_life_events,
-                    },
-                )
             if env_events:
                 append_jsonl(
                     env_timeline_path,
@@ -4046,6 +3912,8 @@ def run_simulation():
                 env_events=env_events,
                 env_context=env_context,
                 policy=policy,
+                day_context=day_context,
+                env_timeline_path=env_timeline_path,
                 extension_state=extension_state,
             )
 
@@ -4163,9 +4031,8 @@ def run_simulation():
                     time_str=time_str,
                     day_context=day_context,
                     env_context=env_context,
-                    env_events=list(env_events or []) + [
-                        _life_event_as_env_event(event) for event in due_life_events
-                    ],
+                    env_events=list(env_events or [])
+                    + hook_bus.collect("env.events.tick", day=day, time_str=time_str),
                     agent_steps=frame_steps,
                     policy=policy or {},
                 )
