@@ -334,15 +334,14 @@ def visualize_agent_state_changes(
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 4.2, rows * 3.2), sharex=True)
     axes = np.array(axes).reshape(-1)
 
-    steps = None
     for i, metric in enumerate(metrics):
         ax = axes[i]
         for agent_id, history in state_history.items():
             series = history.get(metric, [])
-            if steps is None:
-                steps = list(range(len(series)))
             label = agent_names.get(agent_id, str(agent_id))
-            ax.plot(steps, series, label=label, linewidth=1.6)
+            # Series lengths differ once an agent is removed mid-run (K5);
+            # each series plots against its own step range.
+            ax.plot(range(len(series)), series, label=label, linewidth=1.6)
         ax.set_title(metric)
         ax.set_ylim(0, 1)
         ax.grid(True, alpha=0.2)
@@ -3650,6 +3649,23 @@ def run_simulation():
     # ----- PHASE 3: DAY LOOP — runs once per simulated day -----
     for day in range(start_day, start_day + SIM_DAYS):
         sim_ctx.clock.start_day(day)
+        # K5: apply population interventions queued via
+        # controller.intervene("remove_agent", ...) at the day boundary —
+        # mid-tick removal would corrupt the step pipeline. Removed ids are
+        # also scrubbed from every remaining agent's social_neighbors so
+        # social stages don't dereference a gone agent.
+        _pending_removals = sim_ctx.plugin_state("population").pop("remove", [])
+        if _pending_removals:
+            _removed_ids = {int(x) for x in _pending_removals}
+            agents[:] = [a for a in agents if int(a["id"]) not in _removed_ids]
+            for _a in agents:
+                if isinstance(_a.get("social_neighbors"), list):
+                    _a["social_neighbors"] = [
+                        n for n in _a["social_neighbors"] if int(n) not in _removed_ids
+                    ]
+            sim_ctx.set_agents(agents)
+            agents_by_id = sim_ctx.agents_by_id
+            print(f"👋 已移除 agent：{sorted(_removed_ids)}（自 Day {day} 起）")
         # ----- PHASE 3a: Per-day setup (day context, schedule/routine generation, action space) -----
         # K3h: the real-work market day tick rides `on_day_start`.
         day_context = _resolve_day_context(

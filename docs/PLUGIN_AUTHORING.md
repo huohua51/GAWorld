@@ -160,9 +160,22 @@ def plant(self, ctx, agent_id=None, text=""):
     ctx.agent_ext(ctx.agents_by_id[agent_id], self.id)["heard_rumor"] = text
 ```
 
-`deny` 会写入 `output/records/action.denied.jsonl`；每次 `intervene` 调用都
-自动审计到 `controller.intervention` 表。注意：K4 之前主循环尚未把动作
-请求送入校验链，校验器注册后暂不生效（干预 API 已可用）。
+`deny` 会写入 `output/records/action.denied.jsonl`，且理由会在该 agent
+**下一 tick 的感知**中以"刚才的行动受阻：…"出现（K4 起 move 动作已过
+校验链；内置校验器：`location_exists` 默认开、`venue_open` 默认关，
+经 `CONFIG["controller"]["validators"]` 调整）。每次 `intervene` 调用
+都自动审计到 `controller.intervention` 表。
+
+**开箱即用的标准干预**（K5，`gaworld/kernel/interventions.py`）：
+
+| 名称 | 参数 | 语义 |
+|---|---|---|
+| `set_agent_state` | `agent_id` `key` `value` | 立即写入 agent 状态变量 |
+| `update_config` | `path`（点号路径）`value` | 立即写入运行中 CONFIG |
+| `remove_agent` | `agent_id` | 排队，下个日边界生效（含社交邻居清洗） |
+| `inject_life_event` | `event` dict 或散参 | 入队人生事件（LifeEventsPlugin 注册） |
+
+`add_agent`（运行时造人）尚未实现——需要种子摄取路径设计，见提案跟进项。
 
 ## 可运行的参考实现
 

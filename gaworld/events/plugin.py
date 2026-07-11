@@ -72,6 +72,15 @@ class LifeEventsPlugin(Plugin):
         ctx.bus.on("env.events.tick", self._tick_events)
         ctx.bus.on("perception.compose", self._life_context, priority=20)
         ctx.bus.on("state.effects", self._apply_state_effects)
+        # K5: queue a life event from outside the simulation loop
+        # (dashboard bridge, notebooks, tests). Audited by the Controller.
+        ctx.controller.register_intervention("inject_life_event", self._inject_event)
+
+    def _inject_event(self, ctx, event=None, **kwargs):
+        payload = dict(event or kwargs)
+        if not payload.get("title"):
+            raise ValueError("inject_life_event requires a `title`")
+        return self._impl.add_life_event(payload, ctx.config)
 
     # -- day start: ghost events ----------------------------------------------
 

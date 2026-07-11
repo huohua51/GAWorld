@@ -101,4 +101,8 @@ def build_kernel(
     )
     # Every hook/collect/filter context carries the SimContext.
     bus.base_context["sim"] = ctx
+    # K5: domain-free standard interventions ship with every kernel.
+    from gaworld.kernel.interventions import register_standard_interventions
+
+    register_standard_interventions(ctx)
     return ctx

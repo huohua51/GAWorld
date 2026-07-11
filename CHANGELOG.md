@@ -28,6 +28,13 @@ Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design 
 
 - **Routine changes were silently disabled on the mainline path** (since commit `3f7edba`, ~5 months): the loop re-read `step_ctx["activity"]` unconditionally after `maybe_adjust_activity`, and the key was seeded with `scheduled_activity` at step start — so absent a pre-step hook override, the seeded value clobbered every LLM/dynamic activity adjustment. Fixed post-K2: a hook override wins only when it actually changed the seeded value. Red-green verified in `tests/test_routine_change_mainline.py`. **This changes simulation dynamics — agents now actually execute routine changes; re-baseline ongoing experiments.**
 
+### K5 — runtime intervention API (migration complete)
+
+- **`gaworld/kernel/interventions.py`** — every kernel ships three domain-free interventions, all audited: `set_agent_state` (immediate state write), `update_config` (dotted-path write into live CONFIG), and `remove_agent` (queued; the main loop applies removals at the day boundary and scrubs the removed ids from every remaining agent's `social_neighbors`). `LifeEventsPlugin` registers `inject_life_event`. The intervention API is the in-process programmatic surface — a dashboard HTTP bridge and `add_agent` (needs a seed-ingestion design) are tracked as follow-ups.
+- `visualize_agent_state_changes` now plots each series against its own step range — state histories have unequal lengths once an agent is removed mid-run.
+- Acceptance (`tests/test_interventions.py`): an agent removed via the API on day 1 no longer acts on day 2 of a real mock-LLM run.
+- **This closes the K1–K5 microkernel migration** (design doc: `docs/proposals/2026-07-11-microkernel-plugin-architecture.md`).
+
 ### K4 — Controller validation gate wired into the move stage
 
 - Structured moves now pass `Controller.validate` (an `ActionRequest("move", {to, activity})`) after location resolution. A denial keeps the agent where it is (move_agent falls back to the origin), is audited to `output/records/action.denied.jsonl`, and the reason surfaces in the agent's **next perception** as a "刚才的行动受阻：…" line — the structured feedback loop that catches hallucinated destinations.

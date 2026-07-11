@@ -446,7 +446,15 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > 与 `venue_open`（默认关，opt-in——硬拦会改动力学）两个校验器由
 > LocalPhysicalPlugin 注册；经济可负担校验器待具体规则定义后再做。
 > ActionProvider 动作菜单（LLM 从注册动作中选择）留作后续方向。
-> ⬜ K5 干预 API 收编 dashboard。
+> ✅ K5 干预 API 落地——**K1–K5 迁移全部完成（2026-07-12）**。
+> 标准干预（set_agent_state / update_config / remove_agent）随内核
+> 装配，inject_life_event 由 LifeEventsPlugin 注册；运行时移除 agent
+> 在日边界生效（Adaptability 达成）。
+> 跟进项（不阻塞架构目标）：① `add_agent` 运行时造人（需种子摄取
+> 路径设计）；② dashboard 进程的 HTTP 桥接到干预 API；③ 经济可负担
+> 校验器（待具体移动前成本规则）；④ `agent["growth_profile"]` 等
+> 读端迁移后收入 ext 命名空间；⑤ ActionProvider 动作菜单
+> （LLM 从注册动作选择，freeform 退化为 fallback）。
 
 ### 阶段 K1：内核骨架（不改行为）
 - 新建 `gaworld/kernel/`：SimContext、Clock、EventBus（含 HookBus 兼容层）、
