@@ -9,20 +9,13 @@ def integration_settings() -> dict[str, Any]:
     return {
         # Optional extension hooks for custom functions.
         # Each item uses "module:function" import path.
+        # NOTE: built-in subsystems no longer register here — the economy's
+        # handlers moved to gaworld.economy.plugin.EconomyPlugin (K3f), and
+        # built-in assembly lives in gaworld.plugins.builtin_plugins(). This
+        # map is for user extensions.
         "extensions": {
             "strict": False,
-            # NOTE: use the real package path. The legacy flat name
-            # "economy_module" no longer resolves (no root shim), which silently
-            # disabled the entire economy subsystem at hook-load time.
-            "hooks": {
-                "on_simulation_start": ["gaworld.economy.finance:on_simulation_start"],
-                "on_day_start": ["gaworld.economy.finance:on_day_start"],
-                "on_time_tick": [],
-                "on_agent_pre_step": ["gaworld.economy.finance:on_agent_pre_step"],
-                "on_agent_post_step": ["gaworld.economy.finance:on_agent_post_step"],
-                "on_day_end": ["gaworld.economy.finance:on_day_end"],
-                "on_simulation_end": ["gaworld.economy.finance:on_simulation_end"],
-            },
+            "hooks": {},
         },
         # Real Work Execution (gaworld/work/*).
         # When enabled, "工作"-class activities can be dispatched to local adapters

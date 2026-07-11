@@ -426,8 +426,10 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > *生产者*插件；新增 `env.events.compose`（per-agent 环境事件贡献）、
 > `env.events.tick`（tick 级贡献）、`state.effects`（状态增量施加）
 > 三个事件。
-> ⬜ K3 余下插件：local_physical → real_work → dynamic_behavior →
-> economy 正式化。
+> ✅ K3f economy 正式化——`gaworld/economy/plugin.py`；
+> `integrations.py` 的 hooks 声明清空（回归纯用户扩展入口），
+> 内置装配统一收敛到 `gaworld.plugins.builtin_plugins()`（现 6 个）。
+> ⬜ K3 余下插件：local_physical → real_work → dynamic_behavior。
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）
