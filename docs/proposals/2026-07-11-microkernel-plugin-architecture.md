@@ -399,9 +399,13 @@ REFACTOR_PLAN 的阶段 0~2（基线、拆巨石、迁 legacy）**照旧执行**
 > `action.selected` 分发点 + 零侵入插件端到端测试
 > （`tests/test_kernel_plugin_e2e.py`）。`plan.prompt` 需 `planning()`
 > 阶段化后接入，归入完整 K2。
+> ✅ K3a intervention 上岸——`gaworld/policy/plugin.py` +
+> `gaworld/plugins/`（内置聚合点）+ 新增 `agents.built` 事件
+> （agent 构建后、初始快照前）。env_context 覆盖 life_event_context
+> 的既有行为按 bug 修正处理（改为追加语义），CHANGELOG 有记录。
 > ⬜ K2 完整认知管线（CognitionStage + StepContext）
-> ⬜ K3 插件上岸（注意：intervention 内联注入存在 env_context 覆盖
-> life_event_context 的既有行为，迁移时需决定保留还是修正）
+> ⬜ K3 余下插件：skills → interests → life_events → local_physical →
+> real_work → dynamic_behavior → economy
 > ⬜ K4 动作注册表 + 校验；⬜ K5 干预 API 收编 dashboard。
 
 ### 阶段 K1：内核骨架（不改行为）

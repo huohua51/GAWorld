@@ -174,13 +174,8 @@ def _maybe_inject_ghost_event(agent, day, time_str):
             exc,
         )
         return None
-from gaworld.policy.intervention import (
-    INTERVENTION_METRICS,
-    append_intervention_metrics,
-    build_intervention_feed,
-    initialize_agent_intervention_state,
-    update_agent_intervention_metrics,
-)
+from gaworld.policy.intervention import INTERVENTION_METRICS
+from gaworld.plugins import builtin_plugins
 from gaworld.events.life import (
     drain_due_life_events,
     format_life_event,
@@ -575,9 +570,9 @@ VISUALIZATION_FLUSH_EVERY_FRAMES = max(
     0,
     int(VISUALIZATION_CONFIG.get("flush_every_frames", 24)),
 )
-INTERVENTION_CONFIG = CONFIG.get("intervention", {})
-INTERVENTION_ENABLED = bool(INTERVENTION_CONFIG.get("enabled", False))
-INTERVENTION_OUTPUT_DIR = INTERVENTION_CONFIG.get("output_dir", "output/intervention")
+# Only the output dir stays module-level (reset_simulation clears it);
+# the intervention runtime itself now lives in gaworld.policy.plugin.
+INTERVENTION_OUTPUT_DIR = CONFIG.get("intervention", {}).get("output_dir", "output/intervention")
 SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
@@ -2659,13 +2654,19 @@ def run_simulation():
     # same CONFIG["extensions"] hooks load and the 7 legacy phases keep firing.
     sim_ctx = build_kernel(CONFIG, llm=call_llm)
     hook_bus = sim_ctx.bus
+    for _plugin in builtin_plugins():
+        sim_ctx.registry.register(_plugin)
     extension_state = {}
     agents = [build_agent(i, df, city_map=city_map) for i in AGENT_IDS]
     sim_ctx.set_agents(agents)
     sim_ctx.extras["city_map"] = city_map
     sim_ctx.extras["city_map_text"] = city_map_text
-    for agent in agents:
-        initialize_agent_intervention_state(agent, INTERVENTION_CONFIG)
+    # Plugins assemble before `agents.built` so pre-snapshot seeding (e.g.
+    # intervention metric keys) lands at the same point the inline code did.
+    active_plugins = sim_ctx.registry.setup_all(sim_ctx)
+    if active_plugins:
+        print(f"🧩 已装配插件：{', '.join(active_plugins)}")
+    hook_bus.emit("agents.built", agents=agents, config=CONFIG)
     if PRINT_AGENT_PROFILE:
         print_agent_profiles([a["id"] for a in agents])
     start_day = 1
@@ -2912,9 +2913,6 @@ def run_simulation():
     real_work_runtime = RealWorkRuntime.create(CONFIG, agents, llm_fn=call_llm)
     if real_work_runtime is not None:
         real_work_runtime.start()
-    active_plugins = sim_ctx.registry.setup_all(sim_ctx)
-    if active_plugins:
-        print(f"🧩 已装配插件：{', '.join(active_plugins)}")
     hook_bus.emit(
         "on_simulation_start",
         config=CONFIG,
@@ -3320,7 +3318,6 @@ def run_simulation():
                 scheduled_activity = step_ctx.get("scheduled_activity", scheduled_activity)
                 social_context = step_ctx.get("social_context", social_context)
                 policy_desc = step_ctx.get("policy_desc", policy_desc)
-                intervention_feed = {}
                 step_env_context = env_context
                 life_event_context = _format_life_event_context(agent_life_events)
                 if life_event_context:
@@ -3329,25 +3326,6 @@ def run_simulation():
                         if step_env_context
                         else life_event_context
                     )
-                if INTERVENTION_ENABLED:
-                    intervention_feed = build_intervention_feed(
-                        agent,
-                        agents_by_id=agents_by_id,
-                        day=day,
-                        time_str=time_str,
-                        env_events=agent_env_events,
-                        policy_event=policy or policy_desc,
-                        news_items=news_cache[:5],
-                        config=INTERVENTION_CONFIG,
-                    )
-                    feed_context = intervention_feed.get("context_text", "")
-                    if feed_context:
-                        step_env_context = (
-                            f"{env_context}\n平台干预推荐：{feed_context}"
-                            if env_context
-                            else f"平台干预推荐：{feed_context}"
-                        )
-                        step_ctx["intervention_feed"] = intervention_feed
                 # P0: localized physical snapshot of the agent's *current*
                 # surroundings (crowding / open-closed / local weather).
                 # Stored on the agent so later behaviour stages can read it.
@@ -3383,6 +3361,10 @@ def run_simulation():
                     scheduled_activity=scheduled_activity,
                     env_context=step_env_context,
                     social_context=social_context,
+                    env_events=agent_env_events,
+                    policy=policy,
+                    policy_desc=policy_desc,
+                    news=news_cache[:5],
                 ):
                     _snippet = str(_snippet).strip()
                     if _snippet:
@@ -3722,31 +3704,6 @@ def run_simulation():
 
                 social_influence(agent, agents_by_id)
                 update_state(agent)
-                intervention_metrics = {}
-                if INTERVENTION_ENABLED:
-                    intervention_metrics = update_agent_intervention_metrics(
-                        agent,
-                        feed=intervention_feed,
-                        action=act,
-                        outcome=outcome,
-                        reflection=refl_text,
-                        agents_by_id=agents_by_id,
-                        config=INTERVENTION_CONFIG,
-                    )
-                    source_counts = intervention_feed.get("source_counts", {}) if isinstance(intervention_feed, dict) else {}
-                    append_intervention_metrics(
-                        INTERVENTION_OUTPUT_DIR,
-                        {
-                            "day": day,
-                            "time": time_str,
-                            "agent_id": agent_id,
-                            "feed_items": len(intervention_feed.get("items", [])) if isinstance(intervention_feed, dict) else 0,
-                            "relational_items": source_counts.get("relational", 0),
-                            "personalized_items": source_counts.get("personalized", 0),
-                            "headline_items": source_counts.get("headline", 0),
-                            **intervention_metrics,
-                        },
-                    )
                 sent_remote_messages = []
                 if distributed_client.enabled:
                     sent_remote_messages = distributed_client.send_agent_messages(
@@ -4024,7 +3981,6 @@ def run_simulation():
                     "reflection_struct": refl,
                     "log": log,
                     "env_context": step_env_context,
-                    "intervention_metrics": intervention_metrics,
                     "changed": changed,
                     "change_reason": change_reason,
                     "location": location,

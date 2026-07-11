@@ -19,6 +19,11 @@ Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design 
 
 - **`generative_city_sim.py::run_simulation`** — hook dispatch now goes through `gaworld.kernel.EventBus`; `sim_ctx.clock` is advanced at day start and each timeline tick; plugin `setup_all`/`teardown_all` wrap the simulation lifecycle. `gaworld/hooks.py` (HookBus) remains for legacy callers.
 
+### K3a — intervention subsystem migrated to a plugin
+
+- **`gaworld/policy/plugin.py`** (`InterventionPlugin`) + **`gaworld/plugins/__init__.py`** (`builtin_plugins()`, the one domain-side aggregation point). The inline feed/metrics/init code is removed from `run_simulation`; the plugin rides `agents.built` (new pre-snapshot observe event), `perception.compose`, and `on_agent_post_step`. Metric state keys are still seeded when the feature is disabled (schema parity). `tests/test_intervention_plugin.py` pins the wiring both ways.
+- **Behavior changes (intervention-enabled runs only)**: the feed snippet now *appends* to the step env context instead of rebuilding it from `env_context` — the inline version silently dropped the life-event context whenever a feed existed (latent bug); snippet ordering moved after the local-physical line; per-step metrics update happens at `on_agent_post_step` (after the step log/visualizer snapshot instead of before), so those auxiliary artifacts show metrics one step stale. Simulation dynamics are otherwise unchanged; `intervention_metrics.csv` schema is identical.
+
 ## [Unreleased] — 2026-07-04 — Personal Growth v2 (learning dynamics + interest evolution)
 
 Multi-disciplinary redesign of the interest/skill-growth system (design doc: `docs/proposals/2026-07-04-personal-growth-v2.md`). All new mechanics are pure rules — no extra LLM calls; the persisted `agent_N_growth.json` schema is unchanged and backward compatible.
