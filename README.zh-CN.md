@@ -42,8 +42,33 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 关系变化
 - 收支与资产变化
 
+## 微内核插件架构
+
+自 2026-07 起，GAWorld 运行在 society-centric 微内核架构上（参考
+[Agent-Kernel](https://arxiv.org/abs/2512.01610)）：
+
+- **内核**（`gaworld/kernel/`，零领域逻辑）：`Clock` 时钟、`EventBus`
+  事件总线（observe/collect/filter 三种钩子语义）、`PluginRegistry`
+  插件注册表、`Controller`（动作校验 + 可审计运行时干预）、`Recorder`
+  统一事件流、`SimContext` 运行时上下文。
+- **认知管线**（`gaworld/sim/pipeline.py`）：每个 agent step 是 12 个
+  命名阶段的可配置序列（`prepare → perceive → interrupts → plan →
+  adjust_activity → move → select_action → reflect → update_state →
+  broadcast → memorize → record`）。消融、替换、插入阶段都只是改
+  `CONFIG["pipeline"]`。
+- **插件**：全部 9 个内置子系统（干预、技能、兴趣成长、人生事件、经济、
+  物理感知、真实工作、动态行为、空间偏好）与第三方扩展走同一套插件
+  接口——写一个 `Plugin` 子类 + `CONFIG["plugins"]` 一行声明（或 pip
+  包的 `gaworld.plugins` entry point），主循环零改动。
+- **运行时干预**：`Controller.intervene` 自带 `set_agent_state`、
+  `update_config`、`remove_agent`（日边界生效）、`inject_life_event`
+  四个标准干预，每次调用自动审计。
+
+事件目录与完整示例见[插件作者指南](./docs/PLUGIN_AUTHORING.md)。
+
 ## 主要能力
 
+- 微内核插件体系：子系统皆可插拔，扩展无需改核心；12 阶段可配置认知管线；可审计运行时干预（状态编辑 / 配置修改 / 移除智能体 / 注入事件）
 - 从 CSV 状态种子和 Markdown profile 构建智能体
 - 从社交媒体页面或提取文本创建新智能体
 - 多后端 LLM 路由：Ollama、OpenAI 兼容、Anthropic 兼容
@@ -69,6 +94,9 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 ```
 GAWorld/
 ├── gaworld/                       # 核心包（所有功能的唯一正式实现）
+│   ├── kernel/                    # 微内核：时钟、事件总线、插件注册表、Controller、Recorder、SimContext、标准干预
+│   ├── plugins/                   # 内置插件装配点（builtin_plugins()，9 个插件）
+│   ├── sim/pipeline.py            # 可配置的 12 阶段认知管线
 │   ├── apps/                      # 应用服务：dashboard、visualizer、relay 服务器
 │   ├── behavior/dynamic.py        # 动态行为（中断、自发行为、社交链）
 │   ├── cognition/realism.py       # 真实感：意图、习惯、关系权重、记忆整合
@@ -313,6 +341,10 @@ Agent Studio 是面向单个智能体的可视化构建/查看器，可从控制
 - `intervention`：轻量推荐 / 曝光控制和干预评估配置
 - `policy_events`：政策事件
 - `distributed`：多机通信配置
+- `plugins`：第三方插件声明（`[{"class": "pkg.mod:Class", "enabled": true}, ...]`）
+- `pipeline.agent_step`：认知阶段顺序（省略某阶段即消融；可插入 `"module:function"` 自定义阶段）
+- `controller.validators`：动作校验器开关（`location_exists` 默认开、`venue_open` 默认关）
+- `extensions.hooks`：用户扩展钩子（`{事件名: ["module:function", ...]}`）
 
 ### 日志模式
 
@@ -628,14 +660,10 @@ LLM 调用之前完成决策。
 ## 更多文档
 
 - [English README](./README.md)
-<<<<<<< Updated upstream
 - [完整教程（含全部特性）](./docs/TUTORIAL.v2.md)
 - [快速上手教程](./docs/TUTORIAL.md)
-- [仓库规范](./AGENTS.md)
-=======
-- [用户教程](./docs/TUTORIAL.md)
-- [完整使用教程](./docs/GAWORLD_USER_TUTORIAL.md)
->>>>>>> Stashed changes
+- [插件作者指南](./docs/PLUGIN_AUTHORING.md)（不改核心扩展 GAWorld）
+- [微内核架构设计](./docs/proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [Skill 系统设计与使用](./docs/SKILL_SYSTEM.md)
 - [真实工作系统 — 使用](./docs/REAL_WORK_USAGE.md) · [设计](./docs/REAL_WORK_DESIGN.md)
 - [物理环境感知与反应式重规划](./docs/physical_env_perception_changelog.md)

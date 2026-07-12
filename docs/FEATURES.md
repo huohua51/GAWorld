@@ -46,7 +46,17 @@
 | 经验 → Skill 自动提炼 | agent 从最近经历自总结私有技能 | `CONFIG["memory"]["skill_consolidation"]["enabled"]`（默认 OFF）；产物 `output/memory/agent_<id>_skills/*.md` |
 | 真实工作任务系统 | agent 按职业 / 技能产出真实产物（HTML / Python / 文章 / 教案 / 研究笔记）并接单结算 | `CONFIG["real_work"]["enabled"]`；产物 `output/work/agent_<id>/<task_id>/` |
 
-## 四、运维与调试
+## 四、微内核插件体系（2026-07）
+
+| 功能特性 | 作用 | 访问方法 |
+|---|---|---|
+| 认知管线消融 / 定制 | agent step 是 12 个命名阶段的可配置序列，可消融（如去掉反思）、替换或插入自定义阶段 | `CONFIG["pipeline"]["agent_step"]`（内置名或 `"module:function"` 路径） |
+| 第三方插件 | 不改核心为仿真加子系统（感知注入、中断源、动作过滤、状态效果等 21 个事件） | `CONFIG["plugins"] = [{"class": "pkg.mod:Class"}]` 或 pip 包 `gaworld.plugins` entry point；指南 [`PLUGIN_AUTHORING.md`](PLUGIN_AUTHORING.md) |
+| 运行时干预 | 模拟运行中改 agent 状态 / 配置 / 注入人生事件 / 移除 agent（日边界生效），全部审计 | `sim.controller.intervene("set_agent_state" \| "update_config" \| "inject_life_event" \| "remove_agent", sim, ...)`；审计 `output/records/controller.intervention.jsonl` |
+| 动作校验门 | move 动作过校验链，deny 审计落盘并在下一 tick 感知回注 | `location_exists` 默认开；`venue_open` 经 `CONFIG["controller"]["validators"]` 开启 |
+| 统一事件流 | 跨插件时间线对齐的结构化记录（自动 `_day`/`_time` 戳） | 产物 `output/records/*.jsonl` |
+
+## 五、运维与调试
 
 | 功能特性 | 作用 | 访问方法 |
 |---|---|---|
@@ -60,6 +70,7 @@
 ## 相关文档
 
 - [完整教程](TUTORIAL.v2.md)
+- [插件作者指南](PLUGIN_AUTHORING.md) · [微内核架构设计](proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统](SKILL_SYSTEM.md) · [真实工作系统使用](REAL_WORK_USAGE.md)
 - [项目结构](PROJECT_STRUCTURE.md) · [中文 README](../README.zh-CN.md) · [English README](../README.md)

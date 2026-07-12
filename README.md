@@ -47,6 +47,7 @@ Across days, the simulator accumulates:
 
 ## Main Features
 
+- Microkernel plugin architecture: every subsystem is a swappable plugin; extend via `CONFIG["plugins"]` or pip entry points without touching the core; configurable 12-stage cognition pipeline; audited runtime interventions (state edits, config changes, agent removal, event injection)
 - Seed agents from CSV state values and Markdown profiles
 - Create new agents from social media pages or extracted text
 - Multi-backend LLM routing: Ollama, OpenAI-compatible, Anthropic-compatible
@@ -67,6 +68,33 @@ Across days, the simulator accumulates:
 - Agent Studio: a 7-step visual builder/inspector for a single agent — identity, the nine [0,1] state variables (editable radar), skills, tiered memory, Dunbar social circles, behavior dials, and review/deploy; writes back to the state CSV and profile Markdown and can create new agents
 - Distributed multi-machine mode with relay-based communication
 
+## Architecture: Microkernel + Plugins
+
+Since 2026-07, GAWorld runs on a society-centric microkernel architecture
+(inspired by [Agent-Kernel](https://arxiv.org/abs/2512.01610)):
+
+- **Kernel** (`gaworld/kernel/`, domain-free): `Clock`, `EventBus`
+  (observe/collect/filter hook semantics), `PluginRegistry`, `Controller`
+  (action validation + audited runtime interventions), `Recorder`
+  (unified JSONL event stream), `SimContext`.
+- **Cognition pipeline** (`gaworld/sim/pipeline.py`): each agent step is a
+  configurable sequence of 12 named stages
+  (`prepare → perceive → interrupts → plan → adjust_activity → move →
+  select_action → reflect → update_state → broadcast → memorize → record`).
+  Ablating, replacing, or inserting a stage is a `CONFIG["pipeline"]` change.
+- **Plugins**: all nine built-in subsystems (intervention, skills, interests,
+  life events, economy, local physical perception, real work, dynamic
+  behavior, spatial preferences) ride the same plugin surface third parties
+  use — a `Plugin` subclass plus one `CONFIG["plugins"]` entry (or a pip
+  `gaworld.plugins` entry point). The main loop contains zero
+  subsystem-private logic.
+- **Runtime intervention**: `Controller.intervene` ships `set_agent_state`,
+  `update_config`, `remove_agent` (applied at day boundaries), and
+  `inject_life_event` out of the box; every call is audited.
+
+See the [Plugin Authoring Guide](./docs/PLUGIN_AUTHORING.md) for the event
+catalog and worked examples.
+
 ## Project Structure
 
 Runtime code lives under the `gaworld/` package. Eleven legacy
@@ -75,8 +103,12 @@ canonical home — `from memory_store import X` keeps working unchanged
 but `from gaworld.memory.store import X` is the preferred path for new
 code.
 
-- `generative_city_sim.py`: main simulator + CLI entrypoint (being progressively split)
+- `generative_city_sim.py`: main simulator + CLI entrypoint (pipeline scaffolding; subsystem logic lives in plugins)
 - `config.py`: CONFIG compat shim — re-exports `gaworld.settings.CONFIG`
+- `gaworld/kernel/`: the microkernel — clock, event bus, plugin registry, controller, recorder, sim context, standard interventions
+- `gaworld/plugins/`: built-in plugin assembly (`builtin_plugins()`)
+- `gaworld/sim/pipeline.py`: the configurable agent-step stage pipeline
+- `gaworld/{policy,skills,events,economy,world,work,behavior}/plugin.py` + `gaworld/interests_plugin.py`: the nine built-in plugins
 - `gaworld/settings/`: layered config fragments (LLM, runtime, behavior, economy, environment, integrations, overrides)
 - `gaworld/core/`: typed `Agent` dataclass adapter and concurrent `parallel_map` runner
 - `gaworld/llm/providers.py`: provider wrappers (Ollama / OpenAI-compatible / Anthropic-compatible) and the `LLM_ROUTER` dispatcher
@@ -307,6 +339,10 @@ Important fields:
 - `intervention`: lightweight recommendation / exposure control and evaluation settings
 - `policy_events`: scheduled policy shocks
 - `distributed`: multi-machine communication settings
+- `plugins`: third-party plugin declarations (`[{"class": "pkg.mod:Class", "enabled": true}, ...]`)
+- `pipeline.agent_step`: cognition-stage order (omit a stage to ablate it; insert `"module:function"` paths for custom stages)
+- `controller.validators`: action-validator switches (`location_exists` default on, `venue_open` default off)
+- `extensions.hooks`: user extension hooks (`{event: ["module:function", ...]}`)
 
 ### Log Output Mode
 
@@ -689,17 +725,14 @@ Generated artifacts are written under `output/`, including:
 ## Additional Docs
 
 - [中文 README](./README.zh-CN.md)
-<<<<<<< Updated upstream
 - [Full Tutorial](./docs/TUTORIAL.v2.md) (complete — covers all features)
 - [Quickstart](./docs/TUTORIAL.md)
-=======
-- [Tutorial](./docs/TUTORIAL.md)
-- [User Tutorial](./docs/GAWORLD_USER_TUTORIAL.md)
+- [Plugin Authoring Guide](./docs/PLUGIN_AUTHORING.md) (extend GAWorld without touching the core)
+- [Microkernel Architecture Design](./docs/proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [Skill System](./docs/SKILL_SYSTEM.md)
 - [Real Work — Usage](./docs/REAL_WORK_USAGE.md) · [Design](./docs/REAL_WORK_DESIGN.md)
 - [Physical Environment Perception & Reactive Replanning](./docs/physical_env_perception_changelog.md)
 - [Social Network — Design](./docs/SOCIAL_NETWORK_DESIGN.md) · [Tutorial](./docs/SOCIAL_NETWORK_TUTORIAL.md)
 - [Project Structure](./docs/PROJECT_STRUCTURE.md)
->>>>>>> Stashed changes
 - [Repository Guidelines](./AGENTS.md)
 - [Changelog](./CHANGELOG.md)

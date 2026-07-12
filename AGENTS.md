@@ -5,28 +5,30 @@
 ```
 GAWorld/
 ├── gaworld/                  # 核心包（所有功能的正式实现）
+│   ├── kernel/               # 微内核（clock, bus, registry, controller, recorder, context, interventions）
+│   ├── plugins/              # 内置插件装配点（builtin_plugins()，9 个插件）
 │   ├── apps/                 # 服务器与可视化（dashboard 后端含 Agent Studio API, visualizer, …）
-│   ├── behavior/             # 动态行为模块（dynamic.py）
+│   ├── behavior/             # 动态行为模块（dynamic.py + plugin.py）
 │   ├── cognition/            # 人类真实感模块（realism.py）
 │   ├── core/                 # Agent 基础与并发执行（agent.py, runner.py）
 │   ├── distributed/          # 分布式通信（comm.py）
-│   ├── economy/              # 经济模块（finance.py）
+│   ├── economy/              # 经济模块（finance.py + plugin.py）
 │   ├── env/                  # 环境系统（system.py）
-│   ├── events/               # 生命事件（life.py）
+│   ├── events/               # 生命事件（life.py + plugin.py）
 │   ├── io/                   # IO 工具（avatar.py, http_guard.py, web_scrape.py）
 │   ├── llm/                  # LLM 提供商（providers.py）
 │   ├── memory/               # 记忆系统（store, experience, consolidation, decay, …）
-│   ├── policy/               # 干预策略（intervention.py）
+│   ├── policy/               # 干预策略（intervention.py + plugin.py）
 │   ├── settings/             # 配置（CONFIG, defaults, overrides）
-│   ├── skills/               # 技能系统（schemas, registry, consolidation）
-│   ├── sim/                  # 仿真逻辑（_action, _cognition, _location, …）
+│   ├── skills/               # 技能系统（schemas, registry, consolidation + plugin.py）
+│   ├── sim/                  # 仿真逻辑（pipeline.py 认知管线, _action, _cognition, …）
 │   ├── social/               # 社交网络（network.py）
-│   ├── work/                 # 工作模块（router, queue, market, adapters）
-│   ├── world/                # 城市地图（city_map.py）
-│   ├── hooks.py              # 生命周期钩子（HookBus）
-│   ├── interests.py          # 兴趣与成长档案
+│   ├── work/                 # 工作模块（router, queue, market, adapters + plugin.py）
+│   ├── world/                # 城市地图（city_map.py + plugin.py：物理感知/空间偏好）
+│   ├── hooks.py              # 旧版生命周期钩子（HookBus，兼容层；新代码用 kernel/bus.py）
+│   ├── interests.py          # 兴趣与成长档案（+ interests_plugin.py）
 │   └── logging_setup.py      # 日志配置
-├── generative_city_sim.py    # CLI 入口（run / reset / interview）
+├── generative_city_sim.py    # CLI 入口（run / reset / interview）——仅管线骨架，子系统逻辑在插件里
 ├── legacy/                   # 旧版 flat 模块（已弃用，不参与构建）
 ├── scripts/                  # 辅助脚本（generate_citymap, …）
 ├── site/                     # 前端（dashboard 控制台 + Agent Studio, simviz, citymap）
@@ -37,6 +39,11 @@ GAWorld/
 
 **规则：新代码只写进 `gaworld/` 包，不添加新的根目录模块。**
 旧 flat 模块的正式位置见 `legacy/README.md`。
+
+**规则：新子系统写成插件，不在 `generative_city_sim.py` 里加内联逻辑。**
+写一个 `gaworld.kernel.Plugin` 子类，经 `gaworld/plugins/builtin_plugins()`
+（内置）或 `CONFIG["plugins"]` / entry point（第三方）装配；扩展点目录见
+`docs/PLUGIN_AUTHORING.md`。
 
 ## Build, Test, and Development Commands
 - Install deps: `pip install -r requirements.txt`

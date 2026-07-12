@@ -26,6 +26,7 @@
 14. [输出文件地图](#14-输出文件地图)
 15. [常见问题](#15-常见问题)
 16. [命令速查表](#16-命令速查表)
+17. [微内核插件架构：扩展 GAWorld](#17-微内核插件架构扩展-gaworld)
 
 ---
 
@@ -752,10 +753,94 @@ GAWORLD_LOG_LEVEL=DEBUG  python generative_city_sim.py run
 
 ---
 
+## 17. 微内核插件架构：扩展 GAWorld
+
+自 2026-07 起，GAWorld 的所有子系统（干预、技能、兴趣成长、人生事件、
+经济、物理感知、真实工作、动态行为、空间偏好）都运行在统一的微内核
+插件接口上。这意味着三类以前需要改源码的操作，现在都是配置：
+
+### 17.1 认知消融实验：改管线顺序
+
+每个 agent step 是 12 个命名阶段的序列。想做"没有反思的 agent 会怎样"
+这类消融实验，只需在配置里省略对应阶段：
+
+```python
+CONFIG["pipeline"]["agent_step"] = [
+    "prepare", "perceive", "interrupts", "plan", "adjust_activity",
+    "move", "select_action",              # 省略 "reflect" = 消融反思
+    "update_state", "broadcast", "memorize", "record",
+]
+```
+
+也可以在任意位置插入自定义阶段（`"my_pkg.stages:deliberate"` 形式的
+导入路径），阶段签名为 `fn(agent, step, ctx)`。注意 `prepare` 与
+`record` 是结构性阶段（钩子发射与日志落盘在其中），消融目标应是中间
+的认知阶段。
+
+### 17.2 编写插件：不改核心加子系统
+
+一个最小插件——让 agent 在感知中听到谣言：
+
+```python
+# my_pkg/rumor.py
+from gaworld.kernel import Plugin
+
+class RumorPlugin(Plugin):
+    id = "rumor"
+    def setup(self, ctx):
+        ctx.bus.on("perception.compose", self.inject)
+    def inject(self, hook_ctx):
+        return ["有人跟你提起：城东要修新地铁线（真实性存疑）"]
+```
+
+启用方式二选一：
+
+```python
+# 配置声明（路径可导入即可）
+CONFIG["plugins"] = [{"class": "my_pkg.rumor:RumorPlugin"}]
+```
+
+```toml
+# 或 pip 包的 entry point（安装即自动装配）
+[project.entry-points."gaworld.plugins"]
+rumor = "my_pkg.rumor:RumorPlugin"
+```
+
+事件目录（感知注入、中断征集、动作过滤、状态效果、episode 组装等
+21 个事件）、三种钩子语义（observe / collect / filter）、状态与数据
+所有权约定，见[插件作者指南](PLUGIN_AUTHORING.md)。内置的 9 个插件
+本身就是最好的参考实现。
+
+### 17.3 运行时干预：模拟跑着的时候改世界
+
+`Controller.intervene` 提供可审计的运行时干预（每次调用都记录到
+`output/records/controller.intervention.jsonl`）：
+
+```python
+sim.controller.intervene("set_agent_state", sim, agent_id=31, key="stress", value=0.8)
+sim.controller.intervene("update_config", sim, path="economy.credit.apr", value=0.15)
+sim.controller.intervene("inject_life_event", sim, event={"title": "老友来电", "day": 2, "time": "19:00", "agent_ids": [31]})
+sim.controller.intervene("remove_agent", sim, agent_id=7)   # 下个日边界生效
+```
+
+在插件钩子、测试或 notebook 里都能调用（`sim` 即钩子上下文里的
+`hook_ctx["sim"]`）。
+
+### 17.4 动作校验
+
+move 动作会经过 Controller 校验链：`location_exists`（默认开，拦截
+幻觉地点）与 `venue_open`（默认关——硬拦关门场所会改变模拟动力学，
+需要时 `CONFIG["controller"]["validators"]["venue_open"] = True` 开启）。
+被拒绝的动作会审计落盘，且理由会出现在该 agent 下一个时间步的感知里
+（"刚才的行动受阻：……"），agent 可以对此做出反应。
+
+---
+
 ## 相关文档
 
 - [English README](../README.md) · [中文 README](../README.zh-CN.md)
 - [简明上手教程](TUTORIAL.md)（本教程已并入原 v1.0 完全教程的全部内容）
+- [插件作者指南](PLUGIN_AUTHORING.md) · [微内核架构设计](proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统设计与使用](SKILL_SYSTEM.md)
 - [真实工作系统 — 使用](REAL_WORK_USAGE.md) · [设计](REAL_WORK_DESIGN.md)
