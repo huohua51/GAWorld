@@ -74,6 +74,10 @@
         <canvas id="mapCanvas" width="1440" height="900" aria-label="simulation map"></canvas>
         <div class="timeline">
           <input id="timelineSlider" type="range" min="0" max="0" value="0" />
+          <label class="follow-toggle">
+            <input id="followLatestInput" type="checkbox" checked />
+            <span>跟随最新</span>
+          </label>
           <span id="timelineLabel">暂无帧</span>
         </div>
         <pre id="latestFrameBox" class="codebox">暂无当前帧。</pre>
@@ -95,6 +99,7 @@
           </div>
           <textarea id="profileEditor" class="profile-editor" spellcheck="false"></textarea>
           <div class="button-row end">
+            <button id="toggleSimBtn" class="button">加入仿真</button>
             <button id="saveProfileBtn" class="button">保存 Profile</button>
             <button id="refreshAgentBtn" class="button">刷新</button>
           </div>

@@ -113,7 +113,24 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
   color: var(--ink);
   font-weight: 900;
   cursor: pointer;
+  transition: transform 0.06s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
+.button:hover:not(:disabled) { filter: brightness(1.04); box-shadow: 0 3px 12px rgba(21, 33, 29, 0.16); }
+.button:active:not(:disabled) { transform: translateY(1px) scale(0.98); box-shadow: none; }
+.button:disabled { opacity: 0.55; cursor: wait; }
+.button.busy::after {
+  content: "";
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-left: 8px;
+  vertical-align: -1px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: button-spin 0.7s linear infinite;
+}
+@keyframes button-spin { to { transform: rotate(360deg); } }
 .button.primary { background: var(--green); color: white; border-color: var(--green); }
 .button.danger { color: white; background: var(--red); border-color: var(--red); }
 .button.small { min-height: 34px; padding: 0 10px; font-size: 13px; }
@@ -178,13 +195,25 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
 
 .timeline {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 12px;
   align-items: center;
   margin-top: 12px;
   color: var(--muted);
   font-weight: 800;
 }
+.follow-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.follow-toggle input { width: auto; min-height: auto; }
+
+#messageLine.error { color: var(--red); }
+#messageLine.success { color: var(--green); }
 
 .profile-editor { min-height: 410px; }
 .compact-editor { min-height: 86px; margin-bottom: 8px; }

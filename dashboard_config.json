@@ -7,11 +7,11 @@
       }
     }
   },
-  "sim_days": 60,
-  "seconds_per_day": 10,
+  "sim_days": 2,
+  "seconds_per_day": 5,
   "agent_ids": [
-    34
+    33
   ],
-  "simulate_realtime": false,
+  "simulate_realtime": true,
   "time_step_minutes": null
 }

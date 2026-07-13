@@ -5,7 +5,12 @@ const state = {
   lifeEventTemplates: [],
   lifeEvents: [],
   trace: null,
+  traceGeneratedAt: null,
+  // Frames captured live from latest_frame.json between trace flushes
+  // (the simulator only rewrites simulation_trace.json every N frames).
+  liveFrames: new Map(),
   frameIndex: 0,
+  follow: true,
   pollTimer: null,
   avatarCache: new Map(),
 };
@@ -30,11 +35,13 @@ const els = {
   mapCanvas: document.getElementById("mapCanvas"),
   timelineSlider: document.getElementById("timelineSlider"),
   timelineLabel: document.getElementById("timelineLabel"),
+  followLatestInput: document.getElementById("followLatestInput"),
   latestFrameBox: document.getElementById("latestFrameBox"),
   selectedAgentAvatar: document.getElementById("selectedAgentAvatar"),
   agentSelect: document.getElementById("agentSelect"),
   profileEditor: document.getElementById("profileEditor"),
   saveProfileBtn: document.getElementById("saveProfileBtn"),
+  toggleSimBtn: document.getElementById("toggleSimBtn"),
   refreshAgentBtn: document.getElementById("refreshAgentBtn"),
   interviewContext: document.getElementById("interviewContext"),
   interviewQuestions: document.getElementById("interviewQuestions"),
@@ -90,11 +97,10 @@ function resolveAssetPath(assetPath) {
   const text = String(assetPath || "").trim();
   if (!text) return "";
   if (/^(https?:)?\/\//.test(text) || text.startsWith("data:")) return text;
-  try {
-    return new URL(text, window.location.href).href;
-  } catch (_error) {
-    return text;
-  }
+  // The trace stores paths relative to the visualization output dir
+  // (e.g. "avatars/agent_33.svg"), not relative to this page.
+  if (!text.startsWith("/")) return `/output/visualization/${text}`;
+  return text;
 }
 
 function getAgentAvatarPath(agentId) {
@@ -148,9 +154,44 @@ async function api(path, options = {}) {
   return payload;
 }
 
+let messageTimer = null;
 function message(text, tone = "") {
   els.messageLine.textContent = text || "";
   els.messageLine.className = tone;
+  if (messageTimer) window.clearTimeout(messageTimer);
+  if (text) {
+    messageTimer = window.setTimeout(() => {
+      els.messageLine.textContent = "";
+      els.messageLine.className = "";
+    }, tone === "error" ? 10000 : 4000);
+  }
+}
+
+// Wrap an async click handler: disable the button and show a spinner while
+// it runs, and surface any error on the message line.
+function withBusy(btn, fn) {
+  return async () => {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.classList.add("busy");
+    try {
+      await fn();
+    } catch (error) {
+      message(error.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove("busy");
+    }
+  };
+}
+
+// Replace a log box's text, keeping it pinned to the bottom if the user
+// hasn't scrolled up.
+function setLogText(el, text) {
+  if (el.textContent === text) return;
+  const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+  el.textContent = text;
+  if (nearBottom) el.scrollTop = el.scrollHeight;
 }
 
 function configPayloadFromForm() {
@@ -202,6 +243,45 @@ async function saveConfig() {
   message("配置已写入 dashboard_config.json");
 }
 
+// The toolbar "Agent IDs" input is the single source of truth for which
+// agents run in the simulation; the profile dropdown mirrors it live.
+function configuredIdSet() {
+  return new Set(
+    els.agentIdsInput.value
+      .split(",")
+      .map((part) => Number(part.trim()))
+      .filter((id) => Number.isFinite(id) && id > 0)
+  );
+}
+
+function refreshAgentOptionLabels() {
+  const configured = configuredIdSet();
+  Array.from(els.agentSelect.options).forEach((option) => {
+    const agent = state.agents.find((item) => Number(item.id) === Number(option.value));
+    if (!agent) return;
+    const inSim = configured.has(Number(agent.id));
+    option.textContent = `${inSim ? "▶ " : ""}${String(agent.id).padStart(2, "0")} · ${agent.name}${inSim ? "（仿真中）" : ""}`;
+  });
+  updateToggleSimBtn();
+}
+
+function updateToggleSimBtn() {
+  if (!els.toggleSimBtn) return;
+  const inSim = configuredIdSet().has(Number(state.selectedAgentId));
+  els.toggleSimBtn.textContent = inSim ? "移出仿真" : "加入仿真";
+}
+
+function toggleSelectedAgentInSim() {
+  const id = Number(state.selectedAgentId);
+  if (!id) return;
+  const ids = configuredIdSet();
+  if (ids.has(id)) ids.delete(id);
+  else ids.add(id);
+  els.agentIdsInput.value = Array.from(ids).sort((a, b) => a - b).join(",");
+  refreshAgentOptionLabels();
+  message(`Agent ${id} 已${ids.has(id) ? "加入" : "移出"}仿真名单，点击「保存配置」或「运行仿真」生效`);
+}
+
 async function loadAgents() {
   const payload = await api("/api/agents");
   state.agents = payload.agents || [];
@@ -213,10 +293,11 @@ async function loadAgents() {
   state.agents.forEach((agent) => {
     const option = document.createElement("option");
     option.value = String(agent.id);
-    option.textContent = `${String(agent.id).padStart(2, "0")} · ${agent.name}${agent.configured ? " · active" : ""}`;
+    option.textContent = `${String(agent.id).padStart(2, "0")} · ${agent.name}`;
     option.selected = agent.id === state.selectedAgentId;
     els.agentSelect.appendChild(option);
   });
+  refreshAgentOptionLabels();
   renderSelectedAgentAvatar();
 }
 
@@ -329,14 +410,17 @@ async function loadMemory() {
 }
 
 async function runSimulation(reset = false) {
-  message("正在启动仿真...");
+  message(reset ? "正在重置并启动仿真..." : "正在启动仿真...");
   const payload = { reset, config: configPayloadFromForm() };
   await api("/api/run/start", { method: "POST", body: JSON.stringify(payload) });
+  state.follow = true;
+  message("仿真已启动，地图将实时跟随最新帧");
   await refreshStatus();
 }
 
 async function stopSimulation() {
   await api("/api/run/stop", { method: "POST", body: "{}" });
+  message("已停止仿真");
   await refreshStatus();
 }
 
@@ -344,46 +428,95 @@ async function refreshStatus() {
   const status = await api("/api/run/status");
   els.runStatusBadge.textContent = status.running ? "运行中" : status.returncode == null ? "未运行" : `已结束 ${status.returncode}`;
   els.runStatusBadge.className = `status-badge ${status.running ? "running" : status.returncode === 0 ? "done" : status.returncode ? "error" : ""}`;
-  els.runLogBox.textContent = status.log_tail || "暂无运行日志。";
+  setLogText(els.runLogBox, status.log_tail || "暂无运行日志。");
   if (status.running) loadTrace(false).catch(() => {});
+}
+
+// The simulator only rewrites simulation_trace.json every N frames but
+// updates latest_frame.json on every step, so a live view has to merge both.
+function allFrames() {
+  const traceFrames = state.trace && Array.isArray(state.trace.frames) ? state.trace.frames : [];
+  if (!state.liveFrames.size) return traceFrames;
+  const lastFlushed = traceFrames.length
+    ? Number(traceFrames[traceFrames.length - 1].index ?? traceFrames.length - 1)
+    : -1;
+  const extra = Array.from(state.liveFrames.values())
+    .filter((frame) => Number(frame.index) > lastFlushed)
+    .sort((a, b) => Number(a.index) - Number(b.index));
+  return traceFrames.concat(extra);
 }
 
 async function loadTrace(showErrors = true) {
   try {
     const response = await fetch(`/output/visualization/simulation_trace.json?t=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    state.trace = await response.json();
-    const frames = Array.isArray(state.trace.frames) ? state.trace.frames : [];
-    state.frameIndex = frames.length ? Math.min(state.frameIndex, frames.length - 1) : 0;
-    renderTrace();
+    const trace = await response.json();
+    const generatedAt = trace.meta && trace.meta.generated_at;
+    if (generatedAt && generatedAt !== state.traceGeneratedAt) {
+      // New run: drop frames captured from the previous run.
+      state.traceGeneratedAt = generatedAt;
+      state.liveFrames.clear();
+      state.frameIndex = 0;
+      state.follow = true;
+      state.avatarCache.clear();
+    }
+    state.trace = trace;
   } catch (error) {
     if (showErrors) {
       els.traceStatus.textContent = `轨迹读取失败: ${error.message}`;
       drawEmptyMap();
     }
+    if (!state.trace) return;
   }
+  try {
+    const response = await fetch(`/output/visualization/latest_frame.json?t=${Date.now()}`, { cache: "no-store" });
+    if (response.ok) {
+      const latest = await response.json();
+      const frame = latest && latest.frame;
+      if (frame && frame.index != null && Array.isArray(frame.agents)) {
+        state.liveFrames.set(Number(frame.index), frame);
+      }
+    }
+  } catch (_error) {
+    // latest_frame is best-effort; the flushed trace still renders.
+  }
+  const traceFrames = Array.isArray(state.trace.frames) ? state.trace.frames : [];
+  const lastFlushed = traceFrames.length
+    ? Number(traceFrames[traceFrames.length - 1].index ?? traceFrames.length - 1)
+    : -1;
+  Array.from(state.liveFrames.keys()).forEach((key) => {
+    if (key <= lastFlushed) state.liveFrames.delete(key);
+  });
+  const frames = allFrames();
+  if (!frames.length) state.frameIndex = 0;
+  else if (state.follow) state.frameIndex = frames.length - 1;
+  else state.frameIndex = Math.min(state.frameIndex, frames.length - 1);
+  renderTrace();
 }
 
 function currentFrame() {
-  const frames = state.trace && Array.isArray(state.trace.frames) ? state.trace.frames : [];
-  return frames[state.frameIndex] || null;
+  return allFrames()[state.frameIndex] || null;
 }
 
 function renderTrace() {
-  const frame = currentFrame();
-  const frames = state.trace && Array.isArray(state.trace.frames) ? state.trace.frames : [];
+  const frames = allFrames();
+  const frame = frames[state.frameIndex] || null;
   if (!frame) {
     drawEmptyMap();
+    if (state.trace) els.traceStatus.textContent = "轨迹已初始化 · 0 帧";
     return;
   }
   renderSelectedAgentAvatar();
   els.frameTitle.textContent = `Day ${frame.day} · ${frame.time}`;
-  els.traceStatus.textContent = `${frames.length} 帧 · ${state.trace.meta && state.trace.meta.finished ? "已完成" : "写入中"}`;
+  const finished = state.trace.meta && state.trace.meta.finished;
+  const liveCount = frames.length - (Array.isArray(state.trace.frames) ? state.trace.frames.length : 0);
+  els.traceStatus.textContent = `${frames.length} 帧${liveCount > 0 ? `（含 ${liveCount} 实时帧）` : ""} · ${finished ? "已完成" : "写入中"}`;
   els.timelineSlider.max = String(Math.max(0, frames.length - 1));
   els.timelineSlider.value = String(state.frameIndex);
   els.timelineLabel.textContent = `${frame.date || ""} ${frame.weekday || ""} ${frame.time || ""}`.trim();
+  if (els.followLatestInput) els.followLatestInput.checked = state.follow;
   els.latestFrameBox.textContent = JSON.stringify(frame, null, 2);
-  drawMap(frame);
+  drawMap(frames.slice(0, state.frameIndex + 1));
 }
 
 function drawEmptyMap() {
@@ -398,7 +531,52 @@ function drawEmptyMap() {
   els.latestFrameBox.textContent = "暂无当前帧。";
 }
 
-function drawMap(frame) {
+const TRAIL_FRAMES = 48;
+
+function agentNodePoint(agent, nodes, offsetX, offsetY, scale) {
+  const node = nodes.get(agent.target_location) || nodes.get(agent.resolved_location);
+  if (!node) return null;
+  return {
+    x: offsetX + node.tile_x * scale + scale / 2,
+    y: offsetY + node.tile_y * scale + scale / 2,
+  };
+}
+
+function drawTrails(framesUpTo, nodes, offsetX, offsetY, scale) {
+  const trail = framesUpTo.slice(-TRAIL_FRAMES);
+  const byAgent = new Map();
+  trail.forEach((frame) => {
+    (frame.agents || []).forEach((agent) => {
+      const point = agentNodePoint(agent, nodes, offsetX, offsetY, scale);
+      if (!point) return;
+      const key = Number(agent.agent_id);
+      if (!byAgent.has(key)) byAgent.set(key, []);
+      const points = byAgent.get(key);
+      const last = points[points.length - 1];
+      if (!last || last.x !== point.x || last.y !== point.y) points.push(point);
+    });
+  });
+  byAgent.forEach((points, agentId) => {
+    if (points.length < 2) return;
+    const selected = agentId === Number(state.selectedAgentId);
+    ctx.save();
+    ctx.strokeStyle = agentColors[Math.abs(agentId) % agentColors.length];
+    ctx.globalAlpha = selected ? 0.85 : 0.4;
+    ctx.lineWidth = selected ? 3.5 : 2;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.setLineDash(selected ? [] : [6, 5]);
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawMap(framesUpTo) {
+  const frame = framesUpTo[framesUpTo.length - 1];
+  if (!frame) return;
   const map = (state.trace || {}).map || {};
   const tileMap = map.tile_map || {};
   const terrain = Array.isArray(tileMap.terrain) ? tileMap.terrain : [];
@@ -426,13 +604,14 @@ function drawMap(frame) {
     ctx.fillRect(x - 3, y - 3, 6, 6);
   });
 
+  drawTrails(framesUpTo, nodes, offsetX, offsetY, scale);
+
   (frame.agents || []).forEach((agent) => {
-    const node = nodes.get(agent.target_location) || nodes.get(agent.resolved_location);
-    if (!node) return;
-    const x = offsetX + node.tile_x * scale + scale / 2;
-    const y = offsetY + node.tile_y * scale + scale / 2;
+    const point = agentNodePoint(agent, nodes, offsetX, offsetY, scale);
+    if (!point) return;
+    const { x, y } = point;
     const color = agentColors[Math.abs(Number(agent.agent_id || 0)) % agentColors.length];
-    const radius = agent.agent_id === state.selectedAgentId ? 11 : 8;
+    const radius = Number(agent.agent_id) === Number(state.selectedAgentId) ? 11 : 8;
     const avatarImage = loadAvatar(getAgentAvatarPath(agent.agent_id));
     ctx.save();
     ctx.beginPath();
@@ -452,68 +631,135 @@ function drawMap(frame) {
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = "#17211d";
-    ctx.font = "12px Aptos";
+    ctx.font = '12px "Noto Sans SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(agent.name || agent.agent_id, x + 12, y - 9);
   });
 }
 
 async function interview() {
   if (!state.selectedAgentId) return;
-  els.interviewOutput.textContent = "采访运行中...";
   const questions = els.interviewQuestions.value.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!questions.length) {
+    els.interviewOutput.textContent = "请先在上方输入至少一个问题（每行一个）。";
+    return;
+  }
   const payload = {
     agent_id: state.selectedAgentId,
     context: els.interviewContext.value.trim(),
     questions,
   };
-  const result = await api("/api/interview", { method: "POST", body: JSON.stringify(payload) });
-  els.interviewOutput.textContent = [result.stdout, result.stderr].filter(Boolean).join("\n") || `returncode=${result.returncode}`;
+  const startedAt = Date.now();
+  els.interviewOutput.textContent = "采访运行中... 0s";
+  const timer = window.setInterval(() => {
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+    els.interviewOutput.textContent = `采访运行中... ${elapsed}s（LLM 生成通常需要 1-3 分钟）`;
+  }, 1000);
+  try {
+    const result = await api("/api/interview", { method: "POST", body: JSON.stringify(payload) });
+    els.interviewOutput.textContent = [result.stdout, result.stderr].filter(Boolean).join("\n") || `returncode=${result.returncode}`;
+  } finally {
+    window.clearInterval(timer);
+  }
 }
 
 function bindEvents() {
-  els.saveConfigBtn.addEventListener("click", () => saveConfig().catch((error) => message(error.message, "error")));
-  els.runBtn.addEventListener("click", () => runSimulation(false).catch((error) => message(error.message, "error")));
-  els.resetRunBtn.addEventListener("click", () => runSimulation(true).catch((error) => message(error.message, "error")));
-  els.stopBtn.addEventListener("click", () => stopSimulation().catch((error) => message(error.message, "error")));
-  els.reloadTraceBtn.addEventListener("click", () => loadTrace(true));
-  els.reloadStatusBtn.addEventListener("click", () => refreshStatus().catch((error) => message(error.message, "error")));
+  els.saveConfigBtn.addEventListener("click", withBusy(els.saveConfigBtn, saveConfig));
+  els.runBtn.addEventListener("click", withBusy(els.runBtn, () => runSimulation(false)));
+  els.resetRunBtn.addEventListener("click", withBusy(els.resetRunBtn, () => runSimulation(true)));
+  els.stopBtn.addEventListener("click", withBusy(els.stopBtn, stopSimulation));
+  els.reloadTraceBtn.addEventListener("click", withBusy(els.reloadTraceBtn, async () => {
+    await loadTrace(true);
+    message("轨迹已刷新");
+  }));
+  els.reloadStatusBtn.addEventListener("click", withBusy(els.reloadStatusBtn, async () => {
+    await refreshStatus();
+    message("运行状态已刷新");
+  }));
   els.agentSelect.addEventListener("change", async () => {
     state.selectedAgentId = Number(els.agentSelect.value);
     renderSelectedAgentAvatar();
-    await loadProfile();
-    await loadMemory();
+    updateToggleSimBtn();
     renderTrace();
+    try {
+      await loadProfile();
+      await loadMemory();
+    } catch (error) {
+      message(error.message, "error");
+    }
   });
-  els.saveProfileBtn.addEventListener("click", () => saveProfile().catch((error) => message(error.message, "error")));
-  els.refreshAgentBtn.addEventListener("click", () => loadProfile().catch((error) => message(error.message, "error")));
-  els.reloadMemoryBtn.addEventListener("click", () => loadMemory().catch((error) => message(error.message, "error")));
-  els.interviewBtn.addEventListener("click", () => interview().catch((error) => {
-    els.interviewOutput.textContent = error.message;
+  els.agentIdsInput.addEventListener("input", refreshAgentOptionLabels);
+  if (els.toggleSimBtn) els.toggleSimBtn.addEventListener("click", toggleSelectedAgentInSim);
+  els.saveProfileBtn.addEventListener("click", withBusy(els.saveProfileBtn, saveProfile));
+  els.refreshAgentBtn.addEventListener("click", withBusy(els.refreshAgentBtn, async () => {
+    await loadProfile();
+    message("Profile 已刷新");
   }));
+  els.reloadMemoryBtn.addEventListener("click", withBusy(els.reloadMemoryBtn, async () => {
+    await loadMemory();
+    message("记忆已刷新");
+  }));
+  els.interviewBtn.addEventListener("click", withBusy(els.interviewBtn, () => interview().catch((error) => {
+    els.interviewOutput.textContent = `采访失败：${error.message}`;
+  })));
   els.lifeEventTemplateSelect.addEventListener("change", () => {
     els.lifeEventTitleInput.value = "";
     els.lifeEventDescriptionInput.value = "";
     applyLifeEventTemplate();
   });
   els.useSelectedAgentBtn.addEventListener("click", () => {
-    if (state.selectedAgentId) els.lifeEventAgentInput.value = String(state.selectedAgentId);
+    if (state.selectedAgentId) {
+      els.lifeEventAgentInput.value = String(state.selectedAgentId);
+      message(`人生事件目标已设为 Agent ${state.selectedAgentId}`);
+    }
   });
-  els.addLifeEventBtn.addEventListener("click", () => addLifeEvent().catch((error) => message(error.message, "error")));
-  els.reloadLifeEventsBtn.addEventListener("click", () => loadLifeEvents().catch((error) => message(error.message, "error")));
+  els.addLifeEventBtn.addEventListener("click", withBusy(els.addLifeEventBtn, addLifeEvent));
+  els.reloadLifeEventsBtn.addEventListener("click", withBusy(els.reloadLifeEventsBtn, async () => {
+    await loadLifeEvents();
+    message("人生事件已刷新");
+  }));
   els.timelineSlider.addEventListener("input", () => {
     state.frameIndex = Number(els.timelineSlider.value || 0);
+    // Scrubbing away from the newest frame pauses follow; dragging back to
+    // the end resumes it.
+    state.follow = state.frameIndex >= allFrames().length - 1;
     renderTrace();
+  });
+  if (els.followLatestInput) {
+    els.followLatestInput.addEventListener("change", () => {
+      state.follow = els.followLatestInput.checked;
+      if (state.follow) {
+        const frames = allFrames();
+        state.frameIndex = frames.length ? frames.length - 1 : 0;
+      }
+      renderTrace();
+    });
+  }
+  els.selectedAgentAvatar.addEventListener("error", () => {
+    els.selectedAgentAvatar.style.visibility = "hidden";
+  });
+  els.selectedAgentAvatar.addEventListener("load", () => {
+    els.selectedAgentAvatar.style.visibility = "visible";
   });
 }
 
 async function init() {
   bindEvents();
-  await loadConfig();
-  await loadAgents();
-  await loadLifeEvents();
-  await loadProfile();
-  await loadMemory();
-  await refreshStatus();
+  drawEmptyMap();
+  const steps = [
+    ["配置", loadConfig],
+    ["人物列表", loadAgents],
+    ["人生事件", loadLifeEvents],
+    ["Profile", loadProfile],
+    ["记忆", loadMemory],
+    ["运行状态", refreshStatus],
+  ];
+  for (const [label, step] of steps) {
+    try {
+      await step();
+    } catch (error) {
+      message(`${label}加载失败: ${error.message}`, "error");
+    }
+  }
   await loadTrace(false);
   state.pollTimer = window.setInterval(() => {
     refreshStatus().catch(() => {});
