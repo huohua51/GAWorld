@@ -14,9 +14,9 @@ used only as capability cases and boundary evidence.
 - Every reported number must cite a byte-level SHA-256 snapshot in the ledger.
 - A single run, incomplete treatment, or diagnostic fixture is not presented as
   statistical, causal, population-valid, or real-policy evidence.
-- The audit started while architecture migration was in progress and was
-  refreshed after the committed Life Events plugin migration. Runtime and
-  artifact hashes, rather than a commit alone, identify the audited evidence.
+- Architecture is frozen at repository commit `35a551e`, after completion of
+  the scoped K1--K5 migration and assembly of nine built-in plugins. Runtime
+  and artifact hashes identify the audited evidence.
 - Author names, affiliations, email addresses, and ORCIDs remain explicit
   placeholders until supplied by the authors.
 

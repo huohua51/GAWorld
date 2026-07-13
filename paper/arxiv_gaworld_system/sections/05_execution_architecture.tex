@@ -1,154 +1,111 @@
 \section{Execution Architecture and Incremental Modularization}
 \label{sec:execution-architecture}
 
-GAWorld's runtime combines a connected cognition pipeline with a small kernel
-and compatibility-preserving domain paths.  Figure~\ref{fig:system-architecture}
-distinguishes stable connections from the incomplete plugin migration.  This
-distinction matters scientifically: a mechanism that can be configured or
-observed is not necessarily isolated enough to be exchanged without changing
-other runtime behavior.
+GAWorld combines a connected cognition pipeline with a small kernel, nine
+built-in plugins, and compatibility-preserving domain paths.
+Figure~\ref{fig:system-architecture} freezes the audited K1--K5 runtime at
+repository commit \texttt{35a551e}.  The archived capability cases predate
+this migration and are not evaluations of it.
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{system_architecture.pdf}
-  \caption{Audited execution architecture.  Solid paths denote connected
-  implementation surfaces; dashed paths denote a partial or skeleton path.
-  The committed built-in plugins are Intervention, Skills, Interests, and Life
-  Events.  Memory, world, social, and work logic
-  retain direct paths, while economy integration is primarily hook-based.}
+  \caption{Audited execution architecture at commit \texttt{35a551e}.  Nine
+  built-ins contribute through the registry, bus, pipeline filters, or
+  lifecycle events.  Movement uses the Controller validation gate; Recorder
+  events coexist with established domain-specific outputs.}
   \label{fig:system-architecture}
 \end{figure}
 
 \subsection{Kernel services}
 
-\paragraph{Simulation context.}
-\texttt{SimContext} is the object shared by stages and plugins.  It holds
-configuration, the Clock, EventBus, PluginRegistry, Controller, Recorder,
-agents and their identifier index, an LLM callable, a seeded random-number
-generator, and an \texttt{extras} escape hatch for objects not yet formalized
-by the kernel.  It also provides simulation-level and per-agent plugin state
-namespaces.  The bootstrap constructs this context, installs it in every bus
-dispatch, attaches the city map through \texttt{extras}, and refreshes the
-agent index.  The escape hatch and mutable dictionaries preserve compatibility
-but limit enforcement of ownership boundaries.
+\paragraph{Simulation context and clock.}
+\texttt{SimContext} holds configuration, Clock, EventBus, PluginRegistry,
+Controller, Recorder, agents and their identifier index, an LLM callable, a
+seeded random-number generator, and an \texttt{extras} compatibility escape
+hatch.  It also provides simulation-level and per-agent plugin-state
+namespaces.  The outer loop is the sole clock writer, giving stages, plugins,
+and records a common simulated day, time, and tick.  This ordering does not by
+itself make model calls, external services, or concurrency deterministic.
 
-\paragraph{Clock.}
-The Clock stores simulated day, time string, tick index, and optionally the
-minutes per tick.  The outer loop is its sole writer: it starts each day and
-advances before processing a tick.  Stages, plugins, and Recorder can therefore
-share a time coordinate without receiving separate arguments.  The clock
-orders simulation events; it does not make a run deterministic, because model
-responses, external services, concurrency, and unseeded dependencies may still
-vary.
-
-\paragraph{Event bus.}
-The EventBus is a priority-ordered superset of the earlier HookBus.  Its
-\texttt{emit} operation notifies observers, \texttt{collect} merges
-contributions, and \texttt{filter} passes a value through possible rewrites.
-It retains the existing configuration-driven hook format and adds the
-\texttt{SimContext} to dispatch data.  Handler exceptions are logged and
-isolated by default, with optional strict failure.  This policy keeps an
-auxiliary observer from terminating a run, but it can yield a degraded run;
-logs and active-plugin lists must therefore be retained with results.
-
-\paragraph{Plugin registry.}
-The PluginRegistry assembles built-in instances, configuration-named classes,
-and installed entry points.  It rejects duplicate or invalid identifiers,
-orders setup by declared dependencies, deactivates a plugin whose setup fails
-or whose dependency is unavailable, and tears active plugins down in reverse
-order.  A plugin may own configuration, \texttt{agent["ext"]} state, and an
-output directory.  This is a functional lifecycle boundary, but it is not a
-sandbox: third-party code runs in process, entry points are not allowlisted,
-and compatibility modules may still mutate common agent state.
+\paragraph{Event bus and plugin registry.}
+The EventBus supports priority-ordered observation (\texttt{emit}), merged
+contribution (\texttt{collect}), and value rewriting (\texttt{filter}).
+Handler failures are logged and isolated by default, so warnings and active
+plugin lists must accompany results.  The PluginRegistry assembles built-ins,
+configuration-named classes, and installed entry points; orders setup by
+declared dependencies; skips failed or unsatisfied plugins; and tears active
+plugins down in reverse order.  Plugins may own configuration, namespaced
+agent state, and output directories, but execute in process and are not a
+sandbox.
 
 \paragraph{Controller.}
-The Controller defines two interfaces.  First, a priority-ordered validator
-chain can allow, deny, or rewrite a structured \texttt{ActionRequest}; denials
-are sent to the Recorder.  Second, named runtime interventions can be
-registered and invoked with an audit record.  These interfaces are implemented
-and unit-testable, but they remain a skeleton relative to the principal
-simulator: selected actions and ordinary intervention mechanisms do not all
-flow through the Controller.  We therefore do not treat it as a universal
-policy or safety gate.
+The Controller provides a priority-ordered validator chain over structured
+\texttt{ActionRequest}s and a named runtime-intervention API.  In the main
+simulator, movement requests pass through validation: denial preserves the
+origin and is surfaced in the next perception, while a rewrite can change the
+destination.  K5 registers standard interventions for setting one agent-state
+value, updating a dotted live-config path, and queueing agent removal for the
+next day boundary.  Denials and interventions are audited through the
+Recorder.  Other selected actions are not all mediated, so the Controller is
+not a universal policy or safety gate.
 
 \paragraph{Recorder.}
-The Recorder appends clock-stamped JSON objects to a table-per-file store and
-is closed when the simulation exits.  It currently records Controller-mediated
-events and is available to extensions.  The main trace, state-history, memory,
-environment, and plugin metric paths continue to use their established writers.
-The Recorder is thus a basis for future unified replay, not evidence that the
-current archive can be replayed from one event log.
+The Recorder appends clock-stamped JSON objects to table-specific files and is
+closed when the simulation exits.  It records Controller activity and is
+available to plugins.  Main traces, state history, memories, environment
+events, and specialized metrics also retain established writers.  Recorder
+integration therefore improves cross-plugin auditability without implying
+that the archive can be replayed from one event log.
 
-\subsection{A concrete plugin migration}
+\subsection{Built-in plugin assembly}
 
-The committed \texttt{InterventionPlugin} illustrates what has actually moved
-onto the kernel boundary.  During setup it subscribes to three points.  At
-\texttt{agents.built}, it seeds intervention metric keys so initial snapshots
-retain a consistent schema.  When enabled, it contributes a recommendation
-feed at \texttt{perception.compose}, stores temporary feed data in its
-per-agent extension namespace, and updates and persists intervention metrics
-at \texttt{on\_agent\_post\_step}.  The plugin delegates domain calculations
-to the existing policy implementation; migration changes orchestration and
-ownership rather than reimplementing the research mechanism.
-
-Skills, Interests, and Life Events are also committed built-in plugins.  The
-\texttt{LifeEventsPlugin}, the fourth built-in and the first event-producer
-migration, subscribes to day and tick boundaries, composes environmental event
-views, contributes agent-specific event context to perception, and applies
-declared state effects.  It delegates queue persistence and domain operations
-to the established life-event implementation, so the migration changes
-orchestration rather than validating event realism.  Archived runs in this
-paper predate that migration and are not attributed to it.  No completed plugin
-claim is made for economy, memory, world, social, or work.
+The audited registry assembles Intervention, Skills, Interests, Life Events,
+Economy, Local Physical, Real Work, Dynamic Behavior, and Spatial Preferences.
+They attach domain behavior to day/tick events, perception contributions,
+location filters, action or outcome filters, and post-step or day-end hooks.
+For example, Intervention contributes recommendation context and persists
+policy metrics, Life Events produces scheduled exogenous events and state
+effects, Local Physical contributes nearby conditions, and Spatial Preferences
+can rewrite a resolved destination.  The adapters delegate calculations and
+specialized persistence to established modules: migration changes
+orchestration and ownership, not the scientific validity of the mechanisms.
 
 \subsection{Migration-state audit}
-
-Table~\ref{tab:migration-state} summarizes the distinction between code
-presence and runtime integration.  ``Direct'' denotes calls retained in the
-simulation or stage implementation; ``hook-based'' denotes established event
-callbacks that need not be registered as kernel plugins.
 
 \begin{table}[t]
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}p{0.14\linewidth}p{0.23\linewidth}p{0.16\linewidth}p{0.19\linewidth}p{0.20\linewidth}@{}}
+\begin{tabular}{@{}p{0.17\linewidth}p{0.23\linewidth}p{0.19\linewidth}p{0.32\linewidth}@{}}
 \toprule
-Surface & Current implementation & Integration status & Compatibility path & Research consequence \\
+Surface & Current boundary & Status & Retained boundary and consequence \\
 \midrule
-Cognition & Configured 12-stage pipeline & Wired & Shared step dictionary and outer-loop work & Stage order and omissions must be reported \\
-Event extensions & EventBus with emit, collect, and filter & Wired & Legacy hook signatures/configuration & Observer failure can degrade rather than stop a run \\
-Intervention & \texttt{InterventionPlugin} plus policy implementation & Plugin-integrated & Domain logic and specialized metric writer retained & Feed contribution and metrics are inspectable; causal validity is separate \\
-Skills and interests & Committed built-in plugins & Plugin-integrated & Existing agent and memory fields remain readable & Lifecycle can be toggled, but state isolation is incomplete \\
-Memory & Recall, storage, consolidation, and decay modules & Directly integrated & Per-agent files and legacy calls & Persistent context is inspectable, not psychologically validated \\
-World and social & City, environment, location, and network modules & Directly integrated & Outer loop and stage calls & Shared situation exists; mechanism replacement is not isolated \\
-Economy & Finance module and configured callbacks & Hook-based & Specialized state and output writers & Economic traces require hook/config provenance \\
-Work & Runtime, router, queue, market, and adapters & Directly integrated & Day-level and action-side calls & Artifact production exists without a plugin boundary \\
-Controller & Validation and named-intervention API & Skeleton off main action path & Established selection/execution logic & No universal validation-gate claim \\
-Recorder & Clocked JSONL writer & Skeleton off main trace path & Multiple direct and plugin-owned writers & No single-log replay claim \\
-Life events & Committed plugin plus established event queue & Plugin-integrated & Domain implementation and specialized writers retained & Archived runs predate migration; mechanism validity is separate \\
+Cognition & Configured 12-stage pipeline & Wired & Shared step dictionary; order and omissions must be reported \\
+Extensions & EventBus and PluginRegistry & Wired & Failures may degrade rather than terminate a run \\
+Nine domain adapters & Policy, skills, interests, events, economy, physical, work, behavior, spatial & Plugin-integrated & Established stores and writers remain; activation needs config/plugin provenance \\
+Memory & Recall, storage, consolidation, decay & Direct compatibility path & Persistent context is inspectable, not psychologically validated \\
+Environment and social network & World evolution and network modules & Direct compatibility path & The full world and network models are not isolated plugins \\
+Controller & Move validation and named interventions & Connected, scoped & Other actions retain established paths; no universal-gate claim \\
+Recorder & Clocked structured event writer & Connected, non-exclusive & Multiple writers remain; no single-log replay claim \\
 \bottomrule
 \end{tabular}
-\caption{Implementation and migration state in the audited repository.  A
-working mechanism is not automatically a completed plugin migration.}
+\caption{Implementation state in the audited repository.  K1--K5 completion
+does not imply that every subsystem or output format is isolated.}
 \label{tab:migration-state}
 \end{table}
 
 \subsection{Failure and reproducibility boundaries}
 
-The architecture uses different failure semantics intentionally.  A cognition
-stage is control flow, so its exception propagates.  Bus handlers and plugin
-setup are extension trust boundaries, so failures warn and normally leave the
-remaining run active.  Registry dependency problems similarly deactivate the
-affected plugin.  This separation improves operational resilience, but a
-completed process is not necessarily a complete experimental treatment.  A
-reproducible artifact must therefore include resolved stage order, active
-plugin identifiers, warnings, configuration, source snapshot, model/provider
-conditions, and all specialized outputs.
+A cognition-stage exception propagates because the stage is control flow.
+Bus-handler and plugin-setup failures instead warn and normally leave the
+remaining run active; missing dependencies deactivate the affected plugin.
+Operational resilience therefore makes a completed process different from a
+complete treatment.  A reproducible artifact must include resolved stage
+order, active plugin identifiers, warnings, configuration, source snapshot,
+model/provider conditions, and specialized outputs.
 
-The same caution applies to modularity.  The kernel services, registry, event
-contributions, and 12-stage pipeline are wired into the runtime.  Yet shared
-dictionaries, the context escape hatch, direct domain calls, and multiple
-recording paths remain.  GAWorld's execution architecture should consequently
-be read as a compatibility-preserving microkernel skeleton with several real
-migrations, not as a fully pluginized simulator.
+The scoped K1--K5 migration is complete, but shared dictionaries, the context
+escape hatch, direct domain calls, and multiple recording paths remain.
+``K1--K5 complete'' describes completion of the migration plan, not universal
+subsystem isolation or validation.

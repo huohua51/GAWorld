@@ -40,12 +40,10 @@ These tools make persistent state legible without requiring an analyst to read
 every JSON or CSV file directly.
 
 The web interface should not be conflated with the kernel's
-\texttt{Controller}.  The latter is a partially integrated validation and
-intervention abstraction with registered validators, named interventions, and
-Recorder hooks.  The current Dashboard's primary run and mutation paths use its
-own HTTP handlers and CLI subprocess management rather than routing all actions
-through that Controller.  Describing the Dashboard as a complete front end for
-the Controller would therefore overstate the microkernel migration.
+\texttt{Controller}.  The latter validates structured movement and exposes
+named, audited runtime interventions.  The Dashboard's primary run and mutation
+paths still use HTTP handlers and CLI subprocess management rather than routing
+all operations through that API.
 
 \subsection{Trace Replay and External Environment Service}
 

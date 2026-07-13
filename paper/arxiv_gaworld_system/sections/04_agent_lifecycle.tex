@@ -101,15 +101,13 @@ boundaries.  Observer failures are logged and isolated unless strict mode is
 enabled; stage failures instead propagate because a missing control-flow stage
 could silently corrupt state.
 
-Not all inputs use this bus.  Memory recall, world and social mechanisms, and
-work integration retain direct paths within or around the pipeline, while the
-economy predominantly uses hooks.  Nor does action selection currently imply
-kernel-level validation: the Controller exposes a validator chain, but the
-principal \texttt{select\_action} and execution path is not yet routed through
-it.  Likewise, \texttt{record} writes the simulator's established artifacts
-rather than making the kernel Recorder the single trace sink.  These boundaries
-are central to interpreting the architecture: the lifecycle is connected and
-configurable, but only partially migrated to kernel services.
+Not all inputs use this bus.  Memory recall, environment evolution, and social
+network operations retain direct paths within or around the pipeline.  The
+Controller now validates structured movement requests and exposes audited
+runtime interventions, but it does not mediate every selected action.
+Likewise, \texttt{record} writes established artifacts in addition to the
+kernel Recorder.  The lifecycle is therefore connected and configurable while
+retaining compatibility paths beyond the plugin boundary.
 
 \subsection{Configuration and ablation semantics}
 

@@ -31,7 +31,7 @@ final `main.tex`; do not maintain a second edited version here.
 - [ ] Capability cases are described as descriptive, partial, designed, or
       diagnostic rather than as real-world causal findings.
 - [ ] The manuscript distinguishes the operational microkernel skeleton from
-      incomplete plugin migration.
+      K1--K5 completion with explicitly retained compatibility paths.
 - [ ] The author team has checked text overlap with its own prior manuscripts,
       including the separate GAWorld-Bench paper.
 - [ ] The authors accept responsibility for all AI-assisted text, citations,

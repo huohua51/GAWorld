@@ -45,12 +45,13 @@ scale and horizon.
 
 \subsection{Architecture and data limitations}
 
-The microkernel migration is partial.  Intervention, Skills, Interests, and
-Life Events have committed plugin integrations, while memory, world, social, and work
-logic retain direct paths and economy is primarily hook-based.  The Controller
-does not mediate every action, and the Recorder is not the sole provenance
-stream.  Shared dictionaries and the context escape hatch remain useful for
-compatibility but weaken schema enforcement and ownership boundaries.
+The K1--K5 microkernel migration is complete for its defined scope, including
+nine built-in plugins, movement validation, and audited standard interventions.
+Compatibility paths nevertheless remain: memory, environment, and social
+logic are not wholly plugin-owned, the Controller does not mediate every
+action, and the Recorder is not the sole provenance stream.  Shared
+dictionaries and the context escape hatch weaken schema enforcement and
+ownership boundaries.
 Third-party plugins run in process and should not be treated as sandboxed.  A
 configured extension point therefore does not guarantee mechanism isolation,
 security, or semantic equivalence under replacement.
@@ -109,9 +110,8 @@ individuals.
 \subsection{Engineering roadmap}
 
 The engineering roadmap is to make current boundaries enforceable and current
-artifacts easier to reconstruct.  Priorities are: (1) route the principal
-action path through a typed Controller interface where validation is required;
-(2) migrate remaining domain mechanisms incrementally behind declared
+artifacts easier to reconstruct.  Priorities are: (1) extend typed Controller
+validation beyond movement where governance is required; (2) migrate remaining domain mechanisms incrementally behind declared
 dependencies without changing their semantics silently; (3) replace shared
 dictionary conventions with versioned schemas and explicit state ownership;
 (4) unify trace identifiers and clock semantics through a manifest-backed

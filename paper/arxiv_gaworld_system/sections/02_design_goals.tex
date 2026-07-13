@@ -41,13 +41,11 @@ Researchers should be able to change an experimental mechanism without
 rewriting the complete agent loop.  GAWorld provides three bounded extension
 surfaces: a configurable stage sequence for cognition, an event bus with
 observe/contribute/filter semantics, and a registry for lifecycle-managed
-plugins.  The currently committed built-in plugin set covers interventions,
-skills, interests, and life events.  Composability is deliberately not described as
-unrestricted hot swapping: stages exchange a shared dictionary, dependencies
-are only partly formalized, and memory, world, social, and work logic still
-enter the main runtime through direct calls.  Economy integration is primarily
-hook-based.  These compatibility paths are part of the documented system, not
-hidden implementation detail.
+plugins.  The audited built-in set contains nine plugins: interventions,
+skills, interests, life events, economy, local physical perception, real work,
+dynamic behavior, and spatial preferences.  Composability is not unrestricted
+hot swapping: stages exchange a shared dictionary, while memory, environment,
+and social-network logic retain direct compatibility paths.
 
 \subsection{Controllability for counterfactual experiments}
 
@@ -57,11 +55,12 @@ random seed, mechanism flags, schedules, and policy events; the intervention
 plugin contributes a recommendation feed through the event bus and records
 its domain-specific metrics.  Baseline/event workflows can then align traces
 produced under different scenario specifications.  The kernel also defines a
-Controller API for validators and named runtime interventions.  In the audited
-runtime, however, the main action path does not yet route every selected
-action through that Controller.  Accordingly, current controllability comes
-mostly from configuration, scheduled events, hooks, and experiment scripts,
-not from a universal action-governance layer.
+Controller API for validators and named runtime interventions.  Structured
+movement requests pass through its validator chain, and the standard runtime
+interventions update agent state, update live configuration, or queue agent
+removal with audit records.  Other selected actions are not universally
+mediated, so configuration, scheduled events, hooks, and experiment scripts
+remain important control surfaces.
 
 \subsection{Inspectability from decision to artifact}
 
