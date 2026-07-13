@@ -208,6 +208,9 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
   gap: 12px;
 }
 
+.fos-output { min-height: 280px; max-height: 520px; }
+.fos-options { display: grid; gap: 10px; margin-bottom: 10px; }
+
 .codebox {
   min-height: 150px;
   max-height: 420px;
@@ -238,3 +241,39 @@ textarea { padding: 11px 12px; line-height: 1.6; resize: vertical; }
   .memory-grid { grid-template-columns: 1fr; }
   .timeline { grid-template-columns: 1fr; }
 }
+
+.lang-switcher-wrap {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+  padding: 12px 24px;
+}
+
+.lang-switcher {
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+  background: #fffef9;
+  color: var(--muted);
+  font-weight: 900;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lang-switcher:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.lang-switcher.active {
+  background: var(--green);
+  color: white;
+  border-color: var(--green);
+}
+

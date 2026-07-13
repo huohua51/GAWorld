@@ -73,11 +73,21 @@ def llm_settings() -> dict[str, Any]:
                     "timeout": 120,
                     "max_tokens": 512,
                 },
+                "local_qwen4b": {
+                    "type": "openai",
+                    "base_url": "http://127.0.0.1:8080/v1",
+                    "model": "qwen3-4b",
+                    "api_key": "not-needed",
+                    "stream": False,
+                    "max_tokens": 512,
+                    "temperature": 0.2,
+                    "timeout": 600,
+                },
             },
             "routing": {
-                "default": "minimax",
+                "default": "local_qwen4b",
                 "tasks": {
-                    "schedule": "minimax",
+                    "schedule": "local_qwen4b",
                 },
             },
         },

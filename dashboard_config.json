@@ -1,13 +1,13 @@
 {
   "llm": {
     "routing": {
-      "default": "minimax",
+      "default": "local_qwen4b",
       "tasks": {
-        "schedule": "minimax"
+        "schedule": "local_qwen4b"
       }
     }
   },
-  "sim_days": 60,
+  "sim_days": 1,
   "seconds_per_day": 10,
   "agent_ids": [
     34
