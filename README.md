@@ -47,24 +47,53 @@ Across days, the simulator accumulates:
 
 ## Main Features
 
+- Microkernel plugin architecture: every subsystem is a swappable plugin; extend via `CONFIG["plugins"]` or pip entry points without touching the core; configurable 12-stage cognition pipeline; audited runtime interventions (state edits, config changes, agent removal, event injection)
 - Seed agents from CSV state values and Markdown profiles
 - Create new agents from social media pages or extracted text
 - Multi-backend LLM routing: Ollama, OpenAI-compatible, Anthropic-compatible
 - External RAG injection from CLI or files
 - Policy events and environment events
 - PolicySim-inspired recommendation / exposure intervention metrics
-- Realistic personal economy simulation (tax, social insurance, investment, macro cycles)
+- Closed-loop economy simulation with money conservation: sector pools (firms/government/bank), real tax & social-insurance withholding, cash-constrained consumption with credit, common-market-factor investment, agent-to-agent payment routing and friend loans, macro cycles
 - Realistic location system with category-based spatial matching, transport cost calculation, rush-hour and weather effects, and commute memory
 - Dynamic behavior system: mood-driven spontaneous urges, social encounter chains, need-based interrupts, environment event cascades, and commitment-aware schedule interruption
 - Physical environment perception and reactive replanning: per-node crowding / opening-hours awareness, anomaly detection, same-day interval replanning, and learned location-avoidance preferences
-- Interest and skill-growth system: per-agent hobbies, planned skills, practice time, growth progress, and schedule/work-choice influence
+- Interest and skill-growth system: per-agent hobbies, planned skills, practice time, growth progress, and schedule/work-choice influence — with power-law learning gains, streak momentum, milestone events, day-end forgetting decay, four-phase interest development, and social interest contagion
 - Reusable Skill library: Markdown-based global and per-agent private skills, auto-distilled from experience and injected into cognition and work briefs
 - Real-work task system: agents browse a mock job market and produce real artifacts (HTML, Python, articles, lesson plans, research notes) matched to their job and skills
 - City map generation and route playback
 - Visualization trace export
 - Agent interview CLI
 - Local dashboard for config editing, profile editing, run control, memory inspection, and interview
+- Agent Studio: a 7-step visual builder/inspector for a single agent — identity, the nine [0,1] state variables (editable radar), skills, tiered memory, Dunbar social circles, behavior dials, and review/deploy; writes back to the state CSV and profile Markdown and can create new agents
 - Distributed multi-machine mode with relay-based communication
+
+## Architecture: Microkernel + Plugins
+
+Since 2026-07, GAWorld runs on a society-centric microkernel architecture
+(inspired by [Agent-Kernel](https://arxiv.org/abs/2512.01610)):
+
+- **Kernel** (`gaworld/kernel/`, domain-free): `Clock`, `EventBus`
+  (observe/collect/filter hook semantics), `PluginRegistry`, `Controller`
+  (action validation + audited runtime interventions), `Recorder`
+  (unified JSONL event stream), `SimContext`.
+- **Cognition pipeline** (`gaworld/sim/pipeline.py`): each agent step is a
+  configurable sequence of 12 named stages
+  (`prepare → perceive → interrupts → plan → adjust_activity → move →
+  select_action → reflect → update_state → broadcast → memorize → record`).
+  Ablating, replacing, or inserting a stage is a `CONFIG["pipeline"]` change.
+- **Plugins**: all nine built-in subsystems (intervention, skills, interests,
+  life events, economy, local physical perception, real work, dynamic
+  behavior, spatial preferences) ride the same plugin surface third parties
+  use — a `Plugin` subclass plus one `CONFIG["plugins"]` entry (or a pip
+  `gaworld.plugins` entry point). The main loop contains zero
+  subsystem-private logic.
+- **Runtime intervention**: `Controller.intervene` ships `set_agent_state`,
+  `update_config`, `remove_agent` (applied at day boundaries), and
+  `inject_life_event` out of the box; every call is audited.
+
+See the [Plugin Authoring Guide](./docs/PLUGIN_AUTHORING.md) for the event
+catalog and worked examples.
 
 ## Project Structure
 
@@ -74,8 +103,12 @@ canonical home — `from memory_store import X` keeps working unchanged
 but `from gaworld.memory.store import X` is the preferred path for new
 code.
 
-- `generative_city_sim.py`: main simulator + CLI entrypoint (being progressively split)
+- `generative_city_sim.py`: main simulator + CLI entrypoint (pipeline scaffolding; subsystem logic lives in plugins)
 - `config.py`: CONFIG compat shim — re-exports `gaworld.settings.CONFIG`
+- `gaworld/kernel/`: the microkernel — clock, event bus, plugin registry, controller, recorder, sim context, standard interventions
+- `gaworld/plugins/`: built-in plugin assembly (`builtin_plugins()`)
+- `gaworld/sim/pipeline.py`: the configurable agent-step stage pipeline
+- `gaworld/{policy,skills,events,economy,world,work,behavior}/plugin.py` + `gaworld/interests_plugin.py`: the nine built-in plugins
 - `gaworld/settings/`: layered config fragments (LLM, runtime, behavior, economy, environment, integrations, overrides)
 - `gaworld/core/`: typed `Agent` dataclass adapter and concurrent `parallel_map` runner
 - `gaworld/llm/providers.py`: provider wrappers (Ollama / OpenAI-compatible / Anthropic-compatible) and the `LLM_ROUTER` dispatcher
@@ -103,7 +136,7 @@ code.
 - `data/citymap.md`: city map data
 - `scripts/`: launch and developer utilities
 - `docs/`: tutorials, integration notes, design docs, refactor history (`REFACTOR_PLAN.md`, `REFACTOR_BASELINE.md`, `PROJECT_STRUCTURE.md`)
-- `site/dashboard/`: local dashboard frontend
+- `site/dashboard/`: local dashboard frontend (console `index.html` + Agent Studio `studio.html`)
 - `site/simviz/`: playback viewer
 - `output/`: generated artifacts
 
@@ -249,6 +282,38 @@ The local dashboard provides:
 The dashboard stores local overrides in `dashboard_config.json`.
 Those values override `config.py` at runtime.
 
+### Agent Studio
+
+Agent Studio is a focused, single-agent builder and inspector reachable from the
+console toolbar (**Agent Studio ↗**) or directly at
+`http://127.0.0.1:8766/site/dashboard/studio.html`. It presents one agent across
+seven steps, all bound to GAWorld's real seed model:
+
+1. **Identity** — name, gender, age, hukou, residence, and the narrative profile
+2. **State & Personality** — the nine normalized `[0,1]` state variables (`emotion`, `stress`, `econ_security`, `city_identity`, `policy_sensitivity`, `platform_dependence`, `risk_preference`, `voice_propensity`, `mobility_intent`) as live sliders + an editable radar
+3. **Abilities & Skills** — the global Skill library
+4. **Memory** — episodic / habit / intention / schedule counts and a memory graph
+5. **Social & Relationships** — real Dunbar tiers (`inner`/`close`/`acquaintance`/`weak`) and a closeness-ranked relationship list once a run has produced them
+6. **Behavior & Goals** — the behavior-driving state dials
+7. **Review & Deploy** — a full summary, an optional LLM interview, save, and "run simulation with this agent"
+
+Edits are written back to the real seed files: state variables and identity go to
+the state CSV (`data/hangzhou_agents_state_init.csv`) and are mirrored into the
+profile Markdown's state lines; narrative edits go to the profile block; and
+"create" appends both a CSV row and a profile block. Social and finance panels
+read post-run artifacts from `output/memory` and `output/economy` and degrade
+gracefully before a run.
+
+Backend API (added to `dashboard_server.py`):
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/agents/{id}/state` | identity + nine state variables |
+| GET | `/api/agents/{id}/detail` | aggregate: state, profile, memory counts, finance, social, skills |
+| GET | `/api/skills` | global Skill library |
+| POST | `/api/agents/{id}/state` | write state/identity to the CSV (+ profile sync) |
+| POST | `/api/agents` | create a new agent (CSV row + profile block) |
+
 ## Configuration
 
 All base settings live in `config.py`.
@@ -264,8 +329,8 @@ Important fields:
 - `llm.routing.tasks`: task-specific provider overrides
 - `memory_dir`, `log_dir`, `vector_db_path`: persistence locations
 - `visualization.output_dir`: trace output folder
-- `economy`: personal finance settings (tax brackets, social insurance rates, Engel curve, investment, macro cycle, shocks)
-- `interests`: per-agent hobby and skill-growth settings (enable switch, item cap, insert tendency, progress persistence)
+- `economy`: personal finance settings (tax brackets, social insurance rates, Engel curve, investment incl. `market_correlation`, macro cycle, shocks, sector pools `sectors`, credit line `credit`, payment routing `routing`, friend loans `friend_loans`)
+- `interests`: per-agent hobby and skill-growth settings (enable switch, item cap, insert tendency, progress persistence, day-end forgetting `decay`, interest-set `evolution`)
 - `dynamic_behavior`: dynamic behavior system settings (enabled flag)
 - `environment.local_physical` / `environment.anomaly` / `environment.replan` / `environment.spatial_preferences`: physical-perception and reactive-replanning switches and thresholds
 - `skills`: reusable Skill library settings (global dir, cognition/work-brief injection, per-prompt cap)
@@ -274,6 +339,10 @@ Important fields:
 - `intervention`: lightweight recommendation / exposure control and evaluation settings
 - `policy_events`: scheduled policy shocks
 - `distributed`: multi-machine communication settings
+- `plugins`: third-party plugin declarations (`[{"class": "pkg.mod:Class", "enabled": true}, ...]`)
+- `pipeline.agent_step`: cognition-stage order (omit a stage to ablate it; insert `"module:function"` paths for custom stages)
+- `controller.validators`: action-validator switches (`location_exists` default on, `venue_open` default off)
+- `extensions.hooks`: user extension hooks (`{event: ["module:function", ...]}`)
 
 ### Log Output Mode
 
@@ -342,11 +411,42 @@ automatically recalculated whenever salary changes.
 
 Agents hold four separate accounts: checking (活期), savings (储蓄), investment (投资), and
 housing fund (公积金). Risk preference maps to three portfolio profiles — conservative
-(deposits 70% / funds 25% / stocks 5%), moderate (40/40/20), and aggressive (15/35/50). Each
-month, investment returns are simulated using Gaussian distributions calibrated to each asset
-class (deposits ~2.5% annual, funds ~6%±8%, stocks ~8%±22%). Excess checking balance is
-automatically transferred to savings and investment accounts based on a configurable buffer
-threshold.
+(deposits 70% / funds 25% / stocks 5%), moderate (40/40/20), and aggressive (15/35/50).
+Monthly investment returns combine a **common market factor** (drawn once per month and shared
+by all agents, so market-wide booms and crashes hit everyone together) with idiosyncratic
+noise; `investment.market_correlation` (default 0.7) controls the systematic share. Excess
+checking balance is automatically transferred to savings and investment accounts based on a
+configurable buffer threshold.
+
+**Money Conservation & Sector Pools**
+
+Every agent money flow has a counterparty in one of three aggregate sector pools — **firms**,
+**government**, and **bank** — so total money in the system is conserved to the cent after
+initialization. Wages are paid out of the firms pool; consumption flows back to firms; taxes
+and social insurance are withheld monthly on *realized* gross wages and routed to government;
+investment gains/losses settle against the bank pool; medical reimbursements are paid by
+government to firms. Pools may go negative (e.g. firms financing net household savings — the
+stock-flow-consistent mirror image). A daily audit is exported to
+`output/economy/conservation_audit.csv` (drift must stay ≤ 0.01 CNY) alongside
+`sectors.json`, and GAWorld-Bench Track A treats conservation as a hard gate.
+
+**Cash Constraint, Credit & Friend Loans**
+
+Spending is funded in strict order: checking → savings drawdown → bank credit line (default
+2× net monthly salary, 18% APR, interest capitalized monthly, auto-repaid from surplus) →
+truncation. When liquidity falls below one month of expenses, discretionary categories are cut
+harder than necessities via income elasticity. Agents whose spending was truncated are in
+*financial distress*: their stress rises, and at day end they can borrow interest-free from
+close, liquid friends over the social network (ranked by closeness × trust); friend debts are
+tracked bilaterally and repaid before bank debt at monthly settlement.
+
+**Payment Routing to Agents**
+
+A share of local consumption (`routing.merchant_labor_share`, default 35%) is passed on — via
+the firms pool — to service/trade agents whose workplace matches the spend location, and rent
+is routed to landlord agents (profile keyword match) when any exist. Money therefore
+circulates *between agents*, letting wealth distribution emerge instead of being a set of
+independent random walks.
 
 **Macro-Economic Cycles & Shock Events**
 
@@ -354,12 +454,15 @@ A simulation-level macro cycle rotates through four phases — expansion, peak, 
 trough — each lasting 60–180 days. Each phase applies multipliers to income, expenses, layoff
 risk, and raise probability. Industry-specific conditions (tech, finance, medical, education,
 service, trade) shift independently. Inflation accumulates daily and erodes purchasing power.
-At the individual level, agents face random economic shocks: layoffs (income cut 50–85%,
-recovery 30–90 days), raises/promotions, medical emergencies (with social insurance
-reimbursement at 50–85%), and annual year-end bonuses (13th-month salary).
+At the individual level, agents face random economic shocks: layoffs (income cut 50–85% with
+the monthly tax base reduced accordingly, recovery 30–90 days), raises/promotions, medical
+emergencies (with social insurance reimbursement at 50–85%), and annual year-end bonuses
+(13th-month salary). The economy runs on its own seeded RNG stream (`random_seed`-derived), so
+trajectories stay reproducible regardless of what other modules draw from the global RNG.
 
-Economy outputs include `output/economy/daily_ledger.csv`, per-agent ledgers, wealth snapshots,
-and `macro_state.json`.
+Economy outputs include `output/economy/daily_ledger.csv` (now with a `debt` column),
+per-agent ledgers, wealth snapshots, `macro_state.json`, `sectors.json`, and
+`conservation_audit.csv`.
 
 ### Location System
 
@@ -426,6 +529,24 @@ The simulator uses this profile in four places:
   high-commitment work, school, medical, or sleep activities;
 - episodes record `growth_matches` and `growth_progress`, then update level,
   total minutes, last practiced day, and streak counters.
+
+Practice follows a power-law learning curve — the higher an item's level, the
+smaller each gain — while an unbroken streak adds momentum. Crossing level
+0.35 / 0.60 / 0.85 emits a milestone event (入门/熟练/精通) into
+`growth_progress`, so diaries and reflections can reference tangible progress.
+Each item also carries a derived development phase after Hidi & Renninger
+(触发期 → 维持期 → 浮现期 → 成熟期) that is shown in prompt context, so an
+agent's self-image matures with practice.
+
+At day end the profile itself evolves (config: `CONFIG["interests"]["decay"]`
+and `CONFIG["interests"]["evolution"]`): items unpracticed past a grace period
+lose level — retention rises with accumulated practice, and decay is
+phase-aware (fragile triggered-phase items fade faster, well-developed ones
+barely decay) — and idle gaps break streaks. Stale barely-started items are
+eventually retired, while new interests can be adopted from the day's social
+partners (interest contagion), so the interest set turns over instead of
+staying frozen at bootstrap. All of this is pure rules — no extra LLM calls —
+and the on-disk schema is unchanged.
 
 Growth data is runtime state, not source profile data. It is cached globally in
 `output/memory/growth_profiles.json` and persisted per agent as
@@ -584,6 +705,7 @@ Generated artifacts are written under `output/`, including:
 - `output/memory/agent_<id>_skills/*.md`
 - `output/memory/vector_db.sqlite`
 - `output/economy/daily_ledger.csv`, `wealth_snapshot.csv`, `macro_state.json`
+- `output/economy/sectors.json`, `conservation_audit.csv` (sector pools + daily money-conservation audit)
 - `output/economy/agents/agent_<id>_ledger.csv`, `agent_<id>_snapshot.json`
 - `output/environment/timeline.jsonl`
 - `output/intervention/intervention_metrics.csv`
@@ -603,17 +725,14 @@ Generated artifacts are written under `output/`, including:
 ## Additional Docs
 
 - [中文 README](./README.zh-CN.md)
-<<<<<<< Updated upstream
 - [Full Tutorial](./docs/TUTORIAL.v2.md) (complete — covers all features)
 - [Quickstart](./docs/TUTORIAL.md)
-=======
-- [Tutorial](./docs/TUTORIAL.md)
-- [User Tutorial](./docs/GAWORLD_USER_TUTORIAL.md)
+- [Plugin Authoring Guide](./docs/PLUGIN_AUTHORING.md) (extend GAWorld without touching the core)
+- [Microkernel Architecture Design](./docs/proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [Skill System](./docs/SKILL_SYSTEM.md)
 - [Real Work — Usage](./docs/REAL_WORK_USAGE.md) · [Design](./docs/REAL_WORK_DESIGN.md)
 - [Physical Environment Perception & Reactive Replanning](./docs/physical_env_perception_changelog.md)
 - [Social Network — Design](./docs/SOCIAL_NETWORK_DESIGN.md) · [Tutorial](./docs/SOCIAL_NETWORK_TUTORIAL.md)
 - [Project Structure](./docs/PROJECT_STRUCTURE.md)
->>>>>>> Stashed changes
 - [Repository Guidelines](./AGENTS.md)
 - [Changelog](./CHANGELOG.md)

@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import re
@@ -23,8 +24,32 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 DASHBOARD_ROOT = os.path.join(REPO_ROOT, "site", "dashboard")
 DASHBOARD_CONFIG_PATH = os.path.join(REPO_ROOT, "dashboard_config.json")
 PROFILE_PATH = os.path.join(REPO_ROOT, CONFIG.get("md_path", "data/hangzhou_profiles_with_names.md"))
+STATE_CSV_PATH = os.path.join(REPO_ROOT, CONFIG.get("csv_path", "data/hangzhou_agents_state_init.csv"))
+ECONOMY_SNAPSHOT_PATH = os.path.join(REPO_ROOT, "output", "economy", "wealth_snapshot.csv")
+SKILLS_DIR = os.path.join(REPO_ROOT, CONFIG.get("skills", {}).get("global_dir", "data/skills"))
+CAPABILITIES_CACHE_PATH = os.path.join(
+    REPO_ROOT, CONFIG.get("real_work", {}).get("capabilities_cache", "output/work/capabilities.json")
+)
+RELAY_STATE_PATH = os.path.join(
+    REPO_ROOT,
+    CONFIG.get("distributed", {}).get("server", {}).get("state_path", "output/distributed/relay_state.json"),
+)
 RUN_LOG_PATH = os.path.join(REPO_ROOT, "output", "dashboard", "simulation_run.log")
 PROFILE_HEADER_RE = re.compile(r"^## Profile\s+(\d+)\s*[｜|]\s*(.+?)\s*$", re.MULTILINE)
+
+# The nine normalized [0,1] state variables that seed each agent. Order matters
+# only for display; the CSV column order is preserved on write regardless.
+STATE_VAR_KEYS = (
+    "emotion",
+    "stress",
+    "econ_security",
+    "city_identity",
+    "policy_sensitivity",
+    "platform_dependence",
+    "risk_preference",
+    "voice_propensity",
+    "mobility_intent",
+)
 
 RUN_STATE = {
     "process": None,
@@ -187,6 +212,436 @@ def _save_agent_profile(agent_id, profile_text):
     with open(PROFILE_PATH, "w", encoding="utf-8") as f:
         f.write(updated)
     return _agent_profile(agent_id)
+
+
+# ---------------------------------------------------------------------------
+# Agent state (CSV seed) read / write, skills, finance, and agent creation.
+# The CSV is the machine-readable seed the simulator loads; the Markdown
+# profile is the narrative twin. Studio edits go to the CSV for state vars and
+# to the profile block for narrative, mirroring how imported agents are stored.
+# ---------------------------------------------------------------------------
+
+def _read_state_rows():
+    if not os.path.exists(STATE_CSV_PATH):
+        return [], []
+    with open(STATE_CSV_PATH, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = [dict(row) for row in reader]
+    return fieldnames, rows
+
+
+def _row_id(row):
+    try:
+        return int(float(row.get("id")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _num(value, default=0.5):
+    try:
+        return round(float(value), 4)
+    except (TypeError, ValueError):
+        return default
+
+
+def _state_row_to_payload(row):
+    try:
+        age = int(float(row.get("age")))
+    except (TypeError, ValueError):
+        age = None
+    return {
+        "id": _row_id(row),
+        "name": (row.get("name") or "").strip(),
+        "gender": (row.get("gender") or "").strip(),
+        "age": age,
+        "hukou": (row.get("hukou") or "").strip(),
+        "residence": (row.get("residence") or "").strip(),
+        "state": {key: _num(row.get(key)) for key in STATE_VAR_KEYS},
+    }
+
+
+def _agent_state(agent_id):
+    _, rows = _read_state_rows()
+    for row in rows:
+        if _row_id(row) == int(agent_id):
+            return _state_row_to_payload(row)
+    return None
+
+
+def _atomic_write_state(fieldnames, rows):
+    tmp_path = STATE_CSV_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+    os.replace(tmp_path, STATE_CSV_PATH)
+
+
+def _save_agent_state(agent_id, payload):
+    fieldnames, rows = _read_state_rows()
+    if not fieldnames:
+        raise ValueError("State CSV is missing or empty")
+    target = next((row for row in rows if _row_id(row) == int(agent_id)), None)
+    if target is None:
+        raise ValueError(f"Agent {agent_id} not found in state CSV")
+    for key in ("name", "gender", "hukou", "residence"):
+        if payload.get(key) not in (None, ""):
+            target[key] = str(payload[key])
+    if payload.get("age") not in (None, ""):
+        target["age"] = str(int(payload["age"]))
+    incoming = payload.get("state") or {}
+    for key in STATE_VAR_KEYS:
+        if incoming.get(key) is not None:
+            target[key] = round(max(0.0, min(1.0, float(incoming[key]))), 4)
+    _atomic_write_state(fieldnames, rows)
+    result = _agent_state(agent_id)
+    try:
+        _sync_profile_state_lines(agent_id, result["state"])
+    except Exception:  # noqa: BLE001 - narrative sync is best-effort, never blocks the CSV write
+        _LOG.exception("profile state sync failed for agent %s", agent_id)
+    return result
+
+
+def _sync_profile_state_lines(agent_id, state):
+    """Mirror the CSV state onto the profile Markdown so the two don't drift.
+
+    The CSV is authoritative. This rewrites only the two structured lines a
+    profile block carries — the ``**研究增强变量初始化**`` bullets and the
+    ``**核心状态变量**`` summary — leaving all narrative prose untouched. If a
+    profile lacks those lines, nothing is changed.
+    """
+    section = _agent_profile(agent_id)
+    if not section:
+        return
+    text = section["text"]
+    core = (
+        f"**核心状态变量**：emotion {state['emotion']:.2f}｜stress {state['stress']:.2f}｜"
+        f"econ_security {state['econ_security']:.2f}｜city_identity {state['city_identity']:.2f}"
+    )
+    new_text = re.sub(r"\*\*核心状态变量\*\*：.*", core, text)
+    for key in ("policy_sensitivity", "platform_dependence", "risk_preference", "voice_propensity", "mobility_intent"):
+        new_text = re.sub(rf"^- {key}：.*$", f"- {key}：{state[key]:.2f}", new_text, flags=re.MULTILINE)
+    if new_text != text:
+        _save_agent_profile(agent_id, new_text)
+
+
+def _social_snapshot(agent_id):
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_relationships.json")
+    rels = _read_json_file(path, {})
+    if not isinstance(rels, dict) or not rels:
+        return None
+    tier_counts = {"inner": 0, "close": 0, "acquaintance": 0, "weak": 0}
+    relations = []
+    for key, item in rels.items():
+        if not isinstance(item, dict):
+            continue
+        tier = item.get("dunbar_tier") or ""
+        if tier in tier_counts:
+            tier_counts[tier] += 1
+        profile = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+        relations.append({
+            "id": key,
+            "name": profile.get("name") or str(key),
+            "role": item.get("role") or "",
+            "kind": item.get("kind") or "agent",
+            "tier": tier,
+            "closeness": _num(item.get("closeness"), 0.0),
+            "trust": _num(item.get("trust"), 0.0),
+        })
+    relations.sort(key=lambda r: r["closeness"], reverse=True)
+    return {"count": len(relations), "tier_counts": tier_counts, "relations": relations[:40]}
+
+
+def _scan_skill_dir(directory):
+    items = []
+    if os.path.isdir(directory):
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith(".md"):
+                continue
+            title = name[:-3]
+            try:
+                with open(os.path.join(directory, name), "r", encoding="utf-8") as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if stripped.startswith("#"):
+                            title = stripped.lstrip("#").strip() or title
+                            break
+            except OSError:
+                pass
+            items.append({"file": name, "title": title})
+    return items
+
+
+def _skills_library():
+    return _scan_skill_dir(SKILLS_DIR)
+
+
+def _private_skills(agent_id):
+    # Mirrors SkillRegistry._private_dir: {memory_dir}/agent_{id}_skills
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    return _scan_skill_dir(os.path.join(REPO_ROOT, memory_dir, f"agent_{int(agent_id)}_skills"))
+
+
+def _capabilities_snapshot(agent_id):
+    data = _read_json_file(CAPABILITIES_CACHE_PATH, {})
+    if not isinstance(data, dict):
+        return None
+    entry = data.get(str(int(agent_id)))
+    return entry if isinstance(entry, dict) else None
+
+
+def _rag_snapshot(memory_items):
+    # External-RAG memories are tagged with the [额外信息…] prefix (gaworld/sim/_rag.py).
+    items = []
+    for item in memory_items if isinstance(memory_items, list) else []:
+        text = str(item).strip()
+        if text.startswith("[额外信息"):
+            items.append(text[:300])
+    return {"count": len(items), "items": items[:20]}
+
+
+def _growth_snapshot(agent_id):
+    from gaworld.interests import load_agent_growth_profile
+
+    memory_dir = os.path.join(REPO_ROOT, _effective_config().get("memory_dir", "output/memory"))
+    profile = load_agent_growth_profile(int(agent_id), memory_dir)
+    return profile or None
+
+
+def _openclaw_snapshot(agent_id):
+    cfg = CONFIG.get("openclaw", {}) or {}
+    state = _read_json_file(RELAY_STATE_PATH, {})
+    directory = state.get("directory") if isinstance(state, dict) else {}
+    directory = directory if isinstance(directory, dict) else {}
+
+    entry = None
+    openclaw_ids = set()
+    for cluster, cluster_map in directory.items():
+        if not isinstance(cluster_map, dict):
+            continue
+        for aid, item in cluster_map.items():
+            if not isinstance(item, dict):
+                continue
+            if item.get("agent_type") == "openclaw":
+                openclaw_ids.add(str(aid))
+            if str(aid) == str(int(agent_id)) and entry is None:
+                entry = {**item, "cluster": cluster}
+
+    sent = received = 0
+    messages = state.get("messages") if isinstance(state, dict) else []
+    for msg in messages if isinstance(messages, list) else []:
+        if not isinstance(msg, dict):
+            continue
+        frm, to = str(msg.get("from_agent")), str(msg.get("to_agent"))
+        if frm == str(int(agent_id)) and to in openclaw_ids:
+            sent += 1
+        elif to == str(int(agent_id)) and frm in openclaw_ids:
+            received += 1
+
+    is_openclaw = bool(entry and entry.get("agent_type") == "openclaw")
+    return {
+        "enabled": bool(cfg.get("enabled")),
+        "registered": entry is not None,
+        "is_openclaw_agent": is_openclaw,
+        "cluster": entry.get("cluster") if entry else None,
+        "node_id": entry.get("node_id") if entry else None,
+        "messages_sent": sent,
+        "messages_received": received,
+        "connected": is_openclaw or (sent + received) > 0,
+    }
+
+
+def _cognition_snapshot(capabilities, growth, memory_counts, rag):
+    """Derived cognitive index — NOT a measured IQ.
+
+    Transparent composite of what the simulation actually tracks:
+    skill breadth, deliverable capacity, growth levels, memory volume,
+    and external (RAG) knowledge, mapped onto a familiar 60–140 scale.
+    """
+    caps = capabilities or {}
+    growth_items = (growth or {}).get("items", []) or []
+    avg_level = (
+        sum(_num(item.get("level"), 0.0) for item in growth_items) / len(growth_items)
+        if growth_items else 0.0
+    )
+    memory_total = sum(v for v in memory_counts.values() if isinstance(v, (int, float)))
+    components = {
+        "skill_breadth": min(1.0, len(caps.get("skills") or []) / 6.0),
+        "deliverable_capacity": min(1.0, len(caps.get("deliverables") or []) / 4.0),
+        "growth_level": avg_level,
+        "memory_volume": min(1.0, memory_total / 200.0),
+        "external_knowledge": min(1.0, rag.get("count", 0) / 10.0),
+    }
+    weights = {
+        "skill_breadth": 0.25,
+        "deliverable_capacity": 0.15,
+        "growth_level": 0.25,
+        "memory_volume": 0.2,
+        "external_knowledge": 0.15,
+    }
+    score01 = sum(components[key] * weights[key] for key in weights)
+    return {
+        "score": round(60 + score01 * 80),
+        "score01": round(score01, 4),
+        "components": {key: round(value, 4) for key, value in components.items()},
+    }
+
+
+def _agent_card(identity, capabilities, private_skills, growth, openclaw):
+    caps = capabilities or {}
+    skills = list(caps.get("skills") or [])
+    for skill in private_skills:
+        if skill["title"] not in skills:
+            skills.append(skill["title"])
+    interests = list(caps.get("interests") or [])
+    for item in (growth or {}).get("items", []) or []:
+        name = item.get("name")
+        if name and name not in interests:
+            interests.append(name)
+    return {
+        "schema": "gaworld.agent-card/v1",
+        "id": identity["id"],
+        "name": identity["name"],
+        "description": " · ".join(
+            str(part) for part in (identity.get("gender"), f"{identity.get('age')}岁", identity.get("residence")) if part
+        ),
+        "job_label": caps.get("job_label") or "",
+        "skills": skills,
+        "interests": interests,
+        "deliverables": list(caps.get("deliverables") or []),
+        "adapters": list(caps.get("adapter_priority") or []),
+        "openclaw_connected": bool(openclaw.get("connected")),
+        "endpoints": {
+            "detail": f"/api/agents/{identity['id']}/detail",
+            "interview": "/api/interview",
+        },
+    }
+
+
+def _finance_snapshot(agent_id):
+    if not os.path.exists(ECONOMY_SNAPSHOT_PATH):
+        return None
+    try:
+        with open(ECONOMY_SNAPSHOT_PATH, "r", encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                try:
+                    if int(float(row.get("agent_id"))) == int(agent_id):
+                        return dict(row)
+                except (TypeError, ValueError):
+                    continue
+    except OSError:
+        return None
+    return None
+
+
+def _agent_detail(agent_id):
+    state = _agent_state(agent_id)
+    if state is None:
+        return None
+    profile = _agent_profile(agent_id) or {}
+    memory = _memory_payload(agent_id)
+
+    def _count(value):
+        return len(value) if isinstance(value, (list, dict)) else 0
+
+    identity = {
+        "id": state["id"],
+        "name": state["name"],
+        "gender": state["gender"],
+        "age": state["age"],
+        "hukou": state["hukou"],
+        "residence": state["residence"],
+    }
+    memory_counts = {
+        "long_term": _count(memory.get("memory")),
+        "habits": _count(memory.get("habits")),
+        "intentions": _count(memory.get("intentions")),
+        "schedule": _count(memory.get("schedule")),
+    }
+    capabilities = _capabilities_snapshot(agent_id)
+    private_skills = _private_skills(agent_id)
+    growth = _growth_snapshot(agent_id)
+    rag = _rag_snapshot(memory.get("memory"))
+    openclaw = _openclaw_snapshot(agent_id)
+    return {
+        "identity": identity,
+        "state": state["state"],
+        "profile_text": profile.get("text", ""),
+        "memory_counts": memory_counts,
+        "finance": _finance_snapshot(agent_id),
+        "social": _social_snapshot(agent_id),
+        "skills": _skills_library(),
+        "private_skills": private_skills,
+        "capabilities": capabilities,
+        "growth": growth,
+        "rag": rag,
+        "openclaw": openclaw,
+        "cognition": _cognition_snapshot(capabilities, growth, memory_counts, rag),
+        "agent_card": _agent_card(identity, capabilities, private_skills, growth, openclaw),
+    }
+
+
+def _next_agent_id():
+    _, rows = _read_state_rows()
+    ids = [rid for rid in (_row_id(row) for row in rows) if rid is not None]
+    _, sections = _profile_sections()
+    ids.extend(section["id"] for section in sections)
+    return (max(ids) + 1) if ids else 1
+
+
+def _create_agent(payload):
+    from gaworld.sim.agents_loader import _clip_state_value, _format_imported_profile_block
+
+    agent_id = _next_agent_id()
+    state_in = payload.get("state") or {}
+    defaults = {
+        "emotion": 0.55,
+        "stress": 0.5,
+        "econ_security": 0.5,
+        "city_identity": 0.5,
+        "policy_sensitivity": 0.5,
+        "platform_dependence": 0.5,
+        "risk_preference": 0.5,
+        "voice_propensity": 0.5,
+        "mobility_intent": 0.5,
+    }
+    state = {key: _clip_state_value(state_in.get(key), defaults[key]) for key in STATE_VAR_KEYS}
+    profile_payload = {
+        "name": str(payload.get("name") or f"新智能体{agent_id}"),
+        "gender": str(payload.get("gender") or "未知"),
+        "age": int(payload.get("age") or 30),
+        "hukou": str(payload.get("hukou") or "未知"),
+        "residence": str(payload.get("residence") or "杭州"),
+        "job": str(payload.get("job") or "待补充"),
+        "personality": str(payload.get("personality") or "待补充"),
+        "daily_life": str(payload.get("daily_life") or "待补充"),
+        "values": str(payload.get("values") or "待补充"),
+        "education_income": str(payload.get("education_income") or "待补充"),
+        "social_network": str(payload.get("social_network") or "待补充"),
+        "state": state,
+    }
+    fieldnames, rows = _read_state_rows()
+    if not fieldnames:
+        raise ValueError("State CSV is missing or empty")
+    new_row = {
+        "id": agent_id,
+        "name": profile_payload["name"],
+        "gender": profile_payload["gender"],
+        "age": profile_payload["age"],
+        "hukou": profile_payload["hukou"],
+        "residence": profile_payload["residence"],
+    }
+    new_row.update({key: state[key] for key in STATE_VAR_KEYS})
+    rows.append({key: new_row.get(key, "") for key in fieldnames})
+    _atomic_write_state(fieldnames, rows)
+
+    with open(PROFILE_PATH, "a", encoding="utf-8") as f:
+        f.write(_format_imported_profile_block(agent_id, profile_payload))
+
+    return {"id": agent_id, "name": profile_payload["name"], "state": _agent_state(agent_id)}
 
 
 def _tail_text(path, max_chars=12000):
@@ -406,12 +861,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_config_summary())
         if path == "/api/agents":
             return self._json_response({"agents": _agents_summary()})
+        if path == "/api/skills":
+            return self._json_response({"skills": _skills_library()})
         if path.startswith("/api/agents/") and path.endswith("/profile"):
             agent_id = path.split("/")[3]
             profile = _agent_profile(agent_id)
             if not profile:
                 return self._json_response({"error": "Profile not found"}, status=404)
             return self._json_response(profile)
+        if path.startswith("/api/agents/") and path.endswith("/state"):
+            agent_id = path.split("/")[3]
+            state = _agent_state(agent_id)
+            if state is None:
+                return self._json_response({"error": "Agent not found"}, status=404)
+            return self._json_response(state)
+        if path.startswith("/api/agents/") and path.endswith("/detail"):
+            agent_id = path.split("/")[3]
+            detail = _agent_detail(agent_id)
+            if detail is None:
+                return self._json_response({"error": "Agent not found"}, status=404)
+            return self._json_response(detail)
         if path.startswith("/api/agents/") and path.endswith("/memory"):
             agent_id = path.split("/")[3]
             return self._json_response(_memory_payload(agent_id))
@@ -427,9 +896,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         payload = self._read_json_body()
         if path == "/api/config":
             return self._json_response(_save_config_patch(payload))
+        if path == "/api/agents":
+            return self._json_response(_create_agent(payload))
         if path.startswith("/api/agents/") and path.endswith("/profile"):
             agent_id = path.split("/")[3]
             return self._json_response(_save_agent_profile(agent_id, payload.get("text", "")))
+        if path.startswith("/api/agents/") and path.endswith("/state"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_save_agent_state(agent_id, payload))
         if path == "/api/run/start":
             return self._json_response(_start_simulation(payload))
         if path == "/api/run/stop":

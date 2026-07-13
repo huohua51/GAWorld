@@ -14,6 +14,7 @@
 | RAG 外部知识注入 | 向某 agent 注入外部信息以改变其认知 | `python generative_city_sim.py rag-add --agent-id 31 --text "..."` / `rag-import --file ...` |
 | 事件对照实验 | 在"有事件 / 无事件"两分支并行仿真并出对比报告 | `python generative_city_sim.py compare-event --event-name "..." --sim-days 3 --seed 42` |
 | 本地 Dashboard | 配置编辑、运行控制、记忆查看、访谈、日志查看 | `python generative_city_sim.py dashboard --port 8766` → `http://127.0.0.1:8766/dashboard` |
+| Agent Studio | 单智能体 7 步可视化构建/查看：身份、九维状态（可编辑雷达）、技能、记忆、Dunbar 社交、行为、复核部署；写回 CSV+profile，可创建新 agent | 控制台工具栏「Agent Studio ↗」→ `http://127.0.0.1:8766/site/dashboard/studio.html` |
 | 轨迹回放查看器 | 可视化回放智能体移动轨迹 | `python generative_city_sim.py serve-viz --port 8000` → `/site/simviz/index.html` |
 | 分布式 relay | 多机协同仿真，各节点处理本地 agent 子集 | `python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877` |
 | 城市地图生成 | 用自然语言描述生成城市地图（节点 / 道路 / 地铁） | `python scripts/generate_citymap.py --description "..."` |
@@ -24,10 +25,10 @@
 |---|---|---|
 | 多后端 LLM 路由 | Ollama / OpenAI 兼容 / Anthropic 兼容，可按任务分流模型 | `CONFIG["llm"]["routing"]["default"]` / `["tasks"]`；环境变量 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等 |
 | 记忆系统 | 短期 / 情景 / 长期总结 / 关系记忆 + 向量召回，跨天保持一致性 | 自动运行；`CONFIG["memory"]`；产物 `output/memory/` |
-| 经济仿真 | 个税 7 档累进 + 五险一金、恩格尔消费、四账户投资、宏观周期与冲击 | `CONFIG["economy"]`；产物 `output/economy/` |
+| 经济仿真 | 货币守恒闭环（企业/政府/银行部门池）、个税 + 五险一金真实代扣、恩格尔消费、现金约束 + 信贷、投资含共同市场因子、消费/房租路由到 agent、熟人借贷、宏观周期与冲击 | `CONFIG["economy"]`（子块 `sectors`/`credit`/`routing`/`friend_loans`）；产物 `output/economy/`（含 `conservation_audit.csv`、`sectors.json`） |
 | 位置系统与交通 | 类别空间匹配、真实出行成本、高峰 / 天气影响、通勤记忆、区域价格 | 自动运行（依赖 `data/citymap.md`）；`gaworld/world/city_map.py` |
 | 动态行为系统 | 承诺度感知中断、情绪即兴行为、社交偶遇链、环境事件级联、需求中断与日程恢复 | `CONFIG["dynamic_behavior"]["enabled"]` |
-| 兴趣爱好与技能成长 | 为每个 agent 派生成长画像，影响日程、动作权重与工作选择 | `CONFIG["interests"]["enabled"]`；产物 `output/memory/agent_<id>_growth.json` |
+| 兴趣爱好与技能成长 | 为每个 agent 派生成长画像并动态演化（幂律学习、里程碑、遗忘衰减、发展四阶段、社交兴趣传染），影响日程、动作权重与工作选择 | `CONFIG["interests"]["enabled"]`（日终机制见 `interests.decay` / `interests.evolution`）；产物 `output/memory/agent_<id>_growth.json` |
 | 社交网络 | 关系衰减、Dunbar 分层、off-screen ghost 事件 | 自动运行；`gaworld/social/network.py`；产物 `output/network/` |
 | 生命事件 | 生日、疾病、换工作等调度事件 | 自动运行；`gaworld/events/life.py` |
 | 政策 / 环境事件 | 政策冲击与环境扰动注入仿真 | `CONFIG["policy_events"]`；`gaworld/env/system.py`；产物 `output/environment/timeline.jsonl` |
@@ -45,7 +46,17 @@
 | 经验 → Skill 自动提炼 | agent 从最近经历自总结私有技能 | `CONFIG["memory"]["skill_consolidation"]["enabled"]`（默认 OFF）；产物 `output/memory/agent_<id>_skills/*.md` |
 | 真实工作任务系统 | agent 按职业 / 技能产出真实产物（HTML / Python / 文章 / 教案 / 研究笔记）并接单结算 | `CONFIG["real_work"]["enabled"]`；产物 `output/work/agent_<id>/<task_id>/` |
 
-## 四、运维与调试
+## 四、微内核插件体系（2026-07）
+
+| 功能特性 | 作用 | 访问方法 |
+|---|---|---|
+| 认知管线消融 / 定制 | agent step 是 12 个命名阶段的可配置序列，可消融（如去掉反思）、替换或插入自定义阶段 | `CONFIG["pipeline"]["agent_step"]`（内置名或 `"module:function"` 路径） |
+| 第三方插件 | 不改核心为仿真加子系统（感知注入、中断源、动作过滤、状态效果等 21 个事件） | `CONFIG["plugins"] = [{"class": "pkg.mod:Class"}]` 或 pip 包 `gaworld.plugins` entry point；指南 [`PLUGIN_AUTHORING.md`](PLUGIN_AUTHORING.md) |
+| 运行时干预 | 模拟运行中改 agent 状态 / 配置 / 注入人生事件 / 移除 agent（日边界生效），全部审计 | `sim.controller.intervene("set_agent_state" \| "update_config" \| "inject_life_event" \| "remove_agent", sim, ...)`；审计 `output/records/controller.intervention.jsonl` |
+| 动作校验门 | move 动作过校验链，deny 审计落盘并在下一 tick 感知回注 | `location_exists` 默认开；`venue_open` 经 `CONFIG["controller"]["validators"]` 开启 |
+| 统一事件流 | 跨插件时间线对齐的结构化记录（自动 `_day`/`_time` 戳） | 产物 `output/records/*.jsonl` |
+
+## 五、运维与调试
 
 | 功能特性 | 作用 | 访问方法 |
 |---|---|---|
@@ -59,6 +70,7 @@
 ## 相关文档
 
 - [完整教程](TUTORIAL.v2.md)
+- [插件作者指南](PLUGIN_AUTHORING.md) · [微内核架构设计](proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统](SKILL_SYSTEM.md) · [真实工作系统使用](REAL_WORK_USAGE.md)
 - [项目结构](PROJECT_STRUCTURE.md) · [中文 README](../README.zh-CN.md) · [English README](../README.md)

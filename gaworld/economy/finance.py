@@ -6,6 +6,9 @@ Refactored to model the Chinese personal economic system with:
   3. Multi-account system (checking / savings / investment / housing-fund)
   4. Investment & savings behaviour driven by risk preference
   5. Macro-economic cycles & micro-economic shock events
+  6. Sector pools (firms / government / bank): every agent money flow has a
+     counterparty, so total money is conserved after initialization and can
+     be audited daily (see conservation_audit.csv)
 
 Hook interface is unchanged: on_simulation_start / on_day_start /
 on_agent_pre_step / on_agent_post_step / on_day_end / on_simulation_end.
@@ -18,6 +21,27 @@ import os
 import random
 from collections import defaultdict
 from copy import deepcopy
+
+# ---------------------------------------------------------------------------
+# 0. MODULE RNG
+# ---------------------------------------------------------------------------
+# Dedicated RNG stream: economy trajectories stay reproducible even when other
+# modules add/remove draws from the global `random` state.
+
+_rng = random.Random()
+
+
+def _seed_rng(context):
+    """Seed the economy RNG from the simulation ``random_seed`` (if set)."""
+    config = context.get("config", {}) if isinstance(context, dict) else {}
+    seed = config.get("random_seed")
+    if seed is None:
+        return
+    try:
+        _rng.seed(f"economy:{int(seed)}")
+    except (TypeError, ValueError):
+        pass
+
 
 # ---------------------------------------------------------------------------
 # 1. DEFAULT CONFIGURATION
@@ -141,6 +165,22 @@ DEFAULT_ECONOMY_CONFIG = {
         "auto_save_enabled": True,
         # Threshold: keep this many months of expenses in checking
         "checking_buffer_months": 2.0,
+        # Share of return variance driven by the common market factor
+        # (1.0 = all agents move together; 0.0 = fully idiosyncratic)
+        "market_correlation": 0.7,
+    },
+
+    # --- Credit & cash constraint ---
+    "credit": {
+        "enabled": True,
+        # Credit line = this many months of net salary
+        "credit_limit_months": 2.0,
+        "annual_interest_rate": 0.18,
+        # Below this many months of liquid assets, discretionary spending
+        # is cut (luxuries harder than necessities, via income elasticity)
+        "hardship_liquidity_months": 1.0,
+        # Floor on the per-category spending cut factor
+        "min_spend_factor": 0.25,
     },
 
     # --- Economic cycle (macro environment) ---
@@ -185,6 +225,36 @@ DEFAULT_ECONOMY_CONFIG = {
         "year_end_bonus_months": 1.0,  # typically 1-3 months
     },
 
+    # --- Payment routing to agents (P3) ---
+    # A share of consumption is passed on (via firms) to the merchant agents
+    # working at the spend location; rent is routed to landlord agents when
+    # any exist. This lets wealth circulate between agents (emergence).
+    "routing": {
+        "enabled": True,
+        "merchant_labor_share": 0.35,
+        "landlord_share": 1.0,
+        "landlord_keywords": ["房东", "包租", "出租"],
+    },
+
+    # --- Friend loans over the social network (P3) ---
+    "friend_loans": {
+        "enabled": True,
+        "max_outstanding_months": 1.0,   # cap vs monthly expenses
+        "lender_buffer_months": 2.0,     # lender keeps this much liquid
+        "willingness_factor": 0.5,       # × closeness×trust × surplus
+    },
+
+    # --- Sector pools (closed-loop money flows) ---
+    # Wages are paid out of the firms pool; consumption revenue flows back to
+    # firms; taxes & social insurance flow to government; investment returns
+    # are settled against the bank pool. Pools may go negative (e.g. firms
+    # financing net household savings) — conservation holds on the total.
+    "sectors": {
+        "initial_firms_balance": 0.0,
+        "initial_government_balance": 0.0,
+        "initial_bank_balance": 0.0,
+    },
+
     # --- Behavior triggers (backward compat) ---
     "rent_income_ratio": 0.22,
     "daily_utilities_cost": 12.0,
@@ -192,8 +262,6 @@ DEFAULT_ECONOMY_CONFIG = {
     "asset_safety_days": 18.0,
     "income_seek_threshold": 0.56,
     "income_seek_probability_scale": 0.9,
-    "wealth_drive_seek_threshold": 0.65,
-    "income_growth_when_deficit": 0.08,
     "income_seek_activities": ["工作", "兼职", "接单", "技能提升"],
     "expense_ranges": {
         "food": [8.0, 26.0], "clothing": [18.0, 120.0],
@@ -207,9 +275,12 @@ DEFAULT_ECONOMY_CONFIG = {
 # 2. KEYWORD TABLES
 # ---------------------------------------------------------------------------
 
+# NOTE: must stay disjoint from EXPENSE_KEYWORDS below — an activity must not
+# simultaneously earn wages and trigger consumption ("学习"/"通勤" were removed:
+# studying is an education expense, commuting a transport expense).
 INCOME_KEYWORDS = [
-    "工作", "上班", "加班", "开会", "办公", "通勤", "接单",
-    "兼职", "经营", "摆摊", "授课", "学习", "复习", "训练",
+    "工作", "上班", "加班", "开会", "办公", "接单",
+    "兼职", "经营", "摆摊", "授课", "复习", "训练",
 ]
 SLEEP_KEYWORDS = ["睡", "就寝", "休息"]
 
@@ -317,7 +388,7 @@ def _rand_between(rng_cfg):
     high = _to_float(rng_cfg[1], low)
     if high < low:
         low, high = high, low
-    return random.uniform(low, high)
+    return _rng.uniform(low, high)
 
 
 def _contains_any(text, keywords):
@@ -521,9 +592,44 @@ def _get_portfolio_weights(agent, cfg):
     return profiles.get(ptype, profiles.get("moderate", {"deposits": 0.5, "funds": 0.3, "stocks": 0.2}))
 
 
-def _simulate_monthly_investment_return(investment_balance, portfolio_weights, cfg, macro_state=None):
+def _macro_return_multiplier(cfg, macro_state):
+    """Cycle-phase multiplier applied to expected investment returns."""
+    if not macro_state or not isinstance(macro_state, dict):
+        return 1.0
+    phase = macro_state.get("phase", "expansion")
+    phase_effects = cfg.get("macro", {}).get("phase_effects", {})
+    effects = phase_effects.get(phase, {})
+    return _to_float(effects.get("income_mult", 1.0), 1.0)
+
+
+def _draw_monthly_market_returns(cfg, macro_state=None):
+    """Draw this month's common (systematic) market return per asset class.
+
+    Drawn ONCE per month and shared by all agents, so market-wide booms and
+    crashes hit everyone together (systemic risk).
+    """
+    inv_cfg = cfg.get("investment", {})
+    asset_returns = inv_cfg.get("asset_returns",
+                                DEFAULT_ECONOMY_CONFIG["investment"]["asset_returns"])
+    rho = _clip(_to_float(inv_cfg.get("market_correlation", 0.7), 0.7), 0.0, 1.0)
+    macro_mult = _macro_return_multiplier(cfg, macro_state)
+    market = {}
+    for asset_class, params in asset_returns.items():
+        annual_mean = _to_float(params[0], 0.02) * macro_mult
+        annual_std = _to_float(params[1], 0.01)
+        monthly_mean = annual_mean / 12.0
+        monthly_std = annual_std / math.sqrt(12.0)
+        market[asset_class] = _rng.gauss(monthly_mean, monthly_std * math.sqrt(rho))
+    return market
+
+
+def _simulate_monthly_investment_return(investment_balance, portfolio_weights, cfg,
+                                        macro_state=None, market_returns=None):
     """Simulate one month of investment returns.
 
+    With `market_returns` (the shared monthly draw), each agent's rate is
+    common factor + idiosyncratic noise; without it, falls back to a fully
+    independent draw (backward compat).
     Returns (return_amount, per_asset_returns_dict).
     """
     inv_cfg = cfg.get("investment", {})
@@ -532,15 +638,8 @@ def _simulate_monthly_investment_return(investment_balance, portfolio_weights, c
 
     asset_returns = inv_cfg.get("asset_returns",
                                 DEFAULT_ECONOMY_CONFIG["investment"]["asset_returns"])
-
-    # Macro environment affects returns
-    macro_mult = 1.0
-    if macro_state and isinstance(macro_state, dict):
-        phase = macro_state.get("phase", "expansion")
-        phase_effects = cfg.get("macro", {}).get("phase_effects", {})
-        effects = phase_effects.get(phase, {})
-        # Investment returns correlate with economic cycle
-        macro_mult = _to_float(effects.get("income_mult", 1.0), 1.0)
+    rho = _clip(_to_float(inv_cfg.get("market_correlation", 0.7), 0.7), 0.0, 1.0)
+    macro_mult = _macro_return_multiplier(cfg, macro_state)
 
     total_return = 0.0
     per_asset = {}
@@ -553,7 +652,13 @@ def _simulate_monthly_investment_return(investment_balance, portfolio_weights, c
         # Convert annual to monthly
         monthly_mean = annual_mean / 12.0
         monthly_std  = annual_std / math.sqrt(12.0)
-        monthly_return_rate = random.gauss(monthly_mean, monthly_std)
+        if isinstance(market_returns, dict) and asset_class in market_returns:
+            # Common market factor + idiosyncratic noise
+            idio_std = monthly_std * math.sqrt(max(0.0, 1.0 - rho))
+            monthly_return_rate = (_to_float(market_returns[asset_class], 0.0)
+                                   + (_rng.gauss(0.0, idio_std) if idio_std > 0 else 0.0))
+        else:
+            monthly_return_rate = _rng.gauss(monthly_mean, monthly_std)
         allocated = investment_balance * weight
         ret = allocated * monthly_return_rate
         per_asset[asset_class] = round(ret, 2)
@@ -610,7 +715,7 @@ def _init_macro_state(cfg):
         "enabled": True,
         "phase": "expansion",
         "phase_day_counter": 0,
-        "phase_duration": random.randint(
+        "phase_duration": _rng.randint(
             int(_to_float(dur_range[0], 60)),
             int(_to_float(dur_range[1], 180))
         ),
@@ -640,7 +745,7 @@ def _advance_macro_cycle(macro_state, cfg):
         macro_state["phase"] = phases[next_idx]
         macro_state["phase_day_counter"] = 0
         dur_range = cfg.get("macro", {}).get("cycle_phase_duration_days", (60, 180))
-        macro_state["phase_duration"] = random.randint(
+        macro_state["phase_duration"] = _rng.randint(
             int(_to_float(dur_range[0], 60)),
             int(_to_float(dur_range[1], 180))
         )
@@ -648,24 +753,24 @@ def _advance_macro_cycle(macro_state, cfg):
         # Adjust inflation & unemployment based on new phase
         phase = macro_state["phase"]
         if phase == "expansion":
-            macro_state["inflation_rate"] *= random.uniform(0.95, 1.05)
-            macro_state["unemployment_rate"] *= random.uniform(0.92, 0.98)
+            macro_state["inflation_rate"] *= _rng.uniform(0.95, 1.05)
+            macro_state["unemployment_rate"] *= _rng.uniform(0.92, 0.98)
         elif phase == "peak":
-            macro_state["inflation_rate"] *= random.uniform(1.02, 1.10)
-            macro_state["unemployment_rate"] *= random.uniform(0.95, 1.02)
+            macro_state["inflation_rate"] *= _rng.uniform(1.02, 1.10)
+            macro_state["unemployment_rate"] *= _rng.uniform(0.95, 1.02)
         elif phase == "contraction":
-            macro_state["inflation_rate"] *= random.uniform(0.90, 1.02)
-            macro_state["unemployment_rate"] *= random.uniform(1.05, 1.15)
+            macro_state["inflation_rate"] *= _rng.uniform(0.90, 1.02)
+            macro_state["unemployment_rate"] *= _rng.uniform(1.05, 1.15)
         elif phase == "trough":
-            macro_state["inflation_rate"] *= random.uniform(0.85, 0.98)
-            macro_state["unemployment_rate"] *= random.uniform(1.00, 1.08)
+            macro_state["inflation_rate"] *= _rng.uniform(0.85, 0.98)
+            macro_state["unemployment_rate"] *= _rng.uniform(1.00, 1.08)
 
         macro_state["inflation_rate"] = _clip(macro_state["inflation_rate"], 0.001, 0.15)
         macro_state["unemployment_rate"] = _clip(macro_state["unemployment_rate"], 0.02, 0.20)
 
         # Shuffle industry conditions slightly
         for ind in macro_state.get("industry_conditions", {}):
-            shift = random.uniform(-0.08, 0.08)
+            shift = _rng.uniform(-0.08, 0.08)
             macro_state["industry_conditions"][ind] = _clip(
                 macro_state["industry_conditions"][ind] + shift, 0.5, 1.5)
 
@@ -731,11 +836,12 @@ def _active_event_layoff(context):
     return False
 
 
-def _check_daily_shocks(agent, econ, cfg, macro_state, event_layoff=False):
+def _check_daily_shocks(agent, econ, cfg, macro_state, event_layoff=False, sectors=None):
     """Check and apply daily economic shocks.
 
     `event_layoff=True` forces an elevated layoff probability because a
     layoff-type event is active today (see _active_event_layoff).
+    `sectors` (optional) routes money flows through sector pools.
     Returns list of shock event dicts (may be empty).
     """
     shocks_cfg = cfg.get("shocks", {})
@@ -761,14 +867,22 @@ def _check_daily_shocks(agent, econ, cfg, macro_state, event_layoff=False):
         layoff_prob = max(layoff_prob,
                           _to_float(shocks_cfg.get("event_layoff_prob", 0.6), 0.6))
 
-    if random.random() < layoff_prob:
+    if _rng.random() < layoff_prob:
         # Layoff: income drops significantly for a period
-        income_cut = random.uniform(0.5, 0.85)
-        econ["base_hourly_income"] = max(
+        income_cut = _rng.uniform(0.5, 0.85)
+        old_hourly = _to_float(econ.get("base_hourly_income", 0), 0)
+        new_hourly = max(
             _to_float(cfg.get("min_hourly_income", 8.0), 8.0),
-            _to_float(econ.get("base_hourly_income", 0), 0) * (1.0 - income_cut)
+            old_hourly * (1.0 - income_cut)
         )
-        econ["_layoff_days_remaining"] = random.randint(30, 90)
+        econ["base_hourly_income"] = new_hourly
+        # Keep gross salary consistent with hourly income, so the monthly
+        # settlement (tax / social insurance / budget) reflects the layoff.
+        if old_hourly > 0:
+            econ["gross_monthly_salary"] = round(
+                _to_float(econ.get("gross_monthly_salary", 0), 0)
+                * (new_hourly / old_hourly), 2)
+        econ["_layoff_days_remaining"] = _rng.randint(30, 90)
         events.append({
             "type": "layoff",
             "income_cut_pct": round(income_cut * 100, 1),
@@ -781,34 +895,38 @@ def _check_daily_shocks(agent, econ, cfg, macro_state, event_layoff=False):
         raise_prob = _to_float(shocks_cfg.get("raise_base_prob", 0.008), 0.008)
         raise_prob += _to_float(phase_effects.get("raise_chance", 0), 0)
         raise_prob *= (0.7 + 0.6 * _to_float(econ.get("income_skill", 0.5), 0.5))
-        if random.random() < raise_prob:
-            raise_pct = random.uniform(0.05, 0.25)
+        if _rng.random() < raise_prob:
+            raise_pct = _rng.uniform(0.05, 0.25)
             econ["base_hourly_income"] = _to_float(econ.get("base_hourly_income", 0), 0) * (1.0 + raise_pct)
             econ["gross_monthly_salary"] = _to_float(econ.get("gross_monthly_salary", 0), 0) * (1.0 + raise_pct)
             events.append({"type": "raise", "raise_pct": round(raise_pct * 100, 1)})
 
     # --- Medical emergency ---
     med_prob = _to_float(shocks_cfg.get("medical_emergency_prob", 0.0005), 0.0005)
-    if random.random() < med_prob:
+    if _rng.random() < med_prob:
         cost_range = shocks_cfg.get("medical_cost_range", (2000.0, 50000.0))
-        raw_cost = _rand_between(cost_range)
+        raw_cost = round(_rand_between(cost_range), 2)
         # Medical insurance reimburses part of it
         si_cfg = cfg.get("social_insurance", {})
         reimbursement_rate = 0.0
         if si_cfg.get("enabled", True):
-            reimbursement_rate = random.uniform(0.50, 0.85)
-        out_of_pocket = raw_cost * (1.0 - reimbursement_rate)
+            reimbursement_rate = _rng.uniform(0.50, 0.85)
+        reimbursed = round(raw_cost * reimbursement_rate, 2)
+        out_of_pocket = round(raw_cost - reimbursed, 2)
         accounts = econ.get("accounts", {})
         accounts["checking"] = round(
             _to_float(accounts.get("checking", 0), 0) - out_of_pocket, 2)
         econ["daily_expense"] = _to_float(econ.get("daily_expense", 0), 0) + out_of_pocket
         cats = econ.get("daily_expense_by_category", {})
         cats["healthcare"] = _to_float(cats.get("healthcare", 0), 0) + out_of_pocket
+        # Hospital (firms) receives patient out-of-pocket + government reimbursement
+        _sector_add(sectors, "firms", out_of_pocket + reimbursed)
+        _sector_add(sectors, "government", -reimbursed)
         events.append({
             "type": "medical_emergency",
-            "total_cost": round(raw_cost, 2),
-            "reimbursed": round(raw_cost * reimbursement_rate, 2),
-            "out_of_pocket": round(out_of_pocket, 2),
+            "total_cost": raw_cost,
+            "reimbursed": reimbursed,
+            "out_of_pocket": out_of_pocket,
         })
 
     # --- Layoff recovery countdown ---
@@ -892,13 +1010,13 @@ def _infer_inheritance_amount(agent, cfg, baseline_monthly_income):
                 hukou_bonus += _to_float(delta, 0.0)
     prob = base_prob * (0.72 + 0.55 * age_factor) + 0.04 * (risk_preference - 0.5) + hukou_bonus
     prob = _clip(prob, 0.0, 0.92)
-    if random.random() > prob:
+    if _rng.random() > prob:
         return 0.0
     ratio_min = _to_float(cfg.get("inheritance_ratio_min", 0.25), 0.25)
     ratio_max = _to_float(cfg.get("inheritance_ratio_max", 2.0), 2.0)
     if ratio_max < ratio_min:
         ratio_min, ratio_max = ratio_max, ratio_min
-    return max(0.0, baseline_monthly_income * random.uniform(ratio_min, ratio_max))
+    return max(0.0, baseline_monthly_income * _rng.uniform(ratio_min, ratio_max))
 
 
 # ---------------------------------------------------------------------------
@@ -914,19 +1032,56 @@ def _empty_daily_categories():
 
 
 # ---------------------------------------------------------------------------
-# 11. RECORD HELPERS
+# 11. RECORD HELPERS & SECTOR POOLS
 # ---------------------------------------------------------------------------
 
-def _record_income(econ, amount):
-    value = max(0.0, _to_float(amount, 0.0))
+def _init_sectors(cfg):
+    """Aggregate sector pools acting as counterparties for agent money flows."""
+    sec_cfg = cfg.get("sectors", {}) if isinstance(cfg.get("sectors"), dict) else {}
+    return {
+        "firms": round(_to_float(sec_cfg.get("initial_firms_balance", 0.0), 0.0), 2),
+        "government": round(_to_float(sec_cfg.get("initial_government_balance", 0.0), 0.0), 2),
+        "bank": round(_to_float(sec_cfg.get("initial_bank_balance", 0.0), 0.0), 2),
+    }
+
+
+def _sector_add(sectors, name, amount):
+    """Adjust a sector pool. No-op when sectors is None (backward compat)."""
+    if not isinstance(sectors, dict):
+        return
+    sectors[name] = round(_to_float(sectors.get(name, 0.0), 0.0) + _to_float(amount, 0.0), 2)
+
+
+def _agents_total(agents):
+    """Sum of all agent account balances (incl. housing fund)."""
+    total = 0.0
+    for agent in agents or []:
+        econ = agent.get("economy", {}) if isinstance(agent, dict) else {}
+        accounts = econ.get("accounts", {}) if isinstance(econ, dict) else {}
+        for key in ("checking", "savings", "investment", "housing_fund"):
+            total += _to_float(accounts.get(key, 0), 0)
+    return round(total, 2)
+
+
+def _system_total(agents, sectors):
+    """Total money in the system: agent accounts + sector pools."""
+    sector_sum = sum(_to_float(v, 0) for v in (sectors or {}).values())
+    return round(_agents_total(agents) + sector_sum, 2)
+
+
+def _record_income(econ, amount, sectors=None):
+    """Wage-type income. With `sectors`, it is paid out of the firms pool."""
+    value = round(max(0.0, _to_float(amount, 0.0)), 2)
     econ["daily_income"] += value
     econ["lifetime_income"] += value
     accounts = econ.get("accounts", {})
     accounts["checking"] = round(_to_float(accounts.get("checking", 0), 0) + value, 2)
+    _sector_add(sectors, "firms", -value)
 
 
-def _record_expense(econ, category, amount):
-    value = max(0.0, _to_float(amount, 0.0))
+def _record_expense(econ, category, amount, sectors=None):
+    """Consumption expense. With `sectors`, revenue accrues to the firms pool."""
+    value = round(max(0.0, _to_float(amount, 0.0)), 2)
     econ["daily_expense"] += value
     econ["lifetime_expense"] += value
     accounts = econ.get("accounts", {})
@@ -934,6 +1089,289 @@ def _record_expense(econ, category, amount):
     if category not in econ["daily_expense_by_category"]:
         econ["daily_expense_by_category"][category] = 0.0
     econ["daily_expense_by_category"][category] += value
+    _sector_add(sectors, "firms", value)
+
+
+def _apply_cash_constraint(econ, expense_map, cfg):
+    """Scale discretionary spending down when liquidity is tight.
+
+    High income-elasticity categories (luxuries) are cut harder than
+    necessities, mirroring real consumption smoothing.
+    """
+    credit_cfg = cfg.get("credit", {})
+    months = _to_float(credit_cfg.get("hardship_liquidity_months", 1.0), 1.0)
+    monthly_expense = max(1.0, _to_float(econ.get("monthly_expense_estimate", 0), 0))
+    threshold = monthly_expense * months
+    accounts = econ.get("accounts", {})
+    liquid = (_to_float(accounts.get("checking", 0), 0)
+              + _to_float(accounts.get("savings", 0), 0))
+    if threshold <= 0 or liquid >= threshold:
+        return expense_map
+    m = _clip(liquid / threshold, 0.0, 1.0)
+    floor_f = _to_float(credit_cfg.get("min_spend_factor", 0.25), 0.25)
+    elasticity = cfg.get("spending", {}).get(
+        "income_elasticity", DEFAULT_ECONOMY_CONFIG["spending"]["income_elasticity"])
+    scaled = {}
+    for cat, amount in expense_map.items():
+        e = _to_float(elasticity.get(cat, 1.0), 1.0)
+        scaled[cat] = amount * max(floor_f, m ** e)
+    return scaled
+
+
+def _pay_expense(econ, category, amount, cfg, sectors=None):
+    """Pay an expense under a hard cash constraint.
+
+    Funding order: checking -> savings drawdown -> credit line (borrowed from
+    the bank pool) -> truncate to what is affordable (financial distress).
+    Returns the amount actually paid.
+    """
+    amount = round(max(0.0, _to_float(amount, 0.0)), 2)
+    if amount <= 0:
+        return 0.0
+    accounts = econ.get("accounts", {})
+    checking = _to_float(accounts.get("checking", 0), 0)
+    shortfall = round(amount - checking, 2)
+
+    if shortfall > 0:
+        # 1) draw down savings
+        savings = _to_float(accounts.get("savings", 0), 0)
+        draw = round(min(max(savings, 0.0), shortfall), 2)
+        if draw > 0:
+            accounts["savings"] = round(savings - draw, 2)
+            checking = round(checking + draw, 2)
+            accounts["checking"] = checking
+            shortfall = round(shortfall - draw, 2)
+
+    if shortfall > 0:
+        # 2) credit line: money borrowed from the bank pool
+        credit_cfg = cfg.get("credit", {})
+        if credit_cfg.get("enabled", True):
+            limit = (_to_float(credit_cfg.get("credit_limit_months", 2.0), 2.0)
+                     * max(0.0, _to_float(econ.get("net_monthly_salary", 0), 0)))
+            debt = _to_float(econ.get("debt", 0), 0)
+            borrow = round(min(max(0.0, limit - debt), shortfall), 2)
+            if borrow > 0:
+                econ["debt"] = round(debt + borrow, 2)
+                checking = round(checking + borrow, 2)
+                accounts["checking"] = checking
+                _sector_add(sectors, "bank", -borrow)
+                shortfall = round(shortfall - borrow, 2)
+
+    if shortfall > 0:
+        # 3) hard constraint: spend only what is available
+        amount = round(max(0.0, amount - shortfall), 2)
+        econ["_distress_today"] = True
+
+    if amount > 0:
+        _record_expense(econ, category, amount, sectors)
+    return amount
+
+
+# ---------------------------------------------------------------------------
+# 11b. PAYMENT ROUTING & FRIEND LOANS (P3)
+# ---------------------------------------------------------------------------
+
+_MERCHANT_INDUSTRIES = ("service", "trade")
+
+
+def _build_merchant_registry(agents):
+    """Map workplace location -> [agent_id] for service/trade agents."""
+    registry = {}
+    for agent in agents or []:
+        if not isinstance(agent, dict):
+            continue
+        econ = agent.get("economy", {})
+        if not isinstance(econ, dict) or econ.get("industry") not in _MERCHANT_INDUSTRIES:
+            continue
+        locations = agent.get("locations")
+        workplace = str((locations or {}).get("workplace", "")).strip()
+        if workplace:
+            registry.setdefault(workplace, []).append(agent.get("id"))
+    return registry
+
+
+def _build_landlord_registry(agents, cfg):
+    """Agents whose profile marks them as landlords (房东/包租/出租)."""
+    keywords = cfg.get("routing", {}).get("landlord_keywords", ["房东"])
+    ids = []
+    for agent in agents or []:
+        if not isinstance(agent, dict):
+            continue
+        blob = " ".join(str(agent.get(k, "")) for k in
+                        ("job", "daily_life", "values", "living"))
+        if _contains_any(blob, keywords):
+            ids.append(agent.get("id"))
+    return ids
+
+
+def _pay_agent_income(econ, amount, sectors):
+    """Pay routed income to an agent (from firms) incl. tax-base tracking."""
+    amount = round(max(0.0, _to_float(amount, 0.0)), 2)
+    if amount <= 0 or not isinstance(econ, dict):
+        return
+    _record_income(econ, amount, sectors)
+    econ["month_gross_income"] = round(
+        _to_float(econ.get("month_gross_income", 0), 0) + amount, 2)
+
+
+def _route_payments(agent_map, runtime, cfg, sectors):
+    """Pass today's consumption/rent shares on to merchant/landlord agents.
+
+    Consumers already paid firms at spend time; firms forward a labor share
+    to the agents behind the counter. Money is conserved — it just starts
+    circulating between agents instead of pooling in the firms sector.
+    """
+    routing_cfg = cfg.get("routing", {})
+    spend_map = runtime.get("location_spend") or {}
+    rent = _to_float(runtime.get("rent_paid_today", 0.0), 0.0)
+    runtime["location_spend"] = {}
+    runtime["rent_paid_today"] = 0.0
+    if not routing_cfg.get("enabled", True):
+        return
+
+    # Merchant labor share of local consumption
+    share = _clip(_to_float(routing_cfg.get("merchant_labor_share", 0.35), 0.35), 0.0, 1.0)
+    merchants = runtime.get("merchants", {})
+    for location, spend in spend_map.items():
+        ids = merchants.get(location) or []
+        if not ids or spend <= 0:
+            continue
+        payout = round(spend * share / len(ids), 2)
+        for aid in ids:
+            _pay_agent_income((agent_map.get(aid) or {}).get("economy"),
+                              payout, sectors)
+
+    # Rent to landlord agents (equal split); no landlords -> stays with firms
+    landlords = runtime.get("landlords") or []
+    if rent > 0 and landlords:
+        l_share = _clip(_to_float(routing_cfg.get("landlord_share", 1.0), 1.0), 0.0, 1.0)
+        payout = round(rent * l_share / len(landlords), 2)
+        for aid in landlords:
+            _pay_agent_income((agent_map.get(aid) or {}).get("economy"),
+                              payout, sectors)
+
+
+def _relationship_score(agent, neighbor_id):
+    rels = agent.get("relationships")
+    r = rels.get(str(neighbor_id), {}) if isinstance(rels, dict) else {}
+    return (_to_float(r.get("closeness", 0.5), 0.5)
+            * _to_float(r.get("trust", 0.5), 0.5))
+
+
+def _process_friend_loans(agent_map, agents, cfg):
+    """Distressed agents borrow interest-free from close, liquid friends.
+
+    Pure agent-to-agent transfer (conserving); the claim is tracked in
+    `friend_debts` / `friend_credits` and repaid at monthly settlement.
+    """
+    fl_cfg = cfg.get("friend_loans", {})
+    if not fl_cfg.get("enabled", True):
+        return
+    buffer_m = _to_float(fl_cfg.get("lender_buffer_months", 2.0), 2.0)
+    cap_m = _to_float(fl_cfg.get("max_outstanding_months", 1.0), 1.0)
+    willingness = _clip(_to_float(fl_cfg.get("willingness_factor", 0.5), 0.5), 0.0, 1.0)
+
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        econ = agent.get("economy", {})
+        if not isinstance(econ, dict) or not econ.get("_distress_today"):
+            continue
+        monthly = max(1.0, _to_float(econ.get("monthly_expense_estimate", 0), 0))
+        outstanding = sum(_to_float(v, 0) for v in (econ.get("friend_debts") or {}).values())
+        need = round(min(monthly * 0.5, max(0.0, monthly * cap_m - outstanding)), 2)
+        if need <= 0:
+            continue
+        neighbors = agent.get("social_neighbors") or []
+        for nid in sorted(neighbors, key=lambda n: _relationship_score(agent, n),
+                          reverse=True):
+            if need <= 0:
+                break
+            lender = agent_map.get(nid)
+            if lender is None:
+                try:
+                    lender = agent_map.get(int(nid))
+                except (TypeError, ValueError):
+                    lender = None
+            if not isinstance(lender, dict) or lender is agent:
+                continue
+            l_econ = lender.get("economy", {})
+            if not isinstance(l_econ, dict):
+                continue
+            l_accounts = l_econ.get("accounts", {})
+            l_liquid = (_to_float(l_accounts.get("checking", 0), 0)
+                        + _to_float(l_accounts.get("savings", 0), 0))
+            l_buffer = _to_float(l_econ.get("monthly_expense_estimate", 0), 0) * buffer_m
+            surplus = l_liquid - l_buffer
+            lend = round(min(need, max(0.0, surplus * willingness
+                                       * _relationship_score(agent, nid))), 2)
+            if lend <= 0:
+                continue
+            # Lender funds the loan from checking, drawing savings if needed
+            l_checking = _to_float(l_accounts.get("checking", 0), 0)
+            if l_checking < lend:
+                draw = round(min(max(0.0, _to_float(l_accounts.get("savings", 0), 0)),
+                                 lend - l_checking), 2)
+                l_accounts["savings"] = round(
+                    _to_float(l_accounts.get("savings", 0), 0) - draw, 2)
+                l_checking = round(l_checking + draw, 2)
+            lend = round(min(lend, max(0.0, l_checking)), 2)
+            if lend <= 0:
+                continue
+            l_accounts["checking"] = round(l_checking - lend, 2)
+            b_accounts = econ.get("accounts", {})
+            b_accounts["checking"] = round(
+                _to_float(b_accounts.get("checking", 0), 0) + lend, 2)
+            debts = econ.setdefault("friend_debts", {})
+            key = str(lender.get("id"))
+            debts[key] = round(_to_float(debts.get(key, 0), 0) + lend, 2)
+            credits = l_econ.setdefault("friend_credits", {})
+            b_key = str(agent.get("id"))
+            credits[b_key] = round(_to_float(credits.get(b_key, 0), 0) + lend, 2)
+            need = round(need - lend, 2)
+
+
+def _repay_friend_loans(agent, econ, agent_map):
+    """Repay friend loans from checking surplus (before bank debt service)."""
+    accounts = econ.get("accounts", {})
+    buffer = _to_float(econ.get("monthly_expense_estimate", 0), 0)
+    available = max(0.0, _to_float(accounts.get("checking", 0), 0) - buffer)
+    debts = econ.get("friend_debts")
+    if available <= 0 or not isinstance(debts, dict) or not debts:
+        return
+    own_key = str(agent.get("id"))
+    for lender_key in list(debts.keys()):
+        if available <= 0:
+            break
+        owed = _to_float(debts.get(lender_key, 0), 0)
+        pay = round(min(owed, available), 2)
+        if pay <= 0:
+            continue
+        lender = agent_map.get(lender_key)
+        if lender is None:
+            try:
+                lender = agent_map.get(int(lender_key))
+            except (TypeError, ValueError):
+                lender = None
+        l_econ = lender.get("economy") if isinstance(lender, dict) else None
+        if not isinstance(l_econ, dict):
+            continue
+        accounts["checking"] = round(_to_float(accounts.get("checking", 0), 0) - pay, 2)
+        l_accounts = l_econ.get("accounts", {})
+        l_accounts["checking"] = round(_to_float(l_accounts.get("checking", 0), 0) + pay, 2)
+        remaining = round(owed - pay, 2)
+        if remaining <= 0:
+            debts.pop(lender_key, None)
+        else:
+            debts[lender_key] = remaining
+        credits = l_econ.get("friend_credits")
+        if isinstance(credits, dict):
+            rem_credit = round(_to_float(credits.get(own_key, 0), 0) - pay, 2)
+            if rem_credit <= 0:
+                credits.pop(own_key, None)
+            else:
+                credits[own_key] = rem_credit
+        available = round(available - pay, 2)
 
 
 def _total_balance(econ):
@@ -1002,7 +1440,7 @@ def _init_agent_economy(agent, cfg, context):
     state = agent.get("state", {}) if isinstance(agent, dict) else {}
 
     # Base hourly income
-    base_hourly_income = random.uniform(low, high) * (0.75 + 0.55 * income_skill)
+    base_hourly_income = _rng.uniform(low, high) * (0.75 + 0.55 * income_skill)
     base_hourly_income = max(_to_float(cfg.get("min_hourly_income", 8.0), 8.0), base_hourly_income)
 
     # Derive gross monthly salary from hourly
@@ -1020,13 +1458,13 @@ def _init_agent_economy(agent, cfg, context):
     # Monthly rent based on housing budget (or fallback to ratio)
     housing_budget = _to_float(monthly_budget.get("housing", 0), 0)
     if housing_budget > 600:
-        monthly_rent = housing_budget * random.uniform(0.85, 1.15)
+        monthly_rent = housing_budget * _rng.uniform(0.85, 1.15)
     else:
-        monthly_rent = gross_monthly * _to_float(cfg.get("rent_income_ratio", 0.22), 0.22) * random.uniform(0.85, 1.15)
+        monthly_rent = gross_monthly * _to_float(cfg.get("rent_income_ratio", 0.22), 0.22) * _rng.uniform(0.85, 1.15)
     monthly_rent = max(600.0, monthly_rent)
 
     # Initial assets
-    init_months = random.uniform(
+    init_months = _rng.uniform(
         _to_float(cfg.get("initial_savings_months_min", 1.0), 1.0),
         _to_float(cfg.get("initial_savings_months_max", 6.0), 6.0))
     labor_savings = net_monthly * init_months * (0.7 + 0.6 * _to_float(state.get("econ_security", 0.5), 0.5))
@@ -1042,7 +1480,7 @@ def _init_agent_economy(agent, cfg, context):
     # Housing fund: accumulated from prior employment
     age = int(_to_float(agent.get("age", 30), 30))
     work_years = max(0, age - 22)
-    housing_fund_balance = hf_monthly * 12 * min(work_years, 15) * random.uniform(0.3, 0.7)
+    housing_fund_balance = hf_monthly * 12 * min(work_years, 15) * _rng.uniform(0.3, 0.7)
 
     # Income target
     income_target_daily = max(40.0, base_hourly_income * _to_float(cfg.get("target_work_hours_per_day", 7.0), 7.0))
@@ -1090,6 +1528,12 @@ def _init_agent_economy(agent, cfg, context):
         },
         "balance": round(max(0.0, init_balance), 2),  # backward compat (liquid total)
 
+        # --- Credit & friend loans ---
+        "debt": 0.0,
+        "distress_days_total": 0,
+        "friend_debts": {},
+        "friend_credits": {},
+
         # --- Investment ---
         "portfolio_type": _infer_portfolio_type(agent),
         "portfolio_weights": portfolio_weights,
@@ -1106,6 +1550,7 @@ def _init_agent_economy(agent, cfg, context):
         "daily_income": 0.0,
         "daily_expense": 0.0,
         "daily_expense_by_category": _empty_daily_categories(),
+        "month_gross_income": 0.0,
         "lifetime_income": 0.0,
         "lifetime_expense": 0.0,
         "last_location": "",
@@ -1157,7 +1602,7 @@ def _estimate_behavior_expenses(agent, activity, action, location, hours, cfg, m
     daily_budget_total = monthly_expense / 30.0
     hourly_cost = (daily_budget_total / 16.0) * max(hours, 0.1)  # ~16 waking hours
     hourly_cost *= expense_mult
-    hourly_cost *= random.uniform(1.0 - variance, 1.0 + variance)
+    hourly_cost *= _rng.uniform(1.0 - variance, 1.0 + variance)
 
     result = {"misc": max(0.5, hourly_cost * 0.15)}
 
@@ -1168,7 +1613,7 @@ def _estimate_behavior_expenses(agent, activity, action, location, hours, cfg, m
             # Use budget proportion for this category
             cat_monthly = _to_float(monthly_budget.get(category, 0), 0)
             if cat_monthly > 0:
-                daily_cat = (cat_monthly / 30.0) * random.uniform(0.5, 1.8) * expense_mult
+                daily_cat = (cat_monthly / 30.0) * _rng.uniform(0.5, 1.8) * expense_mult
                 # Scale to step hours (assume most spending in ~4-5 activity hours per day)
                 step_cat = daily_cat * (hours / 5.0)
                 result[category] = result.get(category, 0.0) + max(1.0, step_cat)
@@ -1190,7 +1635,7 @@ def _estimate_behavior_expenses(agent, activity, action, location, hours, cfg, m
             # Fallback: budget-based estimate
             transport_budget = _to_float(monthly_budget.get("transport", 0), 0)
             if transport_budget > 0:
-                move_cost = (transport_budget / 30.0) * random.uniform(0.3, 1.2)
+                move_cost = (transport_budget / 30.0) * _rng.uniform(0.3, 1.2)
             else:
                 move_cost = _rand_between(
                     cfg.get("expense_ranges", {}).get("transport", [3.0, 12.0]))
@@ -1208,7 +1653,9 @@ def _update_econ_security(agent):
     # Use total balance across accounts for security assessment
     total = _total_balance(econ)
     hf = _to_float(econ.get("accounts", {}).get("housing_fund", 0), 0)
-    effective_assets = total + hf * 0.3  # housing fund is partially accessible
+    debt = _to_float(econ.get("debt", 0), 0)
+    # Housing fund is partially accessible; debt reduces effective net assets
+    effective_assets = total + hf * 0.3 - debt
 
     target = max(1.0, _to_float(econ.get("monthly_expense_estimate", 80.0 * 22), 1760) * 3.0)
     asset_score = _clip(effective_assets / target, 0.0, 3.0) / 3.0
@@ -1224,11 +1671,11 @@ def _pick_income_activity(context, agent):
         if isinstance(agent_actions, dict):
             candidates = [name for name in agent_actions.keys() if _contains_any(name, INCOME_KEYWORDS)]
             if candidates:
-                return random.choice(candidates)
+                return _rng.choice(candidates)
     cfg = _get_cfg(context)
     default_candidates = cfg.get("income_seek_activities", [])
     if isinstance(default_candidates, list) and default_candidates:
-        return str(random.choice(default_candidates))
+        return str(_rng.choice(default_candidates))
     return "工作"
 
 
@@ -1252,7 +1699,7 @@ def _should_seek_income(agent, cfg):
     if motive < threshold:
         return False
     probability = _clip(motive * _to_float(cfg.get("income_seek_probability_scale", 0.9), 0.9), 0.0, 0.95)
-    return random.random() < probability
+    return _rng.random() < probability
 
 
 # ---------------------------------------------------------------------------
@@ -1265,6 +1712,7 @@ def on_simulation_start(context):
     runtime["enabled"] = bool(cfg.get("enabled", True))
     if not runtime["enabled"]:
         return
+    _seed_rng(context)
     os.makedirs(cfg.get("output_dir", "output/economy"), exist_ok=True)
     _step_hours(context, cfg)
 
@@ -1272,6 +1720,10 @@ def on_simulation_start(context):
     runtime["macro"] = _init_macro_state(cfg)
     runtime["sim_month_counter"] = 0
     runtime["sim_day_counter"] = 0
+
+    # Sector pools: counterparties for all agent money flows
+    runtime["sectors"] = _init_sectors(cfg)
+    runtime["audit_rows"] = []
 
     for agent in context.get("agents", []):
         if not isinstance(agent, dict) or "id" not in agent:
@@ -1295,6 +1747,17 @@ def on_simulation_start(context):
         )
         _append_agent_log(context, agent["id"], init_line)
 
+    # P3 routing registries (need econ["industry"], so built after agent init)
+    runtime["merchants"] = _build_merchant_registry(context.get("agents", []))
+    runtime["landlords"] = _build_landlord_registry(context.get("agents", []), cfg)
+    runtime["location_spend"] = {}
+    runtime["rent_paid_today"] = 0.0
+
+    # Money created at initialization (initial assets + sector seeds) is the
+    # system's money stock; from here on every flow must conserve it.
+    runtime["initial_system_total"] = _system_total(
+        context.get("agents", []), runtime["sectors"])
+
 
 # ---------------------------------------------------------------------------
 # 16. HOOK: on_day_start
@@ -1313,6 +1776,7 @@ def on_day_start(context):
 
     # Is a layoff-type policy event active today? (event -> economy bridge)
     event_layoff = _active_event_layoff(context)
+    sectors = runtime.get("sectors")
 
     for agent in context.get("agents", []):
         econ = agent.get("economy", {})
@@ -1329,7 +1793,7 @@ def on_day_start(context):
             _to_float(cfg.get("min_hourly_income", 8.0), 8.0),
             _to_float(econ.get("base_hourly_income", 8.0), 8.0))
         volatility = _to_float(econ.get("income_volatility", cfg.get("income_volatility", 0.25)), 0.25)
-        daily_shift = 1.0 + random.uniform(-volatility, volatility) * (1.0 - 0.35 * _to_float(econ.get("income_skill", 0.5), 0.5))
+        daily_shift = 1.0 + _rng.uniform(-volatility, volatility) * (1.0 - 0.35 * _to_float(econ.get("income_skill", 0.5), 0.5))
 
         # Apply macro income multiplier
         industry = econ.get("industry", "default")
@@ -1344,12 +1808,16 @@ def on_day_start(context):
         utilities = max(0.0, _to_float(cfg.get("daily_utilities_cost", 12.0), 12.0))
         expense_mult = _macro_expense_multiplier(macro_state, cfg)
         if housing > 0:
-            _record_expense(econ, "housing", housing * expense_mult)
+            paid_rent = _pay_expense(econ, "housing", housing * expense_mult, cfg, sectors)
+            # Rent (not utilities) is routable to landlord agents at day end
+            runtime["rent_paid_today"] = round(
+                _to_float(runtime.get("rent_paid_today", 0.0), 0.0) + paid_rent, 2)
         if utilities > 0:
-            _record_expense(econ, "housing", utilities * expense_mult)
+            _pay_expense(econ, "housing", utilities * expense_mult, cfg, sectors)
 
         # Check shock events
-        shocks = _check_daily_shocks(agent, econ, cfg, macro_state, event_layoff=event_layoff)
+        shocks = _check_daily_shocks(agent, econ, cfg, macro_state,
+                                     event_layoff=event_layoff, sectors=sectors)
         if shocks:
             econ.setdefault("shock_log", []).extend(shocks)
 
@@ -1424,24 +1892,36 @@ def on_agent_post_step(context):
 
     hours = _step_hours(context, cfg)
     macro_state = runtime.get("macro", {})
+    sectors = runtime.get("sectors")
 
     # --- Income ---
     income = 0.0
     if _is_income_activity(activity, action) or bool(step.get("economy_forced_income", False)):
         effort = 1.0 + 0.45 * _to_float(econ.get("wealth_drive", 0.5), 0.5) + 0.25 * _to_float(econ.get("income_skill", 0.5), 0.5)
         vol = _to_float(econ.get("income_volatility", 0.25), 0.25)
-        volatility = random.uniform(-vol, vol)
+        volatility = _rng.uniform(-vol, vol)
         income = max(0.0, _to_float(econ.get("hourly_income", 0.0), 0.0) * hours * effort * (1.0 + volatility))
         # Occasional bonus
-        if random.random() < 0.10 + 0.20 * _to_float(econ.get("wealth_drive", 0.5), 0.5):
+        if _rng.random() < 0.10 + 0.20 * _to_float(econ.get("wealth_drive", 0.5), 0.5):
             income += _to_float(econ.get("hourly_income", 0.0), 0.0) * 0.5
     if income > 0:
-        _record_income(econ, income)
+        income = round(income, 2)
+        _record_income(econ, income, sectors)
+        # Track realized gross wages for the monthly tax/SI settlement
+        econ["month_gross_income"] = round(
+            _to_float(econ.get("month_gross_income", 0), 0) + income, 2)
 
-    # --- Expenses ---
+    # --- Expenses (cash-constrained) ---
     expense_map = _estimate_behavior_expenses(agent, activity, action, location, hours, cfg, macro_state)
+    expense_map = _apply_cash_constraint(econ, expense_map, cfg)
+    paid_total = 0.0
     for category, amount in expense_map.items():
-        _record_expense(econ, category, amount)
+        paid_total += _pay_expense(econ, category, amount, cfg, sectors)
+
+    # Accumulate local spend for merchant routing at day end
+    if paid_total > 0 and location:
+        spend_map = runtime.setdefault("location_spend", {})
+        spend_map[location] = round(spend_map.get(location, 0.0) + paid_total, 2)
 
     _update_econ_security(agent)
     _sync_balance(econ)
@@ -1449,7 +1929,7 @@ def on_agent_post_step(context):
     net = _to_float(econ.get("daily_income", 0), 0) - _to_float(econ.get("daily_expense", 0), 0)
     line = (
         f"[EconomyStep D{context.get('day', '')} {context.get('time_str', '')}] "
-        f"income={income:.1f} expense={sum(expense_map.values()):.1f} net_today={net:.1f} "
+        f"income={income:.1f} expense={paid_total:.1f} net_today={net:.1f} "
         f"balance={econ.get('balance', 0):.0f}\n"
     )
     _add_daily_log(context, agent, line)
@@ -1468,11 +1948,23 @@ def on_day_end(context):
     day = int(_to_float(context.get("day", 0), 0))
     sim_day = runtime.get("sim_day_counter", 0)
     macro_state = runtime.get("macro", {})
+    sectors = runtime.get("sectors")
 
     # Monthly settlement (every 30 sim days)
     is_month_end = (sim_day > 0 and sim_day % 30 == 0)
+    market_returns = None
     if is_month_end:
         runtime["sim_month_counter"] = runtime.get("sim_month_counter", 0) + 1
+        # One shared market draw per month: systemic risk hits everyone together
+        market_returns = _draw_monthly_market_returns(cfg, macro_state)
+
+    agents_list = context.get("agents", [])
+    agent_map = {a.get("id"): a for a in agents_list if isinstance(a, dict)}
+
+    # P3: route today's consumption/rent shares to merchant & landlord agents,
+    # then let distressed agents borrow from friends over the social network.
+    _route_payments(agent_map, runtime, cfg, sectors)
+    _process_friend_loans(agent_map, agents_list, cfg)
 
     for agent in context.get("agents", []):
         if not isinstance(agent, dict):
@@ -1486,13 +1978,6 @@ def on_day_end(context):
         net = daily_income - daily_expense
         drive = _to_float(econ.get("wealth_drive", 0.5), 0.5)
 
-        # Income growth on deficit (backward compat)
-        if net < 0 and drive >= _to_float(cfg.get("wealth_drive_seek_threshold", 0.65), 0.65):
-            scale = abs(net) / max(1.0, _to_float(econ.get("income_target_daily", 80.0), 80.0))
-            growth = _clip(scale * _to_float(cfg.get("income_growth_when_deficit", 0.08), 0.08) * drive, 0.0, 0.20)
-            econ["base_hourly_income"] = round(_to_float(econ.get("base_hourly_income", 10.0), 10.0) * (1.0 + growth), 2)
-            econ["income_skill"] = round(_clip(_to_float(econ.get("income_skill", 0.5), 0.5) + 0.02 * drive, 0.0, 1.0), 4)
-
         # Update income target
         econ["income_target_daily"] = round(max(
             40.0,
@@ -1503,7 +1988,28 @@ def on_day_end(context):
 
         # --- Monthly settlement ---
         if is_month_end:
-            # Recalculate tax & social insurance based on current gross salary
+            # Withhold tax & social insurance on *realized* gross wages.
+            # Step income is credited at the gross rate; the settlement takes
+            # the state's share out of checking and routes it to government,
+            # and books the housing fund (individual + employer match).
+            realized_gross = _to_float(econ.get("month_gross_income", 0), 0)
+            econ["month_gross_income"] = 0.0
+            if realized_gross > 0:
+                _, tax_r, si_r, si_bd_r, hf_r = calc_net_monthly_salary(realized_gross, cfg)
+                hf_indiv = round(_to_float(si_bd_r.get("housing_fund_individual", 0), 0), 2)
+                hf_employer = round(hf_r - hf_indiv, 2)
+                accounts = econ.get("accounts", {})
+                withheld = round(tax_r + si_r, 2)
+                accounts["checking"] = round(
+                    _to_float(accounts.get("checking", 0), 0) - withheld, 2)
+                _sector_add(sectors, "government", round(withheld - hf_indiv, 2))
+                # Housing fund: individual part (from withholding) + employer
+                # match (paid by firms)
+                accounts["housing_fund"] = round(
+                    _to_float(accounts.get("housing_fund", 0), 0) + hf_indiv + hf_employer, 2)
+                _sector_add(sectors, "firms", -hf_employer)
+
+            # Recalculate planning profile from the contract salary
             gross = _to_float(econ.get("gross_monthly_salary", 0), 0)
             if gross > 0:
                 net_sal, tax, si_total, si_bd, hf_monthly = calc_net_monthly_salary(gross, cfg)
@@ -1513,17 +2019,31 @@ def on_day_end(context):
                 econ["monthly_si_breakdown"] = si_bd
                 econ["monthly_housing_fund"] = hf_monthly
 
-                # Housing fund accumulation
-                accounts = econ.get("accounts", {})
-                accounts["housing_fund"] = round(
-                    _to_float(accounts.get("housing_fund", 0), 0) + hf_monthly, 2)
-
                 # Recalculate spending profile
                 engel, save_rate = _engel_params(net_sal, cfg)
                 econ["engel_coefficient"] = round(engel, 4)
                 econ["savings_rate"] = round(save_rate, 4)
                 econ["monthly_budget"] = _build_monthly_budget(net_sal, engel, save_rate, cfg)
                 econ["monthly_expense_estimate"] = round(net_sal * (1.0 - save_rate), 2)
+
+            # --- Repay friend loans first (interest-free, social obligation) ---
+            _repay_friend_loans(agent, econ, agent_map)
+
+            # --- Debt service: capitalize interest, repay from surplus ---
+            credit_cfg = cfg.get("credit", {})
+            debt = _to_float(econ.get("debt", 0), 0)
+            if debt > 0 and credit_cfg.get("enabled", True):
+                rate = _to_float(credit_cfg.get("annual_interest_rate", 0.18), 0.18)
+                debt = round(debt * (1.0 + rate / 12.0), 2)
+                accounts = econ.get("accounts", {})
+                checking = _to_float(accounts.get("checking", 0), 0)
+                buffer = _to_float(econ.get("monthly_expense_estimate", 0), 0)
+                repay = round(min(debt, max(0.0, checking - buffer)), 2)
+                if repay > 0:
+                    accounts["checking"] = round(checking - repay, 2)
+                    debt = round(debt - repay, 2)
+                    _sector_add(sectors, "bank", repay)
+                econ["debt"] = debt
 
             # Auto-transfer to savings/investment
             to_sav, to_inv = _monthly_savings_transfer(econ, cfg)
@@ -1532,26 +2052,32 @@ def on_day_end(context):
             inv_balance = _to_float(econ.get("accounts", {}).get("investment", 0), 0)
             portfolio = econ.get("portfolio_weights", {"deposits": 0.5, "funds": 0.3, "stocks": 0.2})
             inv_return, per_asset = _simulate_monthly_investment_return(
-                inv_balance, portfolio, cfg, macro_state)
+                inv_balance, portfolio, cfg, macro_state, market_returns)
             if inv_return != 0:
                 econ["accounts"]["investment"] = round(
                     _to_float(econ["accounts"].get("investment", 0), 0) + inv_return, 2)
                 econ["investment_return_ytd"] = round(
                     _to_float(econ.get("investment_return_ytd", 0), 0) + inv_return, 2)
+                # Market gains/losses are settled against the bank pool
+                _sector_add(sectors, "bank", -inv_return)
 
             # Year-end bonus (every 12 months)
             month_count = runtime.get("sim_month_counter", 0)
             shocks_cfg = cfg.get("shocks", {})
             if shocks_cfg.get("year_end_bonus_enabled", True) and month_count > 0 and month_count % 12 == 0:
                 bonus_months = _to_float(shocks_cfg.get("year_end_bonus_months", 1.0), 1.0)
-                bonus_gross = gross * bonus_months
+                bonus_gross = round(gross * bonus_months, 2)
                 # Bonus tax (simplified: taxed as regular income)
-                bonus_net = bonus_gross * 0.85  # approximate after-tax
-                _record_income(econ, bonus_net)
+                bonus_net = round(bonus_gross * 0.85, 2)  # approximate after-tax
+                _record_income(econ, bonus_net, sectors)
+                # Firms pay the gross bonus; the tax part goes to government
+                bonus_tax = round(bonus_gross - bonus_net, 2)
+                _sector_add(sectors, "firms", -bonus_tax)
+                _sector_add(sectors, "government", bonus_tax)
                 econ.setdefault("shock_log", []).append({
                     "type": "year_end_bonus",
-                    "gross": round(bonus_gross, 2),
-                    "net": round(bonus_net, 2),
+                    "gross": bonus_gross,
+                    "net": bonus_net,
                 })
 
             month_line = (
@@ -1563,6 +2089,14 @@ def on_day_end(context):
                 f"savings_xfer={to_sav:.0f} invest_xfer={to_inv:.0f}\n"
             )
             _add_daily_log(context, agent, month_line)
+
+        # Financial distress feedback: spending was truncated today
+        if econ.pop("_distress_today", False):
+            state = agent.get("state", {})
+            if isinstance(state, dict):
+                state["stress"] = round(_clip(
+                    _to_float(state.get("stress", 0.5), 0.5) + 0.02, 0.0, 1.0), 4)
+            econ["distress_days_total"] = int(econ.get("distress_days_total", 0)) + 1
 
         _update_econ_security(agent)
         _sync_balance(econ)
@@ -1579,6 +2113,7 @@ def on_day_end(context):
             "savings": round(_to_float(econ.get("accounts", {}).get("savings", 0), 0), 4),
             "investment": round(_to_float(econ.get("accounts", {}).get("investment", 0), 0), 4),
             "housing_fund": round(_to_float(econ.get("accounts", {}).get("housing_fund", 0), 0), 4),
+            "debt": round(_to_float(econ.get("debt", 0), 0), 4),
             "wealth_drive": round(drive, 4),
             "hourly_income": round(_to_float(econ.get("hourly_income", 0), 0), 4),
             "econ_security": round(_to_float(agent.get("state", {}).get("econ_security", 0.5), 0.5), 4),
@@ -1592,6 +2127,22 @@ def on_day_end(context):
             f"drive={drive:.2f} engel={econ.get('engel_coefficient', 0):.2f}\n"
         )
         _add_daily_log(context, agent, summary)
+
+    # --- Daily conservation audit ---
+    if isinstance(sectors, dict):
+        agents = context.get("agents", [])
+        system_total = _system_total(agents, sectors)
+        initial_total = _to_float(
+            runtime.get("initial_system_total", system_total), system_total)
+        runtime.setdefault("audit_rows", []).append({
+            "day": day,
+            "agents_total": _agents_total(agents),
+            "firms": sectors.get("firms", 0.0),
+            "government": sectors.get("government", 0.0),
+            "bank": sectors.get("bank", 0.0),
+            "system_total": system_total,
+            "drift": round(system_total - initial_total, 2),
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -1609,7 +2160,7 @@ def on_simulation_end(context):
     day_rows = runtime.get("day_rows", [])
     day_fields = [
         "day", "agent_id", "income", "expense", "net", "balance",
-        "checking", "savings", "investment", "housing_fund",
+        "checking", "savings", "investment", "housing_fund", "debt",
         "wealth_drive", "hourly_income", "econ_security",
         "engel_coefficient", "macro_phase",
     ]
@@ -1641,7 +2192,7 @@ def on_simulation_end(context):
     os.makedirs(snapshot_json_dir, exist_ok=True)
     snap_fields = [
         "agent_id", "currency", "balance",
-        "checking", "savings", "investment", "housing_fund",
+        "checking", "savings", "investment", "housing_fund", "debt",
         "gross_monthly_salary", "net_monthly_salary",
         "monthly_tax", "monthly_si_total",
         "engel_coefficient", "savings_rate",
@@ -1668,6 +2219,7 @@ def on_simulation_end(context):
                 "savings": round(_to_float(accounts.get("savings", 0), 0), 2),
                 "investment": round(_to_float(accounts.get("investment", 0), 0), 2),
                 "housing_fund": round(_to_float(accounts.get("housing_fund", 0), 0), 2),
+                "debt": round(_to_float(econ.get("debt", 0), 0), 2),
                 "gross_monthly_salary": round(_to_float(econ.get("gross_monthly_salary", 0), 0), 2),
                 "net_monthly_salary": round(_to_float(econ.get("net_monthly_salary", 0), 0), 2),
                 "monthly_tax": round(_to_float(econ.get("monthly_tax", 0), 0), 2),
@@ -1704,3 +2256,22 @@ def on_simulation_end(context):
         macro_path = os.path.join(output_dir, "macro_state.json")
         with open(macro_path, "w", encoding="utf-8") as f:
             json.dump(macro_state, f, ensure_ascii=False, indent=2)
+
+    # Save sector pools & daily conservation audit
+    sectors = runtime.get("sectors")
+    if isinstance(sectors, dict):
+        with open(os.path.join(output_dir, "sectors.json"), "w", encoding="utf-8") as f:
+            json.dump({
+                "sectors": sectors,
+                "initial_system_total": runtime.get("initial_system_total"),
+                "final_system_total": _system_total(context.get("agents", []), sectors),
+            }, f, ensure_ascii=False, indent=2)
+    audit_rows = runtime.get("audit_rows", [])
+    if audit_rows:
+        audit_fields = ["day", "agents_total", "firms", "government", "bank",
+                        "system_total", "drift"]
+        audit_path = os.path.join(output_dir, "conservation_audit.csv")
+        with open(audit_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=audit_fields)
+            writer.writeheader()
+            writer.writerows(audit_rows)

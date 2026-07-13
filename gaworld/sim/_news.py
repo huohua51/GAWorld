@@ -40,6 +40,7 @@ from gaworld.io.web_scrape import (
     normalize_text as _normalize_text,
     strip_html as _strip_html,
 )
+from gaworld.io.x_mcp import x_mcp_search
 from gaworld.llm import providers as _llm_providers
 from gaworld.memory.store import save_agent_memory, vector_db_add_entry
 
@@ -322,6 +323,11 @@ def _domain_from_url(url: str) -> str:
     return domain
 
 
+# Domains behind a login wall: page fetches return junk, but search
+# results from these already carry the full post text in "snippet".
+_SNIPPET_ONLY_DOMAINS = {"x.com", "twitter.com"}
+
+
 def _build_agent_preferred_sites(
     agent: dict[str, Any],
     news_sources: list[str] | None = None,
@@ -372,12 +378,25 @@ def _choose_info_target(
     seen_urls: set[str] | None = None,
     used_queries: set[str] | None = None,
     config: dict[str, Any] | None = None,
+    keywords: list[str] | None = None,
 ) -> dict[str, Any] | None:
     config = config or {}
     seen_urls = seen_urls or set()
     used_queries = used_queries or set()
     direct_visit_ratio = float(config.get("prefer_source_visit_ratio", 0.55))
     interests = _extract_interest_keywords(agent)
+
+    if keywords:
+        query = " ".join(str(k).strip() for k in keywords if str(k).strip())
+        if query:
+            return _web_search_target(
+                agent=agent,
+                query=query,
+                interests=interests,
+                preferred_sites=preferred_sites,
+                seen_urls=seen_urls,
+                config=config,
+            )
 
     preferred_cache = []
     for item in news_cache or []:
@@ -442,10 +461,30 @@ def _choose_info_target(
     query = _build_search_query(agent, used_queries=used_queries)
     if preferred_sites and random.random() < 0.85:
         query = f"{query} site:{random.choice(preferred_sites)}"
+    return _web_search_target(
+        agent=agent,
+        query=query,
+        interests=interests,
+        preferred_sites=preferred_sites,
+        seen_urls=seen_urls,
+        config=config,
+    )
+
+
+def _web_search_target(
+    *,
+    agent: dict[str, Any],
+    query: str,
+    interests: list[str],
+    preferred_sites: list[str],
+    seen_urls: set[str] | None,
+    config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    config = config or {}
+    seen_urls = seen_urls or set()
     engine, results = web_search(query, config=config)
     if not results:
         return None
-
     ranked = []
     timeout = int(config.get("content_timeout", config.get("timeout", 8)))
     max_chars = int(config.get("content_max_chars", 2000))
@@ -456,7 +495,10 @@ def _choose_info_target(
             continue
         title = str(item.get("title", "")).strip()
         snippet = str(item.get("snippet", "")).strip()
-        excerpt = fetch_news_excerpt(url, timeout=timeout, max_chars=max_chars, user_agent=user_agent)
+        if _domain_from_url(url) in _SNIPPET_ONLY_DOMAINS:
+            excerpt = ""
+        else:
+            excerpt = fetch_news_excerpt(url, timeout=timeout, max_chars=max_chars, user_agent=user_agent)
         content = excerpt or snippet
         if not content:
             continue
@@ -493,6 +535,7 @@ def info_seek_and_store(
     preferred_sites: list[str] | None = None,
     seen_urls: set[str] | None = None,
     used_queries: set[str] | None = None,
+    keywords: list[str] | None = None,
     config: dict[str, Any] | None = None,
 ) -> tuple[str | None, str | None, str, str]:
     config = config or {}
@@ -504,6 +547,7 @@ def info_seek_and_store(
         seen_urls=seen_urls or set(),
         used_queries=used_queries or set(),
         config=config,
+        keywords=keywords,
     )
     if not target:
         return None, None, "", ""
@@ -727,7 +771,13 @@ def web_search(
     }
     headers = {"User-Agent": user_agent}
     for engine in engines:
-        search_url = search_urls.get(str(engine).lower())
+        engine_name = str(engine).lower()
+        if engine_name in ("x", "x_mcp", "twitter"):
+            x_results = x_mcp_search(query, config=config)
+            if x_results:
+                return "x", x_results
+            continue
+        search_url = search_urls.get(engine_name)
         if not search_url:
             continue
         try:
@@ -770,12 +820,15 @@ def search_web_and_store(
             continue
         title = str(item.get("title", "")).strip()
         snippet = str(item.get("snippet", "")).strip()
-        excerpt = fetch_news_excerpt(
-            url,
-            timeout=timeout,
-            max_chars=max_chars,
-            user_agent=user_agent,
-        )
+        if _domain_from_url(url) in _SNIPPET_ONLY_DOMAINS:
+            excerpt = ""
+        else:
+            excerpt = fetch_news_excerpt(
+                url,
+                timeout=timeout,
+                max_chars=max_chars,
+                user_agent=user_agent,
+            )
         candidate_text = excerpt or snippet
         if not candidate_text:
             continue

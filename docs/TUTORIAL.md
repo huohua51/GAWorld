@@ -156,3 +156,11 @@ python generative_city_sim.py run
 ```
 
 如果你只想先验证流程可跑通，按上面 3 条命令执行即可。
+
+## 11. 想扩展 GAWorld？
+
+所有子系统都运行在微内核插件接口上：写一个 `gaworld.kernel.Plugin`
+子类 + `CONFIG["plugins"]` 一行声明即可加新子系统，不用改核心代码；
+认知管线（感知 → 计划 → 行动 → 反思等 12 阶段）的消融与定制也只是
+改 `CONFIG["pipeline"]`。完整指南见
+[插件作者指南](PLUGIN_AUTHORING.md)与[完整教程第 17 章](TUTORIAL.v2.md#17-微内核插件架构扩展-gaworld)。

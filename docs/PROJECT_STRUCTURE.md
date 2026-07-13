@@ -1,18 +1,43 @@
 # Project Structure
 
-GAWorld is mid-migration from a flat script layout to a package layout.
-Keep active cross-cutting code in `gaworld/`; keep root modules as stable
+GAWorld runs on a society-centric microkernel architecture (K1–K5
+migration completed 2026-07-12 — design doc:
+`docs/proposals/2026-07-11-microkernel-plugin-architecture.md`). Keep
+active cross-cutting code in `gaworld/`; keep root modules as stable
 CLI/backward-compat entrypoints until their callers have been migrated.
+
+## Kernel & Plugin Surface
+
+- `gaworld/kernel/`: the domain-free microkernel — `clock.py`, `bus.py`
+  (EventBus: observe/collect/filter hooks), `registry.py` (Plugin base +
+  assembly from `CONFIG["plugins"]` and `gaworld.plugins` entry points),
+  `controller.py` (action validation gate + audited interventions),
+  `recorder.py` (unified JSONL event stream under `output/records/`),
+  `context.py` (SimContext + `build_kernel`), `interventions.py`
+  (standard interventions: `set_agent_state`, `update_config`,
+  `remove_agent`).
+- `gaworld/sim/pipeline.py`: the agent step as a configurable sequence of
+  12 named stages (`CONFIG["pipeline"]["agent_step"]`).
+- `gaworld/plugins/`: built-in plugin assembly — `builtin_plugins()` is
+  the one place that may import built-in plugin classes.
+- Built-in plugins (one per subsystem): `gaworld/policy/plugin.py`
+  (intervention), `gaworld/skills/plugin.py`, `gaworld/interests_plugin.py`,
+  `gaworld/events/plugin.py` (life events), `gaworld/economy/plugin.py`,
+  `gaworld/world/plugin.py` (local physical + spatial preferences),
+  `gaworld/work/plugin.py` (real work), `gaworld/behavior/plugin.py`
+  (dynamic behavior).
+- Authoring guide + event catalog: [`PLUGIN_AUTHORING.md`](PLUGIN_AUTHORING.md).
 
 ## Active Runtime
 
-- `generative_city_sim.py`: legacy CLI entrypoint and simulator loop.
+- `generative_city_sim.py`: CLI entrypoint and simulator loop — pipeline
+  scaffolding only; subsystem logic lives in the plugins above.
 - `config.py`: compatibility shim that exposes `CONFIG`.
 - `data/`: tracked seed data and local baseline inputs.
 - `gaworld/settings/`: focused configuration fragments assembled into the legacy `CONFIG` dict.
 - `gaworld/core/`: typed core abstractions used by new code.
 - `gaworld/io/`: IO helpers such as HTTP guards and web scraping.
-- `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, and progress updates.
+- `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, progress updates, day-end forgetting decay, and interest-set evolution (retirement + social contagion).
 - `gaworld/work/`: real-work task routing, queueing, adapters, and market data.
 - `gaworld/skills/`: per-agent Skill subsystem — global library at `data/skills/`, private skills under `output/memory/agent_<id>_skills/`, and experience-to-skill consolidation. See [`SKILL_SYSTEM.md`](SKILL_SYSTEM.md).
 - `gaworld/world/local_physical.py`: per-node occupancy / opening-hours snapshots and crowd-surge anomaly detection injected into perception. See [`physical_env_perception_changelog.md`](physical_env_perception_changelog.md).
@@ -52,6 +77,7 @@ New code that needs config assembly should prefer `gaworld.settings`.
   - `output/memory/agent_<id>_env_preferences.json`: per-agent learned location-avoidance preferences (stateful runs only).
   - `output/work/`: real-work artifacts, capability cache, queue/market event logs.
 - `site/`: dashboard and visualization frontends.
+  - `site/dashboard/`: console (`index.html`) and Agent Studio (`studio.html` — single-agent 7-step builder/inspector, wired to the state CSV + profile Markdown via the Studio endpoints in `dashboard_server.py`).
 - `video/`: Remotion video project.
 - `tmp/`: local temporary/generated scratch content.
 - `backup/`: historical scripts, not active runtime.

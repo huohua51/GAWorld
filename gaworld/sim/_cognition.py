@@ -29,8 +29,6 @@ from typing import Any
 from gaworld.cognition.realism import relationship_weight
 from gaworld.llm import providers as _llm_providers
 from gaworld.settings import CONFIG
-from gaworld.skills.prompt_helpers import render_agent_skills
-from gaworld.skills.registry import SkillRegistry, get_default_registry
 
 # NB: access ``call_llm`` via ``_llm_providers.call_llm`` rather than a
 # ``from`` import. The mock installer in ``tests/fixtures/mock_llm.py``
@@ -48,39 +46,6 @@ def _fos_fast_mode_cfg() -> dict[str, Any]:
 
 def _deterministic_cognition_enabled() -> bool:
     return bool(_fos_fast_mode_cfg().get("deterministic_cognition", False))
-
-
-def _skills_cfg() -> dict[str, Any]:
-    s = CONFIG.get("skills", {}) if isinstance(CONFIG, dict) else {}
-    return s if isinstance(s, dict) else {}
-
-
-def _agent_skill_block(
-    agent: dict[str, Any],
-    *,
-    registry: SkillRegistry | None = None,
-) -> str:
-    """Render the agent's currently-held skills as a labelled block.
-
-    Returns an empty string when the agent has no skills, when the
-    feature is disabled in config, or when the registry can't be
-    loaded — callers should branch on the string.
-    """
-    cfg = _skills_cfg()
-    if not cfg.get("inject_into_cognition", True):
-        return ""
-    try:
-        reg = registry or get_default_registry()
-        skills = reg.list_for_agent(agent)
-    except Exception:  # noqa: BLE001 — never let skill rendering break perception
-        return ""
-    if not skills:
-        return ""
-    max_n = int(cfg.get("max_per_prompt", 4))
-    rendered = render_agent_skills(skills, max_skills=max_n)
-    if not rendered:
-        return ""
-    return f"你已经掌握的小技能：\n{rendered}"
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +100,14 @@ def perception(
     social_context: str,
     env_context: str,
     policy_event: str,
+    extra_sections: list[str] | None = None,
 ) -> str:
+    """Perceive the current situation via LLM.
+
+    ``extra_sections`` are plugin contributions collected on the
+    ``perception.sections`` event (e.g. the Skill library block); they
+    render at the position the inline skill suffix used to occupy.
+    """
     if _deterministic_cognition_enabled():
         social_text = str(social_context or "").strip() or "周围的人没有太多新变化"
         env_text = str(env_context or "").strip() or "环境整体比较平稳"
@@ -143,8 +115,8 @@ def perception(
         if policy_text:
             return f"我注意到{env_text}，也感到{social_text}，政策上的变化让我会顺手多留意一下。"
         return f"我注意到{env_text}，也感到{social_text}，所以更想先按当前节奏把这段时间过稳。"
-    skill_block = _agent_skill_block(agent)
-    skill_suffix = f"\n{skill_block}\n" if skill_block else ""
+    sections = [str(s).strip() for s in (extra_sections or []) if str(s).strip()]
+    skill_suffix = "\n" + "\n".join(sections) + "\n" if sections else ""
     prompt = f"""
 你是{agent['name']}。
 现在是 {time_str}。
@@ -181,7 +153,6 @@ def social_influence(agent: dict[str, Any], agents_by_id: dict[Any, dict[str, An
 
 __all__ = [
     "HUMAN_REALISM_ENABLED",
-    "_agent_skill_block",
     "get_social_context",
     "perception",
     "social_influence",

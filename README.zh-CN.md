@@ -42,25 +42,51 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 关系变化
 - 收支与资产变化
 
+## 微内核插件架构
+
+自 2026-07 起，GAWorld 运行在 society-centric 微内核架构上（参考
+[Agent-Kernel](https://arxiv.org/abs/2512.01610)）：
+
+- **内核**（`gaworld/kernel/`，零领域逻辑）：`Clock` 时钟、`EventBus`
+  事件总线（observe/collect/filter 三种钩子语义）、`PluginRegistry`
+  插件注册表、`Controller`（动作校验 + 可审计运行时干预）、`Recorder`
+  统一事件流、`SimContext` 运行时上下文。
+- **认知管线**（`gaworld/sim/pipeline.py`）：每个 agent step 是 12 个
+  命名阶段的可配置序列（`prepare → perceive → interrupts → plan →
+  adjust_activity → move → select_action → reflect → update_state →
+  broadcast → memorize → record`）。消融、替换、插入阶段都只是改
+  `CONFIG["pipeline"]`。
+- **插件**：全部 9 个内置子系统（干预、技能、兴趣成长、人生事件、经济、
+  物理感知、真实工作、动态行为、空间偏好）与第三方扩展走同一套插件
+  接口——写一个 `Plugin` 子类 + `CONFIG["plugins"]` 一行声明（或 pip
+  包的 `gaworld.plugins` entry point），主循环零改动。
+- **运行时干预**：`Controller.intervene` 自带 `set_agent_state`、
+  `update_config`、`remove_agent`（日边界生效）、`inject_life_event`
+  四个标准干预，每次调用自动审计。
+
+事件目录与完整示例见[插件作者指南](./docs/PLUGIN_AUTHORING.md)。
+
 ## 主要能力
 
+- 微内核插件体系：子系统皆可插拔，扩展无需改核心；12 阶段可配置认知管线；可审计运行时干预（状态编辑 / 配置修改 / 移除智能体 / 注入事件）
 - 从 CSV 状态种子和 Markdown profile 构建智能体
 - 从社交媒体页面或提取文本创建新智能体
 - 多后端 LLM 路由：Ollama、OpenAI 兼容、Anthropic 兼容
 - 支持通过 CLI 或文件注入外部 RAG 信息
 - 政策事件和环境事件模拟
 - PolicySim 风格的推荐 / 曝光干预指标
-- 真实个人经济仿真（个税、五险一金、恩格尔系数消费、投资理财、宏观经济周期）
+- 货币守恒的闭环经济仿真（企业/政府/银行部门池、个税与五险一金真实代扣、现金约束消费 + 信贷、共同市场因子投资、智能体间支付路由与熟人借贷、宏观经济周期）
 - 真实位置系统：基于类别的空间匹配、出行成本计算、高峰时段和天气影响、通勤记忆
 - 动态行为系统：情绪驱动的即兴行为、社交偶遇链、需求中断、环境事件连锁反应、承诺度感知的日程中断
 - 物理环境感知与反应式重规划：节点级拥挤度 / 营业时间感知、异常检测、当日受影响区间重排、习得的地点规避偏好
-- 兴趣爱好与技能成长系统：为每个智能体生成兴趣、计划发展的技能、练习时间、成长进度，并影响日程、行动、工作和生活选择
+- 兴趣爱好与技能成长系统：为每个智能体生成兴趣、计划发展的技能、练习时间、成长进度，并影响日程、行动、工作和生活选择——含幂律学习曲线、连击动量、里程碑事件、日终遗忘衰减、兴趣发展四阶段与社交兴趣传染
 - 可复用 Skill 库：基于 Markdown 的全局 / 私有技能，可从经历自动提炼，并注入认知与工作 brief
 - 真实工作任务系统：智能体在 mock 工作市场浏览、接单，按职业与技能产出真实产物（HTML、Python、文章、教案、研究笔记）
 - 城市地图生成与轨迹回放
 - 可视化 trace 导出
 - 单智能体采访 CLI
 - 本地 dashboard：配置编辑、profile 编辑、运行控制、记忆查看、访谈
+- Agent Studio：面向单个智能体的 7 步可视化构建/查看器——身份、九个 [0,1] 状态变量（可编辑雷达）、技能、分层记忆、Dunbar 社交圈、行为拨盘、复核/部署；改动写回状态 CSV 与 profile Markdown，并可创建新智能体
 - 多机分布式 relay 通信模式
 
 ## 项目结构
@@ -68,6 +94,9 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 ```
 GAWorld/
 ├── gaworld/                       # 核心包（所有功能的唯一正式实现）
+│   ├── kernel/                    # 微内核：时钟、事件总线、插件注册表、Controller、Recorder、SimContext、标准干预
+│   ├── plugins/                   # 内置插件装配点（builtin_plugins()，9 个插件）
+│   ├── sim/pipeline.py            # 可配置的 12 阶段认知管线
 │   ├── apps/                      # 应用服务：dashboard、visualizer、relay 服务器
 │   ├── behavior/dynamic.py        # 动态行为（中断、自发行为、社交链）
 │   ├── cognition/realism.py       # 真实感：意图、习惯、关系权重、记忆整合
@@ -112,7 +141,7 @@ GAWorld/
 - `gaworld/sim/`：从主仿真器拆分出来的子模块（持续细化中）
 - `gaworld/work/`：real-work 任务系统（runtime、worker pool、queue、market）
 - `gaworld/apps/`：dashboard、外部环境服务器、分布式 relay
-- `site/dashboard/`：dashboard 前端
+- `site/dashboard/`：dashboard 前端（控制台 `index.html` + Agent Studio `studio.html`）
 - `site/simviz/`：轨迹回放页面
 - `output/`：生成结果
 
@@ -257,6 +286,36 @@ python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877
 dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 这个文件会在运行时覆盖 `config.py` 中的基础配置。
 
+### Agent Studio
+
+Agent Studio 是面向单个智能体的可视化构建/查看器，可从控制台工具栏
+（**Agent Studio ↗**）进入，或直接访问
+`http://127.0.0.1:8766/site/dashboard/studio.html`。它把一个智能体拆成
+七步，全部绑定 GAWorld 的真实种子模型：
+
+1. **身份** — 姓名、性别、年龄、户籍、居住地与叙事 profile
+2. **状态 · 性格** — 九个归一化 `[0,1]` 状态变量（`emotion`、`stress`、`econ_security`、`city_identity`、`policy_sensitivity`、`platform_dependence`、`risk_preference`、`voice_propensity`、`mobility_intent`）作为实时滑块 + 可编辑雷达
+3. **能力 · 技能** — 全局技能库
+4. **记忆** — 情节 / 习惯 / 意图 / 日程计数与记忆图谱
+5. **社交 · 关系** — 仿真产出后展示真实 Dunbar 分层（`inner`/`close`/`acquaintance`/`weak`）与按亲密度排序的关系列表
+6. **行为 · 目标** — 驱动行为的状态拨盘
+7. **复核 · 部署** — 完整摘要、可选 LLM 采访、保存、以及“用此居民运行仿真”
+
+改动写回真实种子文件：状态变量与身份写入状态 CSV
+（`data/hangzhou_agents_state_init.csv`），并同步进 profile Markdown 的状态行；
+叙事编辑写入 profile 块；“创建”会同时追加一行 CSV 与一个 profile 块。社交与
+财务面板读取 `output/memory`、`output/economy` 的运行产物，未跑仿真时优雅降级。
+
+后端 API（新增于 `dashboard_server.py`）：
+
+| 方法 | 端点 | 作用 |
+|------|------|------|
+| GET | `/api/agents/{id}/state` | 身份 + 九个状态变量 |
+| GET | `/api/agents/{id}/detail` | 聚合：状态、profile、记忆计数、财务、社交、技能 |
+| GET | `/api/skills` | 全局技能库 |
+| POST | `/api/agents/{id}/state` | 写状态/身份到 CSV（并同步 profile） |
+| POST | `/api/agents` | 创建新智能体（CSV 行 + profile 块） |
+
 ## 配置说明
 
 基础配置位于 `config.py`。
@@ -272,8 +331,8 @@ dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 - `llm.routing.tasks`：按任务覆盖 provider
 - `memory_dir`、`log_dir`、`vector_db_path`：持久化路径
 - `visualization.output_dir`：轨迹输出目录
-- `economy`：个人财务配置（税率表、社保费率、恩格尔曲线、投资参数、宏观周期、冲击事件）
-- `interests`：兴趣爱好与技能成长配置（启用开关、成长项上限、日程插入倾向、进度持久化）
+- `economy`：个人财务配置（税率表、社保费率、恩格尔曲线、投资参数含 `market_correlation`、宏观周期、冲击事件、部门池 `sectors`、信贷 `credit`、支付路由 `routing`、熟人借贷 `friend_loans`）
+- `interests`：兴趣爱好与技能成长配置（启用开关、成长项上限、日程插入倾向、进度持久化、日终遗忘衰减 `decay`、兴趣集演化 `evolution`）
 - `dynamic_behavior`：动态行为系统配置（启用开关）
 - `environment.local_physical` / `environment.anomaly` / `environment.replan` / `environment.spatial_preferences`：物理感知与反应式重规划的开关与阈值
 - `skills`：可复用 Skill 库配置（全局目录、认知 / work brief 注入、单提示上限）
@@ -282,6 +341,10 @@ dashboard 会把本地覆盖参数写入 `dashboard_config.json`。
 - `intervention`：轻量推荐 / 曝光控制和干预评估配置
 - `policy_events`：政策事件
 - `distributed`：多机通信配置
+- `plugins`：第三方插件声明（`[{"class": "pkg.mod:Class", "enabled": true}, ...]`）
+- `pipeline.agent_step`：认知阶段顺序（省略某阶段即消融；可插入 `"module:function"` 自定义阶段）
+- `controller.validators`：动作校验器开关（`location_exists` 默认开、`venue_open` 默认关）
+- `extensions.hooks`：用户扩展钩子（`{事件名: ["module:function", ...]}`）
 
 ### 日志模式
 
@@ -339,22 +402,44 @@ Refl: 感受：情绪有一点波动；教训：下次要更早判断状态和�
 休闲、教育、医疗、杂项）按收入弹性系数加权分配——必需品（食品 0.5、医疗 0.6）随收入增长慢，
 奢侈品（休闲 1.5、服装 1.2）增长快。月预算在薪资变动时自动重新计算。
 
-**多账户体系与投资理财**
+**多账户体系与投资理财（含共同市场因子）**
 
 每个智能体持有四个账户：活期、储蓄、投资和公积金。风险偏好映射到三种投资组合——保守型
-（定期存款 70% / 基金 25% / 股票 5%）、稳健型（40/40/20）、激进型（15/35/50）。每月按
-高斯分布模拟各资产类别的投资收益（定期存款年化 ~2.5%、基金 ~6%±8%、股票 ~8%±22%）。超出
-缓冲阈值的活期余额自动转入储蓄和投资账户。
+（定期存款 70% / 基金 25% / 股票 5%）、稳健型（40/40/20）、激进型（15/35/50）。月度收益
+= 全市场共同因子（每月抽取一次、所有智能体共享，市场级暴涨暴跌会同时波及所有人）+ 个体特质
+噪声，系统性占比由 `investment.market_correlation`（默认 0.7）控制。超出缓冲阈值的活期
+余额自动转入储蓄和投资账户。
+
+**货币守恒与部门池**
+
+所有资金流动均有对手方——企业池（发工资、收消费）、政府池（收税与社保、支付医保报销）、
+银行池（结算投资盈亏、发放信贷）。税与社保按**实收**工资在月结时真实代扣。初始化后系统货币
+总量守恒到分，每日审计写入 `output/economy/conservation_audit.csv`（|drift| ≤ 0.01 元），
+GAWorld-Bench Track A 将守恒作为硬门槛。部门池允许为负（企业池为负即家庭部门净储蓄的镜像）。
+
+**现金约束、信贷与熟人借贷**
+
+支出按 活期 → 储蓄提取 → 银行信用额度（默认 2 倍月净薪、年息 18%、月度复利、盈余自动还款）
+→ 截断 的顺序融资；流动性低于 1 个月开销时按收入弹性削减非必需消费。消费被截断的智能体进入
+财务困境状态：压力上升，日终可按亲密度×信任度向社交网络上有盈余的好友无息借款，月结时优先
+偿还熟人债务。
+
+**支付路由到智能体**
+
+本地消费的一部分（`routing.merchant_labor_share`，默认 35%）经企业池转付给工作地点匹配的
+服务业/商贸智能体；房租路由给房东类智能体。货币因此在智能体之间循环，财富分布得以内生涌现。
 
 **宏观经济周期与冲击事件**
 
 仿真级别维护一个四阶段宏观周期——扩张、峰值、收缩、谷底——每个阶段持续 60–180 天。不同阶段
 对收入、支出、裁员风险和加薪概率施加不同倍率。行业景气度（科技、金融、医疗、教育、服务、贸易）
-独立波动。通胀按日累积，侵蚀购买力。个体层面有随机经济冲击事件：裁员（收入削减 50–85%，恢复期
-30–90 天）、涨薪/晋升、大病医疗（社保报销 50–85%）、年终奖（第13个月工资）。
+独立波动。通胀按日累积，侵蚀购买力。个体层面有随机经济冲击事件：裁员（收入削减 50–85% 且月度
+税基同步下调，恢复期 30–90 天）、涨薪/晋升、大病医疗（社保报销 50–85%，由政府池支付）、年终奖
+（第13个月工资，奖金税入政府池）。经济模块使用独立随机流（由 `random_seed` 派生），其它模块
+增删随机调用不影响经济轨迹的可复现性。
 
-经济模块的输出包括 `output/economy/daily_ledger.csv`、每智能体账本、财富快照和
-`macro_state.json`。
+经济模块的输出包括 `output/economy/daily_ledger.csv`（含 `debt` 列）、每智能体账本、财富快照、
+`macro_state.json`、`sectors.json` 和 `conservation_audit.csv`。
 
 ### 位置系统
 
@@ -402,6 +487,17 @@ Refl: 感受：情绪有一点波动；教训：下次要更早判断状态和�
 - 每日意图可以包含 `growth_focus`，让今天要发展的兴趣或技能进入计划、反思和次日整合；
 - 动作选择时，匹配兴趣/技能的动作会获得额外权重，但不会硬性覆盖工作、上课、医疗、睡眠等高承诺活动；
 - 每个 episode 会记录 `growth_matches` 和 `growth_progress`，并更新成长项的水平、累计分钟、最近练习日期和 streak。
+
+练习收益遵循幂律学习曲线——水平越高、单次涨幅越小；连续不断的练习会带来动量加成。水平上穿
+0.35 / 0.60 / 0.85 时会向 `growth_progress` 写入里程碑事件（入门/熟练/精通），日记和反思可以引用这些
+可感知的进步。每个成长项还带有一个按 Hidi & Renninger 模型派生的发展阶段
+（触发期 → 维持期 → 浮现期 → 成熟期），会展示在 prompt 上下文中，让智能体的自我认知随发展变化。
+
+日终时成长画像本身也会演化（配置：`CONFIG["interests"]["decay"]` 与 `CONFIG["interests"]["evolution"]`）：
+超过宽限期未练习的条目水平下降——保持率随累计练习量提高，且衰减阶段感知（脆弱的触发期条目掉得更快，
+成熟期条目几乎不掉）——断练会打断 streak。停滞的浅尝辄止条目最终会被放下，同时可以从当日社交对象处
+习得新兴趣（兴趣传染），因此兴趣集会持续周转，而不是在 bootstrap 后一成不变。以上全部为纯规则实现，
+不新增 LLM 调用，落盘 schema 不变。
 
 兴趣技能是运行时状态，不会写回原始 CSV 或 Markdown profile。全局推导缓存位于
 `output/memory/growth_profiles.json`，单智能体进度位于 `output/memory/agent_<id>_growth.json`。
@@ -564,14 +660,10 @@ LLM 调用之前完成决策。
 ## 更多文档
 
 - [English README](./README.md)
-<<<<<<< Updated upstream
 - [完整教程（含全部特性）](./docs/TUTORIAL.v2.md)
 - [快速上手教程](./docs/TUTORIAL.md)
-- [仓库规范](./AGENTS.md)
-=======
-- [用户教程](./docs/TUTORIAL.md)
-- [完整使用教程](./docs/GAWORLD_USER_TUTORIAL.md)
->>>>>>> Stashed changes
+- [插件作者指南](./docs/PLUGIN_AUTHORING.md)（不改核心扩展 GAWorld）
+- [微内核架构设计](./docs/proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [Skill 系统设计与使用](./docs/SKILL_SYSTEM.md)
 - [真实工作系统 — 使用](./docs/REAL_WORK_USAGE.md) · [设计](./docs/REAL_WORK_DESIGN.md)
 - [物理环境感知与反应式重规划](./docs/physical_env_perception_changelog.md)

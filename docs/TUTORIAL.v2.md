@@ -21,10 +21,12 @@
 10. [访谈与 RAG 注入](#10-访谈与-rag-注入)
 11. [分布式 relay：多机通信](#11-分布式-relay多机通信)
 12. [Dashboard 使用指南](#12-dashboard-使用指南)
+    - [12.1 Agent Studio（单智能体构建/查看器）](#121-agent-studio单智能体构建查看器)
 13. [配置与开关总表](#13-配置与开关总表)
 14. [输出文件地图](#14-输出文件地图)
 15. [常见问题](#15-常见问题)
 16. [命令速查表](#16-命令速查表)
+17. [微内核插件架构：扩展 GAWorld](#17-微内核插件架构扩展-gaworld)
 
 ---
 
@@ -127,7 +129,7 @@ output/
 ├── logs/           运行日志（run.log 为完整结构化日志）
 ├── memory/         智能体记忆、成长进度、向量库
 ├── state/          状态时间序列 CSV
-├── economy/        账本、财富快照、宏观状态
+├── economy/        账本、财富快照、宏观状态、部门池与守恒审计
 ├── environment/    环境事件时间线
 ├── intervention/   PolicySim 风格干预指标
 ├── network/        社交网络图
@@ -196,23 +198,31 @@ python generative_city_sim.py reset && python generative_city_sim.py run
 
 ### 5.2 经济仿真
 
-基于中国个人财务体系的四大子系统（配置见 `CONFIG["economy"]`，源文件 `gaworld/settings/economy.py`）：
+基于中国个人财务体系的闭环货币系统（配置见 `CONFIG["economy"]`，源文件 `gaworld/settings/economy.py`，实现 `gaworld/economy/finance.py`）：
 
-- **个税与社保**：7 档累进税率（3%→45%）、月免征额 5000 元；五险一金按个人缴费率扣缴（养老 8% / 医疗 2% / 失业 0.5% / 公积金 8%）。
+- **个税与社保（真实代扣）**：7 档累进税率（3%→45%）、月免征额 5000 元；五险一金按个人缴费率扣缴（养老 8% / 医疗 2% / 失业 0.5% / 公积金 8%）。月末按**实收**工资从活期账户真实代扣，税款入政府部门池，公积金（个人 + 单位配缴）入公积金账户。
 - **恩格尔系数消费**：低收入者食品支出占比高、储蓄率低，高收入者相反；8 大消费类目按收入弹性分配。
-- **多账户投资**：活期 / 储蓄 / 投资 / 公积金四账户，保守 / 稳健 / 激进三种组合，月度收益按高斯分布模拟。
+- **多账户投资 + 共同市场因子**：活期 / 储蓄 / 投资 / 公积金四账户，保守 / 稳健 / 激进三种组合。月度收益 = 全市场共同因子（每月抽取一次，所有 agent 共享，股灾会同时打击所有人）+ 个体特质噪声，系统性占比由 `investment.market_correlation`（默认 0.7）控制。
 - **宏观经济周期**：扩张 → 峰值 → 收缩 → 谷底四阶段，行业景气独立波动，每日通胀累积。
+
+**货币守恒与部门池**：所有资金流动都有对手方 —— 企业池（发工资、收消费）、政府池（收税、付医保报销）、银行池（结算投资盈亏、放贷）。初始化后系统货币总量守恒到分，每日审计写入 `conservation_audit.csv`（|drift| ≤ 0.01 元），GAWorld-Bench Track A 将其作为硬门槛。部门池允许为负（企业池为负 = 家庭部门净储蓄的镜像）。
+
+**现金约束、信贷与熟人借贷**：支出按 活期 → 储蓄提取 → 银行信用额度（默认 2 倍月净薪、年息 18%、月度复利、盈余自动还款）→ 截断 的顺序融资；流动性低于 1 个月开销时按收入弹性削减非必需消费（奢侈类砍得更狠）。消费被截断的 agent 进入 distress 状态：stress 上升，日终可按 closeness×trust 向社交网络上有盈余的好友无息借款（`friend_debts` 双边记账，月结时优先于银行债务偿还）。
+
+**支付路由到 agent**：本地消费的 `routing.merchant_labor_share`（默认 35%）经企业池转付给工作地点匹配的服务业 / 商贸 agent；房租路由给房东类 agent（职业关键词匹配），无房东则留在企业池。货币因此在 agent 之间循环，财富分布可以内生涌现。
 
 个体随机触发的经济冲击事件：
 
 | 事件 | 影响 |
 |---|---|
-| 裁员 | 收入削减 50–85%，恢复期 30–90 天 |
+| 裁员 | 收入削减 50–85%（月度税基同步下调），恢复期 30–90 天 |
 | 涨薪 / 晋升 | 收入提升，税率重算 |
-| 大病医疗 | 社保报销 50–85%，影响情绪与支出 |
-| 年终奖 | 第 13 个月工资 |
+| 大病医疗 | 社保报销 50–85%（政府池支付），影响情绪与支出 |
+| 年终奖 | 第 13 个月工资（企业池支付，奖金税入政府池） |
 
-经济数据写入 `output/economy/`（`daily_ledger.csv`、`wealth_snapshot.csv`、`macro_state.json`、`agents/agent_<id>_*`）。
+经济模块使用独立随机流（由 `random_seed` 派生），其它模块增删随机调用不影响经济轨迹的可复现性。
+
+经济数据写入 `output/economy/`（`daily_ledger.csv` 含 `debt` 列、`wealth_snapshot.csv`、`macro_state.json`、`sectors.json`、`conservation_audit.csv`、`agents/agent_<id>_*`）。
 
 ### 5.3 位置系统与交通
 
@@ -243,6 +253,13 @@ python generative_city_sim.py reset && python generative_city_sim.py run
 ### 5.5 兴趣爱好与技能成长
 
 开关 `CONFIG["interests"]["enabled"]`。为每个智能体派生 `growth_profile`（兴趣、计划发展的技能、练习进度），影响日程、动作权重与工作选择；进度落在 `output/memory/agent_<id>_growth.json`，全局画像缓存于 `growth_profiles.json`。
+
+成长动力学（v2，纯规则、零额外 LLM 调用，设计文档见 `docs/proposals/2026-07-04-personal-growth-v2.md`）：
+
+- **幂律学习**：练习收益随水平递减；连续练习（streak）有动量加成；水平上穿 0.35 / 0.60 / 0.85 时向 episode 的 `growth_progress` 写入里程碑事件（入门/熟练/精通）。
+- **发展四阶段**：按 Hidi & Renninger 模型从水平 + 累计练习量派生"触发期 → 维持期 → 浮现期 → 成熟期"，进入 prompt 上下文。
+- **日终遗忘衰减**（`interests.decay`：`grace_days` / `daily_rate` / `floor`）：超过宽限期未练则掉水平，保持率随累计练习量提高、且阶段感知（触发期 ×1.5、成熟期 ×0.5），断练归零 streak。
+- **兴趣集演化**（`interests.evolution`：`retire_after_days` / `adopt_chance` / `max_new_per_day`）：停滞的触发期条目会被放下（至少保留 1 项）；可从当日社交对象处习得新兴趣（社交传染），仿真日志中以 🌱 行提示。
 
 ### 5.6 干预评估
 
@@ -607,6 +624,33 @@ python generative_city_sim.py dashboard --port 8766
 
 **配置覆盖**：Dashboard 的修改写入 `dashboard_config.json`，运行时**覆盖** `config.py` 的基础配置（`config.py` ← 基础，`dashboard_config.json` ← 覆盖）。想恢复原始值，删除 `dashboard_config.json` 即可。
 
+### 12.1 Agent Studio（单智能体构建/查看器）
+
+控制台工具栏点 **「Agent Studio ↗」**，或直接打开
+`http://127.0.0.1:8766/site/dashboard/studio.html`。它聚焦**一个**智能体，
+分七步展示与编辑，字段全部对应 GAWorld 的真实种子模型：
+
+| 步骤 | 内容 | 数据来源 |
+|---|---|---|
+| 1 身份 | 姓名、性别、年龄、户籍、居住地、叙事 profile | 状态 CSV + profile MD |
+| 2 状态 · 性格 | 九个 `[0,1]` 状态变量（滑块 + 可编辑雷达） | 状态 CSV |
+| 3 能力 · 技能 | 全局技能库 | `data/skills` |
+| 4 记忆 | 情节/习惯/意图/日程计数 + 记忆图谱 | `output/memory` |
+| 5 社交 · 关系 | 真实 Dunbar 分层（inner/close/acquaintance/weak）+ 亲密度排序 | `output/memory/*_relationships.json` |
+| 6 行为 · 目标 | 驱动行为的状态拨盘 | 状态 CSV |
+| 7 复核 · 部署 | 摘要、可选采访、保存、用此居民运行仿真 | — |
+
+**写回规则**：状态变量与身份写入状态 CSV
+（`data/hangzhou_agents_state_init.csv`）并**同步**进 profile MD 的
+`**核心状态变量**` 与 `**研究增强变量初始化**` 两处（CSV 为权威源，避免漂移）；
+叙事编辑写 profile 块；「创建」追加一行 CSV + 一个 profile 块（复用导入-agent 的
+格式，保留 BOM）。社交与财务面板读运行产物，未跑仿真时优雅降级为占位。
+
+**后端 API**（`gaworld/apps/dashboard_server.py`）：
+`GET /api/agents/{id}/state`、`GET /api/agents/{id}/detail`、`GET /api/skills`、
+`POST /api/agents/{id}/state`、`POST /api/agents`（创建）。测试见
+`tests/test_dashboard_studio.py`。
+
 ---
 
 ## 13. 配置与开关总表
@@ -617,8 +661,8 @@ python generative_city_sim.py dashboard --port 8766
 |---|---|
 | `agent_ids` / `sim_days` / `seconds_per_day` | 参与 agent、仿真天数、每日现实秒数 |
 | `llm.routing.default` / `llm.routing.tasks` | 默认 provider / 按任务覆盖 |
-| `economy` | 个税、社保、恩格尔消费、投资、宏观周期、冲击 |
-| `interests` | 兴趣 / 技能成长（开关、上限、插入倾向、持久化） |
+| `economy` | 个税、社保、恩格尔消费、投资、宏观周期、冲击、部门池守恒、信贷（`credit`）、agent 间路由（`routing`）、熟人借贷（`friend_loans`） |
+| `interests` | 兴趣 / 技能成长（开关、上限、插入倾向、持久化、日终衰减 `decay`、兴趣集演化 `evolution`） |
 | `dynamic_behavior` | 动态行为系统开关 |
 | `environment.local_physical` / `.anomaly` / `.replan` / `.spatial_preferences` | **新**：物理感知与反应式重规划 |
 | `skills` | **新**：Skill 库（全局目录、注入开关、单提示上限） |
@@ -643,7 +687,8 @@ output/
 │                agent_<id>_env_preferences.json   ← 新：地点规避偏好
 │                agent_<id>_skills/*.md            ← 新：私有 Skill
 │                vector_db.sqlite
-├── economy/     daily_ledger.csv、wealth_snapshot.csv、macro_state.json
+├── economy/     daily_ledger.csv（含 debt 列）、wealth_snapshot.csv、macro_state.json
+│                sectors.json、conservation_audit.csv    ← 新：部门池 + 每日守恒审计
 │                agents/agent_<id>_ledger.csv、agent_<id>_snapshot.json
 ├── environment/ timeline.jsonl
 ├── intervention/intervention_metrics.csv
@@ -708,10 +753,94 @@ GAWORLD_LOG_LEVEL=DEBUG  python generative_city_sim.py run
 
 ---
 
+## 17. 微内核插件架构：扩展 GAWorld
+
+自 2026-07 起，GAWorld 的所有子系统（干预、技能、兴趣成长、人生事件、
+经济、物理感知、真实工作、动态行为、空间偏好）都运行在统一的微内核
+插件接口上。这意味着三类以前需要改源码的操作，现在都是配置：
+
+### 17.1 认知消融实验：改管线顺序
+
+每个 agent step 是 12 个命名阶段的序列。想做"没有反思的 agent 会怎样"
+这类消融实验，只需在配置里省略对应阶段：
+
+```python
+CONFIG["pipeline"]["agent_step"] = [
+    "prepare", "perceive", "interrupts", "plan", "adjust_activity",
+    "move", "select_action",              # 省略 "reflect" = 消融反思
+    "update_state", "broadcast", "memorize", "record",
+]
+```
+
+也可以在任意位置插入自定义阶段（`"my_pkg.stages:deliberate"` 形式的
+导入路径），阶段签名为 `fn(agent, step, ctx)`。注意 `prepare` 与
+`record` 是结构性阶段（钩子发射与日志落盘在其中），消融目标应是中间
+的认知阶段。
+
+### 17.2 编写插件：不改核心加子系统
+
+一个最小插件——让 agent 在感知中听到谣言：
+
+```python
+# my_pkg/rumor.py
+from gaworld.kernel import Plugin
+
+class RumorPlugin(Plugin):
+    id = "rumor"
+    def setup(self, ctx):
+        ctx.bus.on("perception.compose", self.inject)
+    def inject(self, hook_ctx):
+        return ["有人跟你提起：城东要修新地铁线（真实性存疑）"]
+```
+
+启用方式二选一：
+
+```python
+# 配置声明（路径可导入即可）
+CONFIG["plugins"] = [{"class": "my_pkg.rumor:RumorPlugin"}]
+```
+
+```toml
+# 或 pip 包的 entry point（安装即自动装配）
+[project.entry-points."gaworld.plugins"]
+rumor = "my_pkg.rumor:RumorPlugin"
+```
+
+事件目录（感知注入、中断征集、动作过滤、状态效果、episode 组装等
+21 个事件）、三种钩子语义（observe / collect / filter）、状态与数据
+所有权约定，见[插件作者指南](PLUGIN_AUTHORING.md)。内置的 9 个插件
+本身就是最好的参考实现。
+
+### 17.3 运行时干预：模拟跑着的时候改世界
+
+`Controller.intervene` 提供可审计的运行时干预（每次调用都记录到
+`output/records/controller.intervention.jsonl`）：
+
+```python
+sim.controller.intervene("set_agent_state", sim, agent_id=31, key="stress", value=0.8)
+sim.controller.intervene("update_config", sim, path="economy.credit.apr", value=0.15)
+sim.controller.intervene("inject_life_event", sim, event={"title": "老友来电", "day": 2, "time": "19:00", "agent_ids": [31]})
+sim.controller.intervene("remove_agent", sim, agent_id=7)   # 下个日边界生效
+```
+
+在插件钩子、测试或 notebook 里都能调用（`sim` 即钩子上下文里的
+`hook_ctx["sim"]`）。
+
+### 17.4 动作校验
+
+move 动作会经过 Controller 校验链：`location_exists`（默认开，拦截
+幻觉地点）与 `venue_open`（默认关——硬拦关门场所会改变模拟动力学，
+需要时 `CONFIG["controller"]["validators"]["venue_open"] = True` 开启）。
+被拒绝的动作会审计落盘，且理由会出现在该 agent 下一个时间步的感知里
+（"刚才的行动受阻：……"），agent 可以对此做出反应。
+
+---
+
 ## 相关文档
 
 - [English README](../README.md) · [中文 README](../README.zh-CN.md)
 - [简明上手教程](TUTORIAL.md)（本教程已并入原 v1.0 完全教程的全部内容）
+- [插件作者指南](PLUGIN_AUTHORING.md) · [微内核架构设计](proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统设计与使用](SKILL_SYSTEM.md)
 - [真实工作系统 — 使用](REAL_WORK_USAGE.md) · [设计](REAL_WORK_DESIGN.md)

@@ -8,8 +8,27 @@
 > **执行状态（2026-06-15 更新）**：
 > ✅ **A1 / A3 / A4 / A5 已实现并验证**（见 `gaworld_bench.py`，设计文档 v0.1.1）。
 > 改用 `delta_final` 后 Track C 由 0.25→0.50（符号 2/4：traffic、tax 转正确；layoff 仍反向且 |Δ|≈0.13–0.19）。trust gate 现为 **UNVERIFIED**（确定性未测）。
+> 🔴 **B0 发现并修复（阻塞 B1 生效的根因）**：30 天重跑后 layoff 符号仍没翻正——排查发现 `run.log` 里
+> `Failed to load extension economy_module:on_simulation_start — No module named 'economy_module'`：
+> 经济模块的 hooks 注册在已失效的扁平名 `economy_module` 下，**整个经济子系统在仿真里静默没跑**（连带 B1 也没生效）。
+> 已把 `gaworld/settings/integrations.py` 的注册改为真实路径 `gaworld.economy.finance:<fn>`，并加回归守卫测试
+> `tests/test_extension_hooks_resolve.py`。端到端验证（经注册的 hook 链）：裁员事件使 income 57→20。
+> **影响**：经济子系统现在会在所有仿真里运行（之前是 dormant），Track A 的 wealth_snapshot 等会重新生成真实数据。
+> ⚠️ 用户那次 30 天 run 因此**无效**，需在修复后重跑。
+>
+> 🔴 **B0.5 并行竞态修复**：开经济后重跑，又在 `gaworld/interests.py` 崩溃（`os.replace` FileNotFoundError）——
+> compare-event 并行跑 with/without 两个子进程，二者把 growth/capabilities 缓存写到**同一个全局路径**，
+> 共用的 `{path}.tmp` 被一个进程 rename 后另一个就找不到了。已把两处原子写（`interests.save_growth_cache`、
+> `work/capabilities.save_cache`）的 tmp 改成进程唯一 `{path}.{pid}.tmp`，加守卫测试 `tests/test_cache_parallel_write.py`。
+>
 > ✅ **B1 已实现并验证**：在 `gaworld/economy/finance.py` 加了事件→经济冲击桥（`_active_event_layoff` + `_check_daily_shocks(event_layoff=...)` + `on_day_start` 接线 + `shocks.event_layoff_prob` 配置）。裁员事件现在**真正削减受影响 agent 收入**（之前只注入感知文本）。测试 `tests/test_event_economy_shock.py`（6 例全过），既有 30 例经济测试不回归。**注**：`econ_security` 是慢 EMA、`stress` 由行为层更新——二者在更长仿真（B2）才会跟随，本次只证明了缺失的因果链（事件→收入冲击）已接通。
-> ⏳ 待办：**A2**（跨 seed 显著性）、**B2**（≥30 天重跑验证 layoff 符号翻正）、**B3/B4**（Track A）。
+> ✅ **B2 验证通过（2026-06-20，30 天实跑）**：经济跑起来后裁员符号全部翻正——`econ_security` delta_final
+> **−0.050 ✓**（事件前 +0.133）、`stress` **+0.172 ✓**（事件前 −0.192）、`emotion` −0.157、`risk_preference` −0.078。
+> harness **Track C = 1.0 PASS，符号 4/4**。从"benchmark 报错 → 4 个真 bug（delta_mean 稀释 / 事件未接经济 / hook 没加载 / 并行竞态）→ 因果信号正确"全链路打通。
+> **诚实边界**：trust gate 仍 **UNVERIFIED**（确定性/安慰剂未测）；traffic、tax 两条仍是经济关闭时的旧 3 天 run（建议同样 30 天重跑取得干净证据）；单 seed，A2 显著性未做。
+> ✅ **A2 已实现（多 seed 显著性）**：`--seeds 1,2,3,4,5` 模式，每个干预算 95%CI，只对显著项计分、不显著记 `ns`，
+> 新增 `significance_coverage` 与 pass 门槛（显著覆盖 ≥0.5）。单元测试 `benchmark/test_gaworld_bench.py`（6 例）。
+> ⏳ 待办：用 `--run --seeds` 对经济类干预实跑多 seed 拿置信区间、traffic/tax 30 天重跑、安慰剂+确定性补齐、清理失败遗留目录、**B3/B4**（Track A）。
 
 ---
 

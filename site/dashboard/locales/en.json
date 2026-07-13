@@ -32,6 +32,7 @@
   "btn.save_profile": "Save Profile",
   "btn.refresh": "Refresh",
   "btn.start_interview": "Start Interview",
+  "btn.agent_studio": "Agent Studio ↗",
   "btn.add_event": "Add Event",
   "btn.use_selected_agent": "Use Selected Agent",
   "btn.reload_trace": "Reload Trace",

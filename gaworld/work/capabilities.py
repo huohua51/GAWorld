@@ -221,7 +221,9 @@ def save_cache(path: str, caps: dict[int, AgentCapabilities]) -> None:
     if directory:
         os.makedirs(directory, exist_ok=True)
     payload = {str(k): v.to_dict() for k, v in caps.items()}
-    tmp = f"{path}.tmp"
+    # Process-unique tmp: parallel compare-event scenarios may write the same
+    # global cache path; a shared "{path}.tmp" races on os.replace.
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)

@@ -32,6 +32,7 @@
   "btn.save_profile": "保存 Profile",
   "btn.refresh": "刷新",
   "btn.start_interview": "开始采访",
+  "btn.agent_studio": "Agent Studio ↗",
   "btn.add_event": "添加事件",
   "btn.use_selected_agent": "使用当前人物",
   "btn.reload_trace": "刷新轨迹",

@@ -17,13 +17,9 @@ from html import unescape
 
 from gaworld.settings import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
-from gaworld.interests import (
-    bootstrap_growth_profiles,
-    format_growth_context,
-    match_growth_items,
-    save_agent_growth_profile,
-    update_growth_from_episode,
-)
+# Growth-profile lifecycle moved to gaworld.interests_plugin (K3d); only
+# the inline read-side consumers remain (schedule prompt context + matching).
+from gaworld.interests import format_growth_context, match_growth_items
 from gaworld.logging_setup import LOG_MODE, get_logger
 
 _LOG = get_logger("gaworld.sim")
@@ -55,17 +51,6 @@ from gaworld.world.city_map import (
     area_price_level,
     calc_transport_cost,
     is_rush_hour,
-    set_sim_time,
-)
-from gaworld.world.local_physical import (
-    local_physical_state,
-    physical_state_text,
-    update_occupancy_from_agents,
-)
-from gaworld.memory.spatial_preferences import (
-    decay_preferences as decay_env_preferences,
-    record_anomaly_experience,
-    redirect_for_aversion,
 )
 from gaworld.distributed.comm import (
     DistributedRelayClient,
@@ -73,15 +58,12 @@ from gaworld.distributed.comm import (
     format_inbox_context,
 )
 from gaworld.behavior.dynamic import (
-    dynamic_transient_thought,
-    evaluate_step_dynamics,
     insert_activity_into_schedule as dynamic_insert_activity,
 )
-from gaworld.hooks import HookBus
+from gaworld.kernel import ActionRequest, build_kernel
+from gaworld.sim.pipeline import DEFAULT_AGENT_STEP_ORDER, StagePipeline
 from environment import EnvironmentSystem, RemoteEnvironmentClient
 from gaworld.llm.providers import call_llm
-from gaworld.work.runtime import RealWorkRuntime
-from gaworld.work.ingest import summarise_for_outcome as _rw_summarise
 from gaworld.apps.visualizer import (
     SimulationVisualizer,
     build_agent_step_payload,
@@ -116,74 +98,13 @@ from gaworld.social.network import (
     bootstrap_social_roster,
     decay_relationships,
     enforce_dunbar,
-    generate_ghost_event,
     migrate_relationships,
 )
-from gaworld.events.life import (
-    add_life_event as _add_life_event,
-    life_events_for_agent,
-    list_life_events,
-)
+from gaworld.events.life import list_life_events
 
-
-# Probability per (agent, day) of an off-screen ghost reaching out.
-GHOST_EVENT_DAILY_P = 0.18
-
-
-def _maybe_inject_ghost_event(agent, day, time_str):
-    """If the dice roll favours it, generate one off-screen ghost event
-    and push it through the life-events pipeline. Returns the event dict
-    or ``None``. Failures are swallowed — the sim must never block on
-    this path.
-    """
-    try:
-        if random.random() > GHOST_EVENT_DAILY_P:
-            return None
-        ev = generate_ghost_event(
-            agent,
-            current_day=day,
-            llm_call=lambda prompt, task=None, agent_id=None: call_llm(
-                prompt, task=task, agent_id=agent_id
-            ),
-            rng=random,
-        )
-        if not ev:
-            return None
-        agent_id = agent.get("id")
-        payload = {
-            "title": ev["title"],
-            "description": ev["description"],
-            "severity": ev.get("severity", 0.55),
-            "impact_tags": ev.get("impact_tags", ["relationship", "off_screen"]),
-            "state_effects": ev.get("state_effects", {}),
-            "schedule_mode": "scheduled",
-            "day": int(day),
-            "time": str(time_str or "08:30"),
-            "agent_ids": [int(agent_id)] if agent_id is not None else [],
-            "template_key": ev.get("template_key", "ghost_event"),
-            "created_by": "social_network",
-        }
-        return _add_life_event(payload, CONFIG)
-    except Exception as exc:  # noqa: BLE001
-        _LOG.warning(
-            "ghost event injection failed for %s: %s",
-            agent.get("name", "?"),
-            exc,
-        )
-        return None
-from gaworld.policy.intervention import (
-    INTERVENTION_METRICS,
-    append_intervention_metrics,
-    build_intervention_feed,
-    initialize_agent_intervention_state,
-    update_agent_intervention_metrics,
-)
-from gaworld.events.life import (
-    drain_due_life_events,
-    format_life_event,
-    life_event_dir,
-    life_events_for_agent,
-)
+from gaworld.policy.intervention import INTERVENTION_METRICS
+from gaworld.plugins import builtin_plugins
+from gaworld.events.life import life_event_dir
 from gaworld.memory.store import (
     append_agent_log,
     load_agent_actions,
@@ -285,6 +206,11 @@ from gaworld.sim._news import (  # noqa: E402
     web_search,
     search_web_and_store,
     read_news_and_store,
+)
+from gaworld.sim._curiosity import (  # noqa: E402
+    assemble_curiosity_context,
+    should_seek_knowledge,
+    propose_contextual_keywords,
 )
 
 
@@ -408,15 +334,14 @@ def visualize_agent_state_changes(
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 4.2, rows * 3.2), sharex=True)
     axes = np.array(axes).reshape(-1)
 
-    steps = None
     for i, metric in enumerate(metrics):
         ax = axes[i]
         for agent_id, history in state_history.items():
             series = history.get(metric, [])
-            if steps is None:
-                steps = list(range(len(series)))
             label = agent_names.get(agent_id, str(agent_id))
-            ax.plot(steps, series, label=label, linewidth=1.6)
+            # Series lengths differ once an agent is removed mid-run (K5);
+            # each series plots against its own step range.
+            ax.plot(range(len(series)), series, label=label, linewidth=1.6)
         ax.set_title(metric)
         ax.set_ylim(0, 1)
         ax.grid(True, alpha=0.2)
@@ -457,66 +382,6 @@ def append_jsonl(path, row):
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def _life_event_as_env_event(event):
-    return {
-        "id": str(event.get("id", "")),
-        "type": "life_event",
-        "topic": str(event.get("template_key", "custom") or "custom"),
-        "name": str(event.get("title", "人生事件") or "人生事件"),
-        "description": str(event.get("description", "") or ""),
-        "severity": float(event.get("severity", 0.6) or 0.6),
-        "scope": "agent",
-        "impact_tags": list(event.get("impact_tags", []) or []),
-        "life_event": True,
-    }
-
-
-def _format_life_event_context(events):
-    lines = [format_life_event(event) for event in (events or [])]
-    lines = [line for line in lines if line]
-    if not lines:
-        return ""
-    return "人生事件：" + "；".join(lines)
-
-
-def _record_life_events_for_agent(agent, events, day, time_str, daily_logs):
-    recorded_ids = agent.setdefault("_recorded_life_event_ids", set())
-    for event in events or []:
-        event_id = str(event.get("id", ""))
-        if event_id and event_id in recorded_ids:
-            continue
-        if event_id:
-            recorded_ids.add(event_id)
-        text = (
-            f"[LifeEvent Day {day} {time_str}] "
-            f"{agent.get('name', agent.get('id', 'agent'))}: {format_life_event(event)}"
-        )
-        print(text)
-        daily_logs[agent["id"]] += text + "\n"
-        append_agent_log(agent, text + "\n")
-        _append_memory_record(
-            agent,
-            text,
-            entry_type="life_event",
-            day=day,
-            time_str=time_str,
-        )
-
-
-def _apply_life_event_state_effects(agent, events):
-    state = agent.setdefault("state", {})
-    for event in events or []:
-        effects = event.get("state_effects", {})
-        if not isinstance(effects, dict):
-            continue
-        for key, delta in effects.items():
-            if key not in state:
-                continue
-            try:
-                state[key] = _clip01(float(state.get(key, 0.5)) + float(delta))
-            except (TypeError, ValueError):
-                continue
-
 
 # =========================================================
 # 参数
@@ -546,11 +411,11 @@ HUMAN_REALISM_ENABLED = bool(HUMAN_REALISM_CONFIG.get("enabled", False))
 # HUMAN_MEMORY_CONFIG / RECALL_CONFIG / MEMORY_REVIEW_CONFIG snapshots
 # removed in run-split-1 — their only consumers (the evoke_memory cluster)
 # moved to ``gaworld.sim._memory_recall`` and now read CONFIG at call time.
+# Growth-profile lifecycle constants moved into gaworld.interests_plugin
+# (K3d); the ones left feed the inline schedule-prompt and matching reads.
 INTERESTS_CONFIG = CONFIG.get("interests", {})
 INTERESTS_ENABLED = bool(INTERESTS_CONFIG.get("enabled", True))
 INTERESTS_MAX_ITEMS = max(1, int(INTERESTS_CONFIG.get("max_items", 6)))
-INTERESTS_CACHE_PATH = INTERESTS_CONFIG.get("cache_path", "output/memory/growth_profiles.json")
-INTERESTS_PROGRESS_MINUTES = INTERESTS_CONFIG.get("progress_minutes_per_step")
 INTERESTS_DAILY_INSERT_CHANCE = float(INTERESTS_CONFIG.get("daily_insert_chance", 0.55))
 INTERESTS_WEEKEND_BOOST = float(INTERESTS_CONFIG.get("weekend_boost", 0.25))
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
@@ -565,9 +430,9 @@ VISUALIZATION_FLUSH_EVERY_FRAMES = max(
     0,
     int(VISUALIZATION_CONFIG.get("flush_every_frames", 24)),
 )
-INTERVENTION_CONFIG = CONFIG.get("intervention", {})
-INTERVENTION_ENABLED = bool(INTERVENTION_CONFIG.get("enabled", False))
-INTERVENTION_OUTPUT_DIR = INTERVENTION_CONFIG.get("output_dir", "output/intervention")
+# Only the output dir stays module-level (reset_simulation clears it);
+# the intervention runtime itself now lives in gaworld.policy.plugin.
+INTERVENTION_OUTPUT_DIR = CONFIG.get("intervention", {}).get("output_dir", "output/intervention")
 SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
@@ -602,33 +467,83 @@ INFO_SEEK_CONFIG = NEWS_CONFIG.get("info_seek", NEWS_CONFIG.get("curiosity_searc
 INFO_SEEK_ENABLED = bool(INFO_SEEK_CONFIG.get("enabled", True))
 INFO_SEEK_BASE_CHANCE = float(INFO_SEEK_CONFIG.get("base_daily_chance", 0.55))
 INFO_SEEK_MAX_PER_DAY = int(INFO_SEEK_CONFIG.get("max_seeks_per_day", INFO_SEEK_CONFIG.get("max_searches_per_day", 3)))
-LOCAL_PHYSICAL_CONFIG = CONFIG.get("local_physical", {}) if isinstance(CONFIG, dict) else {}
-LOCAL_PHYSICAL_ENABLED = bool(LOCAL_PHYSICAL_CONFIG.get("enabled", True))
-LOCAL_PHYSICAL_INJECT = bool(LOCAL_PHYSICAL_CONFIG.get("inject_into_perception", True))
-LOCAL_PHYSICAL_BUSY_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_busy_ratio", 0.6))
-LOCAL_PHYSICAL_PACKED_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_packed_ratio", 0.9))
-LOCAL_PHYSICAL_ANOMALY_RATIO = float(LOCAL_PHYSICAL_CONFIG.get("crowd_anomaly_ratio", 0.9))
-LOCAL_PHYSICAL_ANOMALY_JUMP = float(LOCAL_PHYSICAL_CONFIG.get("crowd_anomaly_jump", 0.25))
+
+
+def _maybe_curiosity_seek(
+    agent,
+    *,
+    day,
+    time_str,
+    scheduled_activity,
+    recent_events,
+    news_cache,
+    news_sources,
+    preferred_sites,
+    seen_urls,
+    used_queries,
+    curiosity_budget,
+    config,
+    daily_logs=None,
+):
+    """Event-driven contextual seek. Returns True if a seek fired.
+
+    Writes nothing itself beyond delegating to ``info_seek_and_store``;
+    decrements the per-agent daily budget on a real fire.
+    """
+    if not config.get("contextual_keywords", True):
+        return False
+    agent_id = agent["id"]
+    budget_left = int(curiosity_budget.get(agent_id, 0))
+    context = assemble_curiosity_context(
+        agent,
+        scheduled_activity=scheduled_activity or "",
+        recent_events=recent_events or [],
+        day=day,
+        time_str=time_str,
+    )
+    trigger, _reason = should_seek_knowledge(
+        agent, context, budget_left=budget_left, config=config
+    )
+    if not trigger:
+        return False
+    keywords = propose_contextual_keywords(agent, context, config=config)
+    if not keywords:
+        return False
+    memory_entry, info_log, result_url, query = info_seek_and_store(
+        agent,
+        day=day,
+        time_str=time_str,
+        news_cache=news_cache,
+        news_sources=news_sources,
+        preferred_sites=preferred_sites,
+        seen_urls=seen_urls,
+        used_queries=used_queries,
+        keywords=keywords,
+        config=config,
+    )
+    if query:
+        used_queries.add(query)
+    if result_url:
+        seen_urls.add(result_url)
+    if not memory_entry:
+        return False
+    curiosity_budget[agent_id] = budget_left - 1
+    if info_log:
+        print(info_log)
+        if daily_logs is not None:
+            daily_logs[agent_id] += info_log
+        append_agent_log(agent, info_log)
+    return True
+
+
+# Local-physical snapshot/injection constants moved to
+# gaworld.world.plugin.LocalPhysicalPlugin (K3g).
 REPLAN_CONFIG = CONFIG.get("replan", {}) if isinstance(CONFIG, dict) else {}
 REPLAN_ENABLED = bool(REPLAN_CONFIG.get("enabled", True))
 REPLAN_WINDOW_MINUTES = max(1, int(REPLAN_CONFIG.get("window_minutes", 120)))
 REPLAN_DEFER_GAP = max(1, int(REPLAN_CONFIG.get("defer_gap_minutes", 30)))
-SPATIAL_PREF_CONFIG = CONFIG.get("spatial_preferences", {}) if isinstance(CONFIG, dict) else {}
-SPATIAL_PREF_ENABLED = bool(SPATIAL_PREF_CONFIG.get("enabled", True))
-SPATIAL_PREF_WEIGHT = float(SPATIAL_PREF_CONFIG.get("anomaly_weight", 1.0))
-SPATIAL_PREF_THRESHOLD = float(SPATIAL_PREF_CONFIG.get("avoid_threshold", 1.5))
-SPATIAL_PREF_HALF_LIFE = float(SPATIAL_PREF_CONFIG.get("half_life_days", 7.0))
-
-
-def _env_weather_state(env_system) -> str:
-    """Best-effort read of the environment's current weather label."""
-    try:
-        state = env_system.export_runtime_state()
-        if isinstance(state, dict):
-            return str(state.get("weather_state", "") or "")
-    except Exception:  # noqa: BLE001 — remote client may lack this method
-        pass
-    return str(getattr(env_system, "_weather_state", "") or "")
+# Spatial-preference (P4) constants moved to
+# gaworld.world.plugin.SpatialPreferencesPlugin (K3i).
 
 
 DAILY_PLANNING_CONFIG = CONFIG.get("daily_planning", {})
@@ -1337,8 +1252,8 @@ from gaworld.sim._schedule import (  # noqa: E402
 #
 # Re-exported because the legacy ``RECALL_STAGE_HINTS`` etc. constants
 # at L612–L646 of this file are now dead — but ``choose_action``,
-# ``planning``, ``reflection``, ``interview_agent``, ``infer_event_effect``,
-# and ``_apply_life_event_state_effects`` all call these helpers as
+# ``planning``, ``reflection``, ``interview_agent``, and
+# ``infer_event_effect`` all call these helpers as
 # bare names.  Tests do ``patch.object(sim, "evoke_memory", ...)`` so
 # the binding must live in this module's globals.
 #
@@ -2576,11 +2491,23 @@ def run_simulation():
     df = pd.read_csv(CSV_PATH)
     city_map = load_city_map(MAP_PATH)
     city_map_text = load_city_map_text(MAP_PATH)
-    hook_bus = HookBus(CONFIG.get("extensions", {}))
+    # Kernel bootstrap (K1): EventBus is a drop-in superset of HookBus — the
+    # same CONFIG["extensions"] hooks load and the 7 legacy phases keep firing.
+    sim_ctx = build_kernel(CONFIG, llm=call_llm)
+    hook_bus = sim_ctx.bus
+    for _plugin in builtin_plugins():
+        sim_ctx.registry.register(_plugin)
     extension_state = {}
     agents = [build_agent(i, df, city_map=city_map) for i in AGENT_IDS]
-    for agent in agents:
-        initialize_agent_intervention_state(agent, INTERVENTION_CONFIG)
+    sim_ctx.set_agents(agents)
+    sim_ctx.extras["city_map"] = city_map
+    sim_ctx.extras["city_map_text"] = city_map_text
+    # Plugins assemble before `agents.built` so pre-snapshot seeding (e.g.
+    # intervention metric keys) lands at the same point the inline code did.
+    active_plugins = sim_ctx.registry.setup_all(sim_ctx)
+    if active_plugins:
+        print(f"🧩 已装配插件：{', '.join(active_plugins)}")
+    hook_bus.emit("agents.built", agents=agents, config=CONFIG)
     if PRINT_AGENT_PROFILE:
         print_agent_profiles([a["id"] for a in agents])
     start_day = 1
@@ -2595,10 +2522,8 @@ def run_simulation():
         for agent in agents:
             agent["memory"] = load_agent_memory(agent["id"])
             seed_vector_db_from_memory(agent)
-            # P4: learned location-aversion persists across runs (independent
-            # of human-realism, so loaded outside that block).
-            if SPATIAL_PREF_ENABLED:
-                agent["env_preferences"] = load_agent_env_preferences(agent["id"])
+            # K3i: learned location-aversion loading rides `agents.built`
+            # (SpatialPreferencesPlugin).
             if HUMAN_REALISM_ENABLED:
                 agent["episodes"] = load_agent_episodes(agent["id"])
                 agent["habits"] = load_agent_habits(agent["id"])
@@ -2633,23 +2558,8 @@ def run_simulation():
                 agent.setdefault("last_action", "")
     agents_by_id = {a["id"]: a for a in agents}
     agent_names = {a["id"]: a.get("name", str(a["id"])) for a in agents}
-    if INTERESTS_ENABLED:
-        bootstrap_growth_profiles(
-            agents,
-            cache_path=INTERESTS_CACHE_PATH,
-            memory_dir=CONFIG.get("memory_dir", "output/memory"),
-            llm=lambda prompt: call_llm(prompt, task="growth_profile", agent_id=None),
-            max_items=INTERESTS_MAX_ITEMS,
-            stateful=STATEFUL,
-        )
-        for agent in agents:
-            context = format_growth_context(agent.get("growth_profile"), max_items=INTERESTS_MAX_ITEMS)
-            growth_log = f"[GrowthProfile] {agent.get('name', agent['id'])}\n{context}\n"
-            print(growth_log.strip())
-            append_agent_log(agent, growth_log)
-    else:
-        for agent in agents:
-            agent["growth_profile"] = {}
+    # K3d: growth-profile bootstrap now rides the `agents.built` event
+    # (gaworld/interests_plugin.py), which fires before this point.
     distributed_client = DistributedRelayClient(DISTRIBUTED_CONFIG)
     if distributed_client.enabled:
         registered = distributed_client.register_agents(agents)
@@ -2673,6 +2583,7 @@ def run_simulation():
         env_system = RemoteEnvironmentClient(env_service_cfg)
     else:
         env_system = EnvironmentSystem(CONFIG, llm_fn=call_llm)
+    sim_ctx.extras["env_system"] = env_system
     os.makedirs(ENV_OUTPUT_DIR, exist_ok=True)
     env_timeline_path = os.path.join(ENV_OUTPUT_DIR, "timeline.jsonl")
     if os.path.exists(env_timeline_path):
@@ -2821,12 +2732,8 @@ def run_simulation():
         a["id"]: take_initial_snapshot(a, schedule=schedules.get(a["id"]))
         for a in agents
     }
-    # Real-work runtime: bootstrap capabilities + queue + market + workers.
-    # Returns None when CONFIG.real_work.enabled is False, in which case
-    # all real-work code paths are no-ops.
-    real_work_runtime = RealWorkRuntime.create(CONFIG, agents, llm_fn=call_llm)
-    if real_work_runtime is not None:
-        real_work_runtime.start()
+    # K3h: the real-work runtime (capabilities + queue + market + workers)
+    # is created and started by RealWorkPlugin on `on_simulation_start`.
     hook_bus.emit(
         "on_simulation_start",
         config=CONFIG,
@@ -2839,11 +2746,928 @@ def run_simulation():
         extension_state=extension_state,
     )
 
+    # ---- K2: cognition pipeline stages -------------------------------------
+    # Each stage is a closure over run_simulation locals (day, time_str,
+    # policy, env caches, ... — Python closures late-bind, so per-tick
+    # rebindings are visible) with signature (agent, step, sim). Cross-stage
+    # data rides the step dict: hook-visible keys keep their legacy names,
+    # working keys are underscore-prefixed. Stage bodies are verbatim moves
+    # of the former inline loop body; see gaworld/sim/pipeline.py.
+
+    def _stage_prepare(agent, step, sim):
+        agent_id = agent["id"]
+        # K3e: event-producer plugins contribute per-agent env events here
+        # (life events, ...); contributions merge with the day/tick env feed.
+        # The life-events plugin also records its events and exposes them as
+        # step["life_events"].
+        agent_env_events = list(env_events or []) + hook_bus.collect(
+            "env.events.compose",
+            agent=agent,
+            day=day,
+            time_str=time_str,
+            step=step,
+            daily_logs=daily_logs,
+        )
+        scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
+        inbox_messages = distributed_inbox.get(agent_id, [])
+        social_context = get_social_context(agent, agents_by_id)
+        inbox_context = format_inbox_context(
+            inbox_messages,
+            max_items=int(DISTRIBUTED_CONFIG.get("max_inbound_per_step", 3)),
+        )
+        if inbox_context:
+            social_context = f"{social_context} {inbox_context}".strip()
+            inbox_log = f"[DistributedInbox {agent['name']} @ {time_str}] {inbox_context}\n"
+            daily_logs[agent_id] += inbox_log
+            append_agent_log(agent, inbox_log)
+            vector_db_add_entry(
+                agent_id,
+                "distributed_in",
+                inbox_context,
+                sim_day=day,
+                sim_time=time_str,
+            )
+
+        policy_desc = None
+        if policy:
+            policy_desc = policy.get("description") or policy.get("name")
+        step["_state_before"] = dict(agent.get("state", {}))
+        step.update({
+            "scheduled_activity": scheduled_activity,
+            "activity": scheduled_activity,
+            "social_context": social_context,
+            "policy_desc": policy_desc,
+            "life_events": step.get("life_events", []),
+        })
+        hook_bus.emit(
+            "on_agent_pre_step",
+            day=day,
+            time_str=time_str,
+            config=CONFIG,
+            agent=agent,
+            agents=agents,
+            agents_by_id=agents_by_id,
+            city_map=city_map,
+            city_map_text=city_map_text,
+            schedule_map=schedule_map,
+            actions=actions,
+            env_events=agent_env_events,
+            env_context=env_context,
+            policy=policy,
+            step=step,
+            extension_state=extension_state,
+        )
+        scheduled_activity = step.get("scheduled_activity", scheduled_activity)
+        # K3e: the "人生事件：…" context line now rides perception.compose
+        # (LifeEventsPlugin) and renders after the local-physical snippet.
+        step_env_context = env_context
+        step["_env_events"] = agent_env_events
+        step["_inbox_messages"] = inbox_messages
+        step["_env_context"] = step_env_context
+
+    def _stage_perceive(agent, step, sim):
+        scheduled_activity = step.get("scheduled_activity", "")
+        social_context = step.get("social_context", "")
+        policy_desc = step.get("policy_desc")
+        agent_env_events = step.get("_env_events", [])
+        step_env_context = step.get("_env_context", "")
+        # K4: surface Controller denials from the previous step so the
+        # agent can perceive why its action didn't happen.
+        _denials = agent.pop("_action_denials", None)
+        if _denials:
+            _denial_text = "；".join(str(d) for d in _denials)
+            step_env_context = (
+                f"{step_env_context}\n刚才的行动受阻：{_denial_text}"
+                if step_env_context
+                else f"刚才的行动受阻：{_denial_text}"
+            )
+        # K3g: the local-physical snapshot (agent["_local_physical"] + the
+        # "身边的物理环境" line) rides perception.compose at priority 30.
+        # K2: plugins contribute perception snippets (collect semantics —
+        # with no subscribers this is a no-op and behavior is unchanged).
+        for _snippet in hook_bus.collect(
+            "perception.compose",
+            agent=agent,
+            day=day,
+            time_str=time_str,
+            scheduled_activity=scheduled_activity,
+            env_context=step_env_context,
+            social_context=social_context,
+            env_events=agent_env_events,
+            policy=policy,
+            policy_desc=policy_desc,
+            news=news_cache[:5],
+        ):
+            _snippet = str(_snippet).strip()
+            if _snippet:
+                step_env_context = (
+                    f"{step_env_context}\n{_snippet}" if step_env_context else _snippet
+                )
+        step["_env_context"] = step_env_context
+        # K3c: plugins contribute prompt sections rendered inside the
+        # perception prompt (e.g. the Skill library block).
+        extra_sections = hook_bus.collect(
+            "perception.sections",
+            agent=agent,
+            day=day,
+            time_str=time_str,
+            scheduled_activity=scheduled_activity,
+            social_context=social_context,
+        )
+        # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
+        step["_perception"] = perception(
+            agent,
+            time_str,
+            social_context,
+            step_env_context,
+            policy_desc if policy else None,
+            extra_sections=extra_sections,
+        )
+
+    def _stage_interrupts(agent, step, sim):
+        scheduled_activity = step.get("scheduled_activity", "")
+        # K3i: interrupt/thought computation rides the interrupts.compose
+        # filter (DynamicBehaviorPlugin; engines return {} for "no change",
+        # never None). None here means no producer ran — fall back to the
+        # legacy spontaneity path, matching the old enabled/disabled branch.
+        transient_thought = hook_bus.filter(
+            "interrupts.compose",
+            None,
+            agent=agent,
+            step=step,
+            day=day,
+            time_str=time_str,
+        )
+        if transient_thought is None:
+            transient_thought = maybe_generate_transient_thought(
+                agent,
+                time_str,
+                scheduled_activity,
+                step.get("_perception", ""),
+                env_events=step.get("_env_events", []),
+                policy_desc=step.get("policy_desc"),
+                social_context=step.get("social_context", ""),
+                inbox_messages=step.get("_inbox_messages", []),
+            )
+        step["_transient_thought"] = transient_thought
+
+    def _stage_plan(agent, step, sim):
+        scheduled_activity = step.get("scheduled_activity", "")
+        perc = step.get("_perception", "")
+        social_context = step.get("social_context", "")
+        step_recollections = step.setdefault("_recollections", [])
+        plan_commitment = _activity_commitment_level(scheduled_activity)
+        plan_prefetch_refs = _build_decision_reference_bundle(
+            agent,
+            scheduled_activity,
+            time_str=time_str,
+            location=agent.get("locations", {}).get("current", ""),
+            env_context=step.get("_env_context", ""),
+            env_events=step.get("_env_events", []),
+            policy_desc=step.get("policy_desc"),
+            social_context=social_context,
+        )
+        plan_recall = evoke_memory(
+            agent,
+            "planning",
+            scheduled_activity,
+            perc,
+            social_context if plan_prefetch_refs.get("social_network_relevant") else "",
+            plan_prefetch_refs.get("physical_env_text", "") if plan_prefetch_refs.get("physical_env_relevant") else "",
+            plan_prefetch_refs.get("social_env_text", "") if plan_prefetch_refs.get("social_env_relevant") else "",
+            context_labels=_build_recall_context_labels(
+                agent,
+                activity=scheduled_activity,
+                time_str=time_str if plan_prefetch_refs.get("location_time_relevant") else "",
+                location=agent.get("locations", {}).get("current", "") if plan_prefetch_refs.get("location_time_relevant") else "",
+                commitment_level=plan_commitment,
+            ),
+        )
+        if plan_recall.get("recollection"):
+            step_recollections.append(plan_recall["recollection"])
+        plan_refs = dict(plan_prefetch_refs)
+        plan_refs["memory_hint"] = plan_recall.get("hint", "")
+        plan_refs["recollection"] = plan_recall.get("recollection", "")
+        plan_refs["transient_thought"] = step.get("_transient_thought")
+        plan = planning(agent, perc, recall_context=plan_recall, decision_refs=plan_refs)
+        step["_plan_struct"] = plan
+        step["_plan_text"] = format_plan_text(plan)
+
+    def _stage_adjust_activity(agent, step, sim):
+        agent_id = agent["id"]
+        scheduled_activity = step.get("scheduled_activity", "")
+        transient_thought = step.get("_transient_thought")
+        activity, change_reason, changed = maybe_adjust_activity(
+            agent,
+            time_str,
+            scheduled_activity,
+            step.get("_perception", ""),
+            step.get("_plan_text", ""),
+            step.get("_env_context", ""),
+            step.get("_env_events", []),
+            step.get("policy_desc"),
+            transient_thought=transient_thought,
+            social_context=step.get("social_context", ""),
+        )
+        # --- Dynamic behaviour system: apply if LLM didn't change ---
+        _dyn_result = transient_thought.get("dynamic_result") if isinstance(transient_thought, dict) else None
+        if _dyn_result and not changed and _dyn_result.get("changed"):
+            activity = _dyn_result["activity"]
+            change_reason = _dyn_result.get("reason", "动态行为系统触发")
+            changed = True
+        # Apply mood delta from dynamic system
+        if _dyn_result and _dyn_result.get("mood_delta"):
+            _mood_d = float(_dyn_result["mood_delta"])
+            state = agent.get("state", {})
+            state["emotion"] = max(0.0, min(1.0, float(state.get("emotion", 0.5)) + _mood_d))
+        # Apply schedule insertion from dynamic system
+        if _dyn_result and _dyn_result.get("schedule_insert") and changed:
+            _si = _dyn_result["schedule_insert"]
+            _sched_tuples = [(s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else s
+                             for s in schedule_map.get(agent_id, [])]
+            _new_sched = dynamic_insert_activity(
+                _sched_tuples,
+                _si["insert_time"],
+                _si["activity"],
+                duration_minutes=_si.get("duration_minutes", 30),
+                resumable=True,
+                original_activity=_si.get("original_activity", scheduled_activity),
+            )
+            # Convert back to schedule format used by the simulator
+            schedule_map[agent_id] = [{"time": t, "activity": a} for t, a in _new_sched]
+        # Log social encounters from dynamic system
+        if _dyn_result and _dyn_result.get("social_encounters"):
+            for _enc in _dyn_result["social_encounters"]:
+                _LOG.debug("agent_%s social_encounter: %s", agent_id, _enc.get("activity", ""))
+
+        # A pre-step hook may force an activity (e.g. economy income-seek);
+        # it wins only when it actually changed the seeded value. The pre-K2
+        # code re-read step["activity"] unconditionally, letting the seeded
+        # scheduled_activity clobber the LLM/dynamic adjustment above —
+        # which silently disabled routine changes on the mainline path.
+        hook_activity = step.get("activity", scheduled_activity)
+        if hook_activity != scheduled_activity:
+            activity = hook_activity
+        if activity != scheduled_activity and not changed:
+            changed = True
+            hook_reason = str(step.get("change_reason", "")).strip()
+            if hook_reason:
+                change_reason = hook_reason
+        if changed:
+            schedule_map[agent_id] = apply_schedule_override(
+                schedule_map[agent_id],
+                time_str,
+                activity,
+            )
+            updated = ensure_action_space_for_activity(agent, actions[agent_id], activity)
+            if updated and STATEFUL:
+                save_agent_actions(agent_id, actions[agent_id])
+
+        # P3: a *persistent* anomaly (non-resumable physical / emergency
+        # reaction) makes the disrupted activity unworkable for a while —
+        # defer its upcoming slots rather than only patching this step.
+        if REPLAN_ENABLED and changed and isinstance(_dyn_result, dict):
+            _itr = _dyn_result.get("interrupt") or {}
+            _extra = _itr.get("extra", {}) if isinstance(_itr, dict) else {}
+            _persistent_anomaly = (
+                isinstance(_itr, dict)
+                and not _itr.get("resumable", True)
+                and (bool(_extra.get("anomaly"))
+                     or _extra.get("event_type") in ("emergency", "local_physical"))
+            )
+            _cur_min = _time_str_to_minutes(time_str)
+            if _persistent_anomaly and scheduled_activity and _cur_min is not None:
+                _sched_tuples = [
+                    (s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else tuple(s)
+                    for s in schedule_map.get(agent_id, [])
+                ]
+                _new_sched, _replan_changes = replan_affected_interval(
+                    _sched_tuples,
+                    time_str,
+                    _minutes_to_time_str(min(24 * 60 - 1, _cur_min + REPLAN_WINDOW_MINUTES)),
+                    is_affected=lambda t, a, _d=scheduled_activity: a == _d,
+                    defer=True,
+                    defer_gap_minutes=REPLAN_DEFER_GAP,
+                )
+                if _replan_changes:
+                    schedule_map[agent_id] = _new_sched
+                    _replan_log = (
+                        f"[Replan {time_str}] 因突发异常重排日程，"
+                        f"顺延 {len(_replan_changes)} 项（{scheduled_activity}）\n"
+                    )
+                    daily_logs[agent_id] += _replan_log
+                    append_agent_log(agent, _replan_log)
+        # K3i: observers react to the applied interrupt result (e.g. the
+        # spatial-preferences plugin records location-bound anomalies).
+        hook_bus.emit(
+            "interrupt.applied",
+            agent=agent,
+            step=step,
+            dyn_result=_dyn_result,
+            changed=changed,
+            scheduled_activity=scheduled_activity,
+            day=day,
+            time_str=time_str,
+        )
+        step["_activity"] = activity
+        step["_changed"] = changed
+        step["_change_reason"] = change_reason
+
+    def _stage_move(agent, step, sim):
+        activity = step.get("_activity", step.get("scheduled_activity", ""))
+        desired_location = resolve_location(agent, activity, time_str, city_map)
+        # K3i: plugins may rewrite the resolved location (aversion-aware
+        # redirection rides this filter).
+        desired_location = hook_bus.filter(
+            "location.resolve",
+            desired_location,
+            agent=agent,
+            activity=activity,
+            day=day,
+            time_str=time_str,
+        )
+        # K4: structured moves pass the Controller's validation gate. A
+        # denial keeps the agent where it is (move_agent falls back to the
+        # origin) and surfaces the reason in its next perception.
+        if desired_location:
+            _verdict = sim.controller.validate(
+                ActionRequest(
+                    agent_id=agent["id"],
+                    name="move",
+                    params={"to": desired_location, "activity": activity},
+                ),
+                sim,
+            )
+            if not _verdict.allowed:
+                agent.setdefault("_action_denials", []).append(
+                    f"你想前往【{desired_location}】，但没能成行：{_verdict.reason}"
+                )
+                desired_location = None
+            elif _verdict.rewritten is not None:
+                desired_location = _verdict.rewritten.params.get("to", desired_location)
+        movement = move_agent(
+            agent,
+            desired_location=desired_location,
+            activity=activity,
+            time_str=time_str,
+            step_minutes=step_minutes,
+            city_map=city_map,
+        )
+        if STATEFUL:
+            persist_agent_locations_if_changed(agent)
+        step["_movement"] = movement
+        step["_location"] = movement["display_location"]
+        step["_resolved_location"] = movement["resolved_location"]
+        step["_travel"] = movement["travel"]
+
+    def _stage_select_action(agent, step, sim):
+        agent_id = agent["id"]
+        activity = step.get("_activity", step.get("scheduled_activity", ""))
+        movement = step.get("_movement", {})
+        travel = step.get("_travel", {})
+        resolved_location = step.get("_resolved_location", "")
+        perc = step.get("_perception", "")
+        plan_text = step.get("_plan_text", "")
+        step_recollections = step.setdefault("_recollections", [])
+        effective_activity = activity
+        if travel.get("status") in {"departed", "in_transit"}:
+            act = f"乘坐{travel.get('mode', '交通工具')}移动"
+            action_meta = {
+                "decision_driver": "时空约束",
+                "commitment_level": _activity_commitment_level(activity),
+                "scores": {act: {"weight": 1.0, "components": {}, "styles": ["quick"]}},
+            }
+            outcome = (
+                f"从【{resolved_location}】前往【{movement['target_location']}】，"
+                f"使用【{travel.get('mode', '未知方式')}】，路程约 {travel.get('distance_km', 0.0):.1f} km，"
+                f"预计 {travel.get('minutes', 0)} 分钟"
+            )
+            location_bias = {}
+            effective_activity = f"前往{movement['target_location']}"
+        else:
+            location_bias = get_location_action_bias(
+                agent,
+                resolved_location,
+                city_map_text,
+                actions[agent_id],
+            )
+            location_time_relevant = _is_location_time_relevant(activity, time_str=time_str, location=resolved_location)
+            action_prefetch_refs = _build_decision_reference_bundle(
+                agent,
+                activity,
+                time_str=time_str,
+                location=resolved_location,
+                env_context=step.get("_env_context", ""),
+                env_events=step.get("_env_events", []),
+                policy_desc=step.get("policy_desc"),
+                social_context=step.get("social_context", ""),
+            )
+            action_recall = evoke_memory(
+                agent,
+                "action",
+                activity,
+                perc,
+                plan_text,
+                step.get("social_context", "") if action_prefetch_refs.get("social_network_relevant") else "",
+                action_prefetch_refs.get("physical_env_text", "") if action_prefetch_refs.get("physical_env_relevant") else "",
+                action_prefetch_refs.get("social_env_text", "") if action_prefetch_refs.get("social_env_relevant") else "",
+                resolved_location if location_time_relevant else "",
+                time_str if location_time_relevant else "",
+                context_labels=_build_recall_context_labels(
+                    agent,
+                    activity=activity,
+                    time_str=time_str if location_time_relevant else "",
+                    location=resolved_location if location_time_relevant else "",
+                    commitment_level=_activity_commitment_level(activity),
+                ),
+            )
+            if action_recall.get("recollection"):
+                step_recollections.append(action_recall["recollection"])
+            action_refs = dict(action_prefetch_refs)
+            action_refs["memory_hint"] = action_recall.get("hint", "")
+            action_refs["recollection"] = action_recall.get("recollection", "")
+            action_refs["transient_thought"] = step.get("_transient_thought")
+            act, action_meta = choose_action(
+                agent,
+                activity,
+                actions[agent_id],
+                context=f"{activity} {perc} {plan_text}",
+                location_bias=location_bias,
+                location=resolved_location,
+                time_str=time_str,
+                recall_context=action_recall,
+                decision_refs=action_refs,
+                return_debug=True,
+            )
+            # K2: plugins may rewrite the selected action (filter
+            # semantics — with no subscribers the value passes through).
+            act = hook_bus.filter(
+                "action.selected",
+                act,
+                agent=agent,
+                activity=activity,
+                day=day,
+                time_str=time_str,
+                location=resolved_location,
+            )
+            outcome = f"在【{activity}】中执行了【{act}】"
+            # K3h: plugins may rewrite the outcome (real-work dispatch and
+            # artifact absorption ride this filter).
+            outcome = hook_bus.filter(
+                "action.outcome",
+                outcome,
+                agent=agent,
+                activity=activity,
+                action=act,
+                day=day,
+                time_str=time_str,
+                location=resolved_location,
+            )
+        step["_effective_activity"] = effective_activity
+        step["_act"] = act
+        step["_action_meta"] = action_meta
+        step["_outcome"] = outcome
+
+    def _stage_reflect(agent, step, sim):
+        effective_activity = step.get("_effective_activity", step.get("_activity", ""))
+        act = step.get("_act", "")
+        outcome = step.get("_outcome", "")
+        resolved_location = step.get("_resolved_location", "")
+        action_meta = step.get("_action_meta", {})
+        step_recollections = step.setdefault("_recollections", [])
+        reflection_recall = evoke_memory(
+            agent,
+            "reflection",
+            effective_activity,
+            act,
+            outcome,
+            time_str if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
+            context_labels=_build_recall_context_labels(
+                agent,
+                activity=effective_activity,
+                time_str=time_str if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
+                location=resolved_location if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
+                commitment_level=action_meta.get("commitment_level", _activity_commitment_level(effective_activity)),
+            ),
+        )
+        if reflection_recall.get("recollection"):
+            step_recollections.append(reflection_recall["recollection"])
+        refl = reflection(agent, outcome, recall_context=reflection_recall)
+        step["_refl_struct"] = refl
+        step["_refl_text"] = format_reflection_text(refl)
+        if HUMAN_REALISM_ENABLED:
+            update_needs(
+                agent,
+                time_str,
+                effective_activity,
+                cfg=HUMAN_REALISM_CONFIG,
+                changed=step.get("_changed", False),
+                travel=step.get("_travel", {}),
+            )
+
+    def _stage_update_state(agent, step, sim):
+        agent_env_events = step.get("_env_events", [])
+        policy_desc = step.get("policy_desc")
+        if agent_env_events:
+            for ev in agent_env_events:
+                inferred = infer_event_effect(agent, ev.get("description", ev.get("name", "")), ev.get("type", "event"))
+                for k, v in inferred.items():
+                    agent["state"][k] += v
+        # K3e: plugins apply their own state deltas here (life-event
+        # state_effects, ...), before social influence and the state update.
+        hook_bus.emit("state.effects", agent=agent, step=step, day=day, time_str=time_str)
+
+        if policy:
+            inferred = infer_event_effect(agent, policy_desc, "policy")
+            for k, v in inferred.items():
+                agent["state"][k] += v
+
+        social_influence(agent, agents_by_id)
+        update_state(agent)
+
+    def _stage_broadcast(agent, step, sim):
+        agent_id = agent["id"]
+        sent_remote_messages = []
+        if distributed_client.enabled:
+            sent_remote_messages = distributed_client.send_agent_messages(
+                agent,
+                day=day,
+                time_str=time_str,
+                activity=step.get("_effective_activity", ""),
+                reflection=step.get("_refl_text", ""),
+                outcome=step.get("_outcome", ""),
+            )
+            if sent_remote_messages:
+                sent_summary = "; ".join(
+                    f"to#{int(msg.get('to_agent', 0))}:{str(msg.get('text', ''))[:40]}"
+                    for msg in sent_remote_messages
+                    if isinstance(msg, dict)
+                )
+                if sent_summary:
+                    sent_log = (
+                        f"[DistributedOutbox {agent['name']} @ {time_str}] "
+                        f"{sent_summary}\n"
+                    )
+                    daily_logs[agent_id] += sent_log
+                    append_agent_log(agent, sent_log)
+                    vector_db_add_entry(
+                        agent_id,
+                        "distributed_out",
+                        sent_summary,
+                        sim_day=day,
+                        sim_time=time_str,
+                    )
+
+    def _stage_memorize(agent, step, sim):
+        agent_id = agent["id"]
+        scheduled_activity = step.get("scheduled_activity", "")
+        effective_activity = step.get("_effective_activity", "")
+        act = step.get("_act", "")
+        outcome = step.get("_outcome", "")
+        refl_text = step.get("_refl_text", "")
+        refl = step.get("_refl_struct", {})
+        plan = step.get("_plan_struct", {})
+        plan_text = step.get("_plan_text", "")
+        perc = step.get("_perception", "")
+        transient_thought = step.get("_transient_thought")
+        agent_env_events = step.get("_env_events", [])
+        agent_life_events = step.get("life_events", [])
+        policy_desc = step.get("policy_desc")
+        state_before = step.get("_state_before", {})
+        travel = step.get("_travel", {})
+        movement = step.get("_movement", {})
+        location = step.get("_location", "")
+        action_meta = step.get("_action_meta", {})
+        change_reason = step.get("_change_reason")
+        step_recollections = step.setdefault("_recollections", [])
+        if HUMAN_REALISM_ENABLED:
+            partners = list(agent.get("_recent_social_partners", []))
+            for sender_id in extract_sender_agent_ids(step.get("_inbox_messages", [])):
+                if sender_id not in partners:
+                    partners.append(sender_id)
+            signal = infer_interaction_signal(refl_text)
+            for pid in partners:
+                relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
+            state_after = dict(agent.get("state", {}))
+            delta = {}
+            for key, before_v in state_before.items():
+                after_v = state_after.get(key)
+                if isinstance(before_v, (int, float)) and isinstance(after_v, (int, float)):
+                    delta[key] = float(after_v) - float(before_v)
+            thought_intensity = (
+                float(transient_thought.get("intensity", 0.0))
+                if isinstance(transient_thought, dict)
+                else 0.0
+            )
+            event_intensity = min(
+                1.0,
+                0.2 * len(agent_env_events) + (0.2 if policy else 0.0) + 0.18 * thought_intensity,
+            )
+            recent_actions = [
+                e.get("action", "")
+                for e in agent.get("episodes", [])[-20:]
+                if isinstance(e, dict)
+            ]
+            novelty = 1.0 if act not in recent_actions else 0.2
+            priorities = agent.get("intentions", {}).get("priorities", [])
+            goal_relevance = 0.2
+            for p in priorities:
+                if p and (p in effective_activity or p in plan_text or p in refl_text):
+                    goal_relevance = 0.8
+                    break
+            salience = compute_episode_salience(
+                delta.get("stress", 0.0),
+                event_intensity,
+                novelty,
+                goal_relevance,
+            )
+            tags = infer_episode_tags(
+                effective_activity,
+                act,
+                refl_text,
+                env_events=[ev.get("description", ev.get("name", "")) for ev in agent_env_events],
+                policy_event=policy_desc if policy else "",
+            )
+            need_snapshot = {
+                "energy": round(float(state_after.get("energy", 0.75)), 3),
+                "hunger": round(float(state_after.get("hunger", 0.25)), 3),
+                "social_need": round(float(state_after.get("social_need", 0.40)), 3),
+                "fatigue_debt": round(float(state_after.get("fatigue_debt", 0.20)), 3),
+                "self_control": round(float(state_after.get("self_control", 0.60)), 3),
+                "time_pressure": round(float(state_after.get("time_pressure", 0.25)), 3),
+            }
+            episode = {
+                "episode_id": str(uuid.uuid4()),
+                "day": day,
+                "time": time_str,
+                "scheduled_activity": scheduled_activity,
+                "final_activity": effective_activity,
+                "action": act,
+                "location": location,
+                "target_location": movement.get("target_location", ""),
+                "travel": travel,
+                "env_events": [ev.get("description", ev.get("name", "")) for ev in agent_env_events],
+                "life_events": [dict(event) for event in agent_life_events],
+                "policy_event": policy_desc if policy else "",
+                "social_partners": partners,
+                "perception": perc,
+                "plan": plan_text,
+                "plan_struct": plan,
+                "outcome": outcome,
+                "reflection": refl_text,
+                "reflection_struct": refl,
+                "transient_thought": transient_thought or {},
+                "state_before": state_before,
+                "state_after": state_after,
+                "need_snapshot": need_snapshot,
+                "delta": delta,
+                "tags": tags,
+                "recollections": list(step_recollections),
+                "salience": salience,
+                "valence": float(np.clip(delta.get("emotion", 0.0), -1.0, 1.0)),
+                "decision_driver": action_meta.get("decision_driver", "惯性延续"),
+                "change_reason": change_reason or "",
+                "commitment_level": action_meta.get("commitment_level", _activity_commitment_level(effective_activity)),
+                "expected_outcome": str(plan.get("expected_outcome", "")).strip(),
+                "created_at_day": day,
+            }
+            episode["growth_matches"] = []
+            episode["growth_progress"] = {"matches": [], "minutes": 0, "level_changes": {}}
+            # K3d: the interests plugin fills the growth keys and updates
+            # the agent's growth profile on this event; the empty defaults
+            # above keep the episode schema stable when it's disabled.
+            hook_bus.emit(
+                "episode.compose",
+                agent=agent,
+                episode=episode,
+                step_minutes=step_minutes,
+                day=day,
+                time_str=time_str,
+            )
+            agent.setdefault("episodes", []).append(episode)
+            update_habits_from_episode(agent, episode, HUMAN_REALISM_CONFIG)
+            append_agent_episode(agent_id, episode)
+            episode_text = (
+                f"Day {day} {time_str} {effective_activity}/{act} @ {location} "
+                f"driver={episode['decision_driver']} commitment={episode['commitment_level']} "
+                f"thought={format_transient_thought(transient_thought) if transient_thought else 'none'} "
+                f"needs={json.dumps(need_snapshot, ensure_ascii=False)} "
+                f"tags={','.join(tags)} salience={salience:.2f} reflection={refl_text}"
+            )
+            vector_db_add_entry(agent_id, "episode", episode_text, sim_day=day, sim_time=time_str)
+            agent["last_activity"] = effective_activity
+            agent["last_action"] = act
+            memory_review = maybe_review_memories(
+                agent,
+                day,
+                time_str,
+                recent_episode=episode,
+                llm_budget_ctx=llm_budget_by_agent.get(agent_id),
+            )
+        else:
+            memory_review = ""
+            agent["last_activity"] = effective_activity
+            agent["last_action"] = act
+        agent["last_reflection"] = refl_text
+        for metric in state_history[agent["id"]]:
+            state_history[agent["id"]][metric].append(agent["state"][metric])
+        step["_memory_review"] = memory_review
+
+    def _stage_record(agent, step, sim):
+        scheduled_activity = step.get("scheduled_activity", "")
+        effective_activity = step.get("_effective_activity", "")
+        act = step.get("_act", "")
+        outcome = step.get("_outcome", "")
+        refl_text = step.get("_refl_text", "")
+        refl = step.get("_refl_struct", {})
+        plan = step.get("_plan_struct", {})
+        plan_text = step.get("_plan_text", "")
+        perc = step.get("_perception", "")
+        transient_thought = step.get("_transient_thought")
+        step_env_context = step.get("_env_context", "")
+        changed = step.get("_changed", False)
+        change_reason = step.get("_change_reason")
+        location = step.get("_location", "")
+        resolved_location = step.get("_resolved_location", "")
+        movement = step.get("_movement", {})
+        travel = step.get("_travel", {})
+        action_meta = step.get("_action_meta", {})
+        memory_review = step.get("_memory_review", "")
+        step_recollections = step.setdefault("_recollections", [])
+
+        # --- activity header (fold RoutineChange into one line) ---
+        if changed:
+            reason_text = change_reason or "临时改变"
+            _activity_header = f"{scheduled_activity} → {effective_activity} ({reason_text})"
+            routine_line = f"RoutineChange: {scheduled_activity} -> {effective_activity} ({reason_text})\n"
+        else:
+            _activity_header = scheduled_activity
+            routine_line = ""
+
+        # --- optional lines (only rendered when non-empty) ---
+        recall_line = ""
+        unique_recollections = []
+        for item in step_recollections:
+            text = str(item).strip()
+            if text and text not in unique_recollections:
+                unique_recollections.append(text)
+        if unique_recollections:
+            recall_line = f"Recall: {' | '.join(unique_recollections)}\n"
+        transient_thought_line = ""
+        if transient_thought:
+            transient_thought_line = f"Thought: {format_transient_thought(transient_thought)}\n"
+        memory_review_line = f"Review: {memory_review}\n" if memory_review else ""
+        decision_line = ""
+        if action_meta.get("decision_driver"):
+            decision_line = (
+                f"Driver: {action_meta.get('decision_driver')} "
+                f"(commit={action_meta.get('commitment_level', '')})\n"
+            )
+        needs_line = ""
+        if HUMAN_REALISM_ENABLED:
+            needs_line = (
+                "Needs: "
+                f"nrg={agent['state'].get('energy', 0.75):.2f} "
+                f"hun={agent['state'].get('hunger', 0.25):.2f} "
+                f"soc={agent['state'].get('social_need', 0.40):.2f} "
+                f"fat={agent['state'].get('fatigue_debt', 0.20):.2f} "
+                f"ctrl={agent['state'].get('self_control', 0.60):.2f} "
+                f"tprs={agent['state'].get('time_pressure', 0.25):.2f}\n"
+            )
+
+        # --- compact location + travel (collapsed to 1 line) ---
+        _travel_status = travel.get("status", "stationary")
+        if _travel_status != "stationary":
+            _travel_info = (
+                f"  [{travel.get('mode', '?')} "
+                f"{travel.get('distance_km', 0.0):.1f}km "
+                f"{travel.get('minutes', 0)}min]"
+            )
+            _loc_line = f"Loc: {location} → {resolved_location}{_travel_info}\n"
+        else:
+            _travel_info = ""
+            _loc_line = f"Loc: {resolved_location}\n"
+
+        # --- env context (omitted when empty) ---
+        _env_line = f"Env: {step_env_context}\n" if step_env_context else ""
+
+        # -------------------------------------------------------
+        # Simple mode: one clean block per tick, Chinese-only,
+        # stripping LLM reasoning leakage and repeated boilerplate.
+        # Verbose mode: full details for debugging.
+        # -------------------------------------------------------
+        if _LOG_SIMPLE:
+            _env_simple = _clean_env_context(step_env_context)
+            _refl_simple = _clean_reflection(refl_text)
+            log = (
+                f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
+                f"Loc: {resolved_location}{_travel_info}\n"
+                + (f"Env: {_env_simple}\n" if _env_simple else "")
+                + f"Act: {act}\n"
+                f"Refl: {_refl_simple}\n"
+            )
+        else:
+            log = (
+                f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
+                f"{_loc_line}"
+                f"{_env_line}"
+                f"Perc: {perc}\n"
+                f"Plan: {plan_text}\n"
+                f"{transient_thought_line}"
+                f"{recall_line}"
+                f"Act: {act}  |  Out: {outcome}\n"
+                f"{decision_line}"
+                f"{needs_line}"
+                f"Refl: {refl_text}\n"
+                f"{memory_review_line}"
+            )
+        print(log)
+        daily_logs[agent["id"]] += log
+        append_agent_log(agent, log)
+        vector_db_add_entry(agent["id"], "log", log, sim_day=day, sim_time=time_str)
+        vector_db_add_entry(agent["id"], "plan", plan_text, sim_day=day, sim_time=time_str)
+        vector_db_add_entry(agent["id"], "reflection", refl_text, sim_day=day, sim_time=time_str)
+        vector_db_add_entry(agent["id"], "action", outcome, sim_day=day, sim_time=time_str)
+        step.update({
+            "perception": perc,
+            "plan": plan_text,
+            "plan_struct": plan,
+            "transient_thought": transient_thought or {},
+            "activity": effective_activity,
+            "action": act,
+            "outcome": outcome,
+            "reflection": refl_text,
+            "reflection_struct": refl,
+            "log": log,
+            "env_context": step_env_context,
+            "changed": changed,
+            "change_reason": change_reason,
+            "location": location,
+            "resolved_location": resolved_location,
+            "target_location": movement.get("target_location", ""),
+            "travel": travel,
+        })
+        if visualizer is not None:
+            frame_steps.append(
+                build_agent_step_payload(
+                    agent,
+                    time_str=time_str,
+                    location=location,
+                    resolved_location=resolved_location,
+                    target_location=movement.get("target_location", ""),
+                    scheduled_activity=scheduled_activity,
+                    activity=effective_activity,
+                    action=act,
+                    outcome=outcome,
+                    perception=perc,
+                    plan=plan_text,
+                    reflection=refl_text,
+                    changed=changed,
+                    change_reason=change_reason,
+                    travel=travel,
+                )
+            )
+
+    _builtin_stages = {
+        "prepare": _stage_prepare,
+        "perceive": _stage_perceive,
+        "interrupts": _stage_interrupts,
+        "plan": _stage_plan,
+        "adjust_activity": _stage_adjust_activity,
+        "move": _stage_move,
+        "select_action": _stage_select_action,
+        "reflect": _stage_reflect,
+        "update_state": _stage_update_state,
+        "broadcast": _stage_broadcast,
+        "memorize": _stage_memorize,
+        "record": _stage_record,
+    }
+    step_pipeline = StagePipeline.from_config(CONFIG.get("pipeline"), _builtin_stages)
+    if step_pipeline.stage_names != list(DEFAULT_AGENT_STEP_ORDER):
+        print(f"🧠 认知管线：{' → '.join(step_pipeline.stage_names)}")
+
     # ----- PHASE 3: DAY LOOP — runs once per simulated day -----
     for day in range(start_day, start_day + SIM_DAYS):
-        # ----- PHASE 3a: Per-day setup (real-work tick, day context, schedule/routine generation, action space) -----
-        if real_work_runtime is not None:
-            real_work_runtime.tick_day(day)
+        sim_ctx.clock.start_day(day)
+        # K5: apply population interventions queued via
+        # controller.intervene("remove_agent", ...) at the day boundary —
+        # mid-tick removal would corrupt the step pipeline. Removed ids are
+        # also scrubbed from every remaining agent's social_neighbors so
+        # social stages don't dereference a gone agent.
+        _pending_removals = sim_ctx.plugin_state("population").pop("remove", [])
+        if _pending_removals:
+            _removed_ids = {int(x) for x in _pending_removals}
+            agents[:] = [a for a in agents if int(a["id"]) not in _removed_ids]
+            for _a in agents:
+                if isinstance(_a.get("social_neighbors"), list):
+                    _a["social_neighbors"] = [
+                        n for n in _a["social_neighbors"] if int(n) not in _removed_ids
+                    ]
+            sim_ctx.set_agents(agents)
+            agents_by_id = sim_ctx.agents_by_id
+            print(f"👋 已移除 agent：{sorted(_removed_ids)}（自 Day {day} 起）")
+        # ----- PHASE 3a: Per-day setup (day context, schedule/routine generation, action space) -----
+        # K3h: the real-work market day tick rides `on_day_start`.
         day_context = _resolve_day_context(
             day,
             start_weekday_idx=SIM_START_WEEKDAY_INDEX,
@@ -2858,9 +3682,8 @@ def run_simulation():
         print(f"\n================= Day {day} ({day_desc}) =================")
         if distributed_client.enabled:
             distributed_client.refresh_directory()
-        if HUMAN_REALISM_ENABLED:
-            for _a in agents:
-                _maybe_inject_ghost_event(_a, day, "08:30")
+        # K3e: off-screen ghost-event injection now rides `on_day_start`
+        # (gaworld/events/plugin.py), before the first tick's queue drain.
         daily_logs = defaultdict(str)
         day_env_events = env_system.start_day(day, day_context=day_context, agents=agents)
         day_env_context = env_system.get_day_context_text()
@@ -2969,6 +3792,7 @@ def run_simulation():
         timeline = build_master_timeline(daily_schedules, TIME_STEP_MINUTES)
         sleep_step = SECONDS_PER_DAY / (SIM_DAYS * max(len(timeline), 1))
         info_schedule = {}
+        curiosity_budget = {}
         daily_info_seen = defaultdict(set)
         daily_query_seen = defaultdict(set)
         preferred_sites_map = {}
@@ -2984,6 +3808,8 @@ def run_simulation():
                 preferred_sites_map[agent_id] = preferred_sites
                 agent["preferred_info_sites"] = preferred_sites
                 curiosity = _estimate_curiosity(agent)
+                ev_cfg = INFO_SEEK_CONFIG.get("event_driven", {})
+                curiosity_budget[agent["id"]] = int(ev_cfg.get("max_extra_seeks_per_day", 2))
                 if not INFO_SEEK_ENABLED:
                     continue
                 daily_chance = min(0.98, INFO_SEEK_BASE_CHANCE * curiosity + 0.05)
@@ -3000,11 +3826,8 @@ def run_simulation():
             # Reset daily travel cost counter
             if "locations" in agent:
                 agent["locations"]["daily_travel_cost"] = 0.0
-            # P4: decay learned location-aversion by recency at each day start.
-            if SPATIAL_PREF_ENABLED:
-                decay_env_preferences(agent, day, half_life_days=SPATIAL_PREF_HALF_LIFE)
-                if STATEFUL:
-                    save_agent_env_preferences(agent["id"], agent.get("env_preferences", {}))
+        # K3i: the P4 location-aversion recency decay rides `on_day_start`
+        # (SpatialPreferencesPlugin).
         hook_bus.emit(
             "on_day_start",
             day=day,
@@ -3024,29 +3847,15 @@ def run_simulation():
 
         # ----- PHASE 3b: STEP LOOP — the megaloop, runs once per timeline tick (default 10-30 min steps) -----
         for time_index, time_str in enumerate(timeline):
+            sim_ctx.clock.advance(time_str, time_index)
             step_minutes = _timeline_step_minutes(timeline, time_index)
             policy = next((p for p in POLICY_EVENTS if p["day"] == day and p["time"] == time_str), None)
-            due_life_events = drain_due_life_events(day, time_str, CONFIG)
             env_system.tick(day, time_str, agents)
             env_events = env_system.get_events()
             env_context = env_system.get_context_text()
-            # P0: refresh the city map's physical state so agents can perceive
-            # their actual surroundings (crowding / opening hours) this tick.
-            if LOCAL_PHYSICAL_ENABLED and city_map:
-                set_sim_time(city_map, time_str)
-                update_occupancy_from_agents(city_map, agents)
+            # K3g: the per-tick map state refresh (sim time + occupancy)
+            # rides on_time_tick (gaworld/world/plugin.py).
             frame_steps = []
-            if due_life_events:
-                append_jsonl(
-                    env_timeline_path,
-                    {
-                        "scope": "life_event",
-                        "day": int(day),
-                        "date": day_context.get("sim_date", ""),
-                        "time": str(time_str),
-                        "events": due_life_events,
-                    },
-                )
             if env_events:
                 append_jsonl(
                     env_timeline_path,
@@ -3075,6 +3884,8 @@ def run_simulation():
                 env_events=env_events,
                 env_context=env_context,
                 policy=policy,
+                day_context=day_context,
+                env_timeline_path=env_timeline_path,
                 extension_state=extension_state,
             )
 
@@ -3102,6 +3913,20 @@ def run_simulation():
                     append_agent_log(agent, header + routine_text + "\n")
                     daily_routine_logged[agent_id] = True
                 if time_str in info_schedule.get(agent_id, set()):
+                    scheduled_keywords = None
+                    if INFO_SEEK_CONFIG.get("contextual_keywords", True):
+                        _ctx = assemble_curiosity_context(
+                            agent,
+                            scheduled_activity=get_activity_for_time(schedule_map[agent_id], time_str),
+                            recent_events=[
+                                _format_external_env_event(ev) for ev in (env_events or [])
+                            ],
+                            day=day,
+                            time_str=time_str,
+                        )
+                        scheduled_keywords = propose_contextual_keywords(
+                            agent, _ctx, config=INFO_SEEK_CONFIG
+                        ) or None
                     _, info_log, result_url, query = info_seek_and_store(
                         agent,
                         day=day,
@@ -3111,6 +3936,7 @@ def run_simulation():
                         preferred_sites=preferred_sites_map.get(agent_id, []),
                         seen_urls=daily_info_seen[agent_id],
                         used_queries=daily_query_seen[agent_id],
+                        keywords=scheduled_keywords,
                         config=INFO_SEEK_CONFIG,
                     )
                     if query:
@@ -3121,6 +3947,23 @@ def run_simulation():
                         print(info_log)
                         daily_logs[agent_id] += info_log
                         append_agent_log(agent, info_log)
+                _maybe_curiosity_seek(
+                    agent,
+                    day=day,
+                    time_str=time_str,
+                    scheduled_activity=get_activity_for_time(schedule_map[agent_id], time_str),
+                    recent_events=[
+                        _format_external_env_event(ev) for ev in (env_events or [])
+                    ],
+                    news_cache=news_cache,
+                    news_sources=news_sources,
+                    preferred_sites=preferred_sites_map.get(agent_id, []),
+                    seen_urls=daily_info_seen[agent_id],
+                    used_queries=daily_query_seen[agent_id],
+                    curiosity_budget=curiosity_budget,
+                    config=INFO_SEEK_CONFIG,
+                    daily_logs=daily_logs,
+                )
                 if env_events:
                     for ev in env_events:
                         vector_db_add_entry(
@@ -3130,776 +3973,10 @@ def run_simulation():
                             sim_day=day,
                             sim_time=time_str,
                         )
-                agent_life_events = life_events_for_agent(due_life_events, agent_id)
-                if agent_life_events:
-                    _record_life_events_for_agent(
-                        agent,
-                        agent_life_events,
-                        day,
-                        time_str,
-                        daily_logs,
-                    )
-                agent_env_events = list(env_events or []) + [
-                    _life_event_as_env_event(event) for event in agent_life_events
-                ]
-                #act = random.choice(actions.get(activity, ["继续当前活动"]))
-                scheduled_activity = get_activity_for_time(schedule_map[agent_id], time_str)
-                inbox_messages = distributed_inbox.get(agent_id, [])
-                social_context = get_social_context(agent, agents_by_id)
-                inbox_context = format_inbox_context(
-                    inbox_messages,
-                    max_items=int(DISTRIBUTED_CONFIG.get("max_inbound_per_step", 3)),
-                )
-                if inbox_context:
-                    social_context = f"{social_context} {inbox_context}".strip()
-                    inbox_log = f"[DistributedInbox {agent['name']} @ {time_str}] {inbox_context}\n"
-                    daily_logs[agent_id] += inbox_log
-                    append_agent_log(agent, inbox_log)
-                    vector_db_add_entry(
-                        agent_id,
-                        "distributed_in",
-                        inbox_context,
-                        sim_day=day,
-                        sim_time=time_str,
-                    )
-
-                policy_desc = None
-                if policy:
-                    policy_desc = policy.get("description") or policy.get("name")
-                state_before = dict(agent.get("state", {}))
-                step_ctx = {
-                    "scheduled_activity": scheduled_activity,
-                    "activity": scheduled_activity,
-                    "social_context": social_context,
-                    "policy_desc": policy_desc,
-                    "life_events": agent_life_events,
-                }
-                hook_bus.emit(
-                    "on_agent_pre_step",
-                    day=day,
-                    time_str=time_str,
-                    config=CONFIG,
-                    agent=agent,
-                    agents=agents,
-                    agents_by_id=agents_by_id,
-                    city_map=city_map,
-                    city_map_text=city_map_text,
-                    schedule_map=schedule_map,
-                    actions=actions,
-                    env_events=agent_env_events,
-                    env_context=env_context,
-                    policy=policy,
-                    step=step_ctx,
-                    extension_state=extension_state,
-                )
-                scheduled_activity = step_ctx.get("scheduled_activity", scheduled_activity)
-                social_context = step_ctx.get("social_context", social_context)
-                policy_desc = step_ctx.get("policy_desc", policy_desc)
-                intervention_feed = {}
-                step_env_context = env_context
-                life_event_context = _format_life_event_context(agent_life_events)
-                if life_event_context:
-                    step_env_context = (
-                        f"{step_env_context}\n{life_event_context}"
-                        if step_env_context
-                        else life_event_context
-                    )
-                if INTERVENTION_ENABLED:
-                    intervention_feed = build_intervention_feed(
-                        agent,
-                        agents_by_id=agents_by_id,
-                        day=day,
-                        time_str=time_str,
-                        env_events=agent_env_events,
-                        policy_event=policy or policy_desc,
-                        news_items=news_cache[:5],
-                        config=INTERVENTION_CONFIG,
-                    )
-                    feed_context = intervention_feed.get("context_text", "")
-                    if feed_context:
-                        step_env_context = (
-                            f"{env_context}\n平台干预推荐：{feed_context}"
-                            if env_context
-                            else f"平台干预推荐：{feed_context}"
-                        )
-                        step_ctx["intervention_feed"] = intervention_feed
-                # P0: localized physical snapshot of the agent's *current*
-                # surroundings (crowding / open-closed / local weather).
-                # Stored on the agent so later behaviour stages can read it.
-                if LOCAL_PHYSICAL_ENABLED:
-                    local_physical = local_physical_state(
-                        city_map,
-                        agent,
-                        time_str=time_str,
-                        weather_state=_env_weather_state(env_system),
-                        busy_ratio=LOCAL_PHYSICAL_BUSY_RATIO,
-                        packed_ratio=LOCAL_PHYSICAL_PACKED_RATIO,
-                        anomaly_ratio=LOCAL_PHYSICAL_ANOMALY_RATIO,
-                        anomaly_jump=LOCAL_PHYSICAL_ANOMALY_JUMP,
-                    )
-                    agent["_local_physical"] = local_physical
-                    if LOCAL_PHYSICAL_INJECT:
-                        _lp_text = physical_state_text(local_physical)
-                        if _lp_text:
-                            step_env_context = (
-                                f"{step_env_context}\n身边的物理环境：{_lp_text}"
-                                if step_env_context
-                                else f"身边的物理环境：{_lp_text}"
-                            )
-                else:
-                    agent["_local_physical"] = {}
-                # Core cognition loop: perceive -> plan -> (maybe) change routine -> act -> reflect.
-                perc = perception(agent, time_str, social_context, step_env_context, policy_desc if policy else None)
-                # --- Dynamic behaviour system (replaces old transient thought) ---
-                _use_dynamic = CONFIG.get("dynamic_behavior", {}).get("enabled", True)
-                if _use_dynamic:
-                    transient_thought = dynamic_transient_thought(
-                        agent,
-                        time_str,
-                        scheduled_activity,
-                        perception_text=perc,
-                        env_events=agent_env_events,
-                        policy_desc=policy_desc,
-                        social_context=social_context,
-                        inbox_messages=inbox_messages,
-                        all_agents=agents,
-                        agents_by_id=agents_by_id,
-                        config=CONFIG,
-                    )
-                else:
-                    transient_thought = maybe_generate_transient_thought(
-                        agent,
-                        time_str,
-                        scheduled_activity,
-                        perc,
-                        env_events=agent_env_events,
-                        policy_desc=policy_desc,
-                        social_context=social_context,
-                        inbox_messages=inbox_messages,
-                    )
-                step_recollections = []
-                plan_commitment = _activity_commitment_level(scheduled_activity)
-                plan_prefetch_refs = _build_decision_reference_bundle(
-                    agent,
-                    scheduled_activity,
-                    time_str=time_str,
-                    location=agent.get("locations", {}).get("current", ""),
-                    env_context=step_env_context,
-                    env_events=agent_env_events,
-                    policy_desc=policy_desc,
-                    social_context=social_context,
-                )
-                plan_recall = evoke_memory(
-                    agent,
-                    "planning",
-                    scheduled_activity,
-                    perc,
-                    social_context if plan_prefetch_refs.get("social_network_relevant") else "",
-                    plan_prefetch_refs.get("physical_env_text", "") if plan_prefetch_refs.get("physical_env_relevant") else "",
-                    plan_prefetch_refs.get("social_env_text", "") if plan_prefetch_refs.get("social_env_relevant") else "",
-                    context_labels=_build_recall_context_labels(
-                        agent,
-                        activity=scheduled_activity,
-                        time_str=time_str if plan_prefetch_refs.get("location_time_relevant") else "",
-                        location=agent.get("locations", {}).get("current", "") if plan_prefetch_refs.get("location_time_relevant") else "",
-                        commitment_level=plan_commitment,
-                    ),
-                )
-                if plan_recall.get("recollection"):
-                    step_recollections.append(plan_recall["recollection"])
-                plan_refs = dict(plan_prefetch_refs)
-                plan_refs["memory_hint"] = plan_recall.get("hint", "")
-                plan_refs["recollection"] = plan_recall.get("recollection", "")
-                plan_refs["transient_thought"] = transient_thought
-                plan = planning(agent, perc, recall_context=plan_recall, decision_refs=plan_refs)
-                plan_text = format_plan_text(plan)
-                activity, change_reason, changed = maybe_adjust_activity(
-                    agent,
-                    time_str,
-                    scheduled_activity,
-                    perc,
-                    plan_text,
-                    step_env_context,
-                    agent_env_events,
-                    policy_desc,
-                    transient_thought=transient_thought,
-                    social_context=social_context,
-                )
-                # --- Dynamic behaviour system: apply if LLM didn't change ---
-                _dyn_result = transient_thought.get("dynamic_result") if isinstance(transient_thought, dict) else None
-                if _dyn_result and not changed and _dyn_result.get("changed"):
-                    activity = _dyn_result["activity"]
-                    change_reason = _dyn_result.get("reason", "动态行为系统触发")
-                    changed = True
-                # Apply mood delta from dynamic system
-                if _dyn_result and _dyn_result.get("mood_delta"):
-                    _mood_d = float(_dyn_result["mood_delta"])
-                    state = agent.get("state", {})
-                    state["emotion"] = max(0.0, min(1.0, float(state.get("emotion", 0.5)) + _mood_d))
-                # Apply schedule insertion from dynamic system
-                if _dyn_result and _dyn_result.get("schedule_insert") and changed:
-                    _si = _dyn_result["schedule_insert"]
-                    _sched_tuples = [(s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else s
-                                     for s in schedule_map.get(agent_id, [])]
-                    _new_sched = dynamic_insert_activity(
-                        _sched_tuples,
-                        _si["insert_time"],
-                        _si["activity"],
-                        duration_minutes=_si.get("duration_minutes", 30),
-                        resumable=True,
-                        original_activity=_si.get("original_activity", scheduled_activity),
-                    )
-                    # Convert back to schedule format used by the simulator
-                    schedule_map[agent_id] = [{"time": t, "activity": a} for t, a in _new_sched]
-                # Log social encounters from dynamic system
-                if _dyn_result and _dyn_result.get("social_encounters"):
-                    for _enc in _dyn_result["social_encounters"]:
-                        _LOG.debug("agent_%s social_encounter: %s", agent_id, _enc.get("activity", ""))
-
-                activity = step_ctx.get("activity", activity)
-                if activity != scheduled_activity and not changed:
-                    changed = True
-                    hook_reason = str(step_ctx.get("change_reason", "")).strip()
-                    if hook_reason:
-                        change_reason = hook_reason
-                if changed:
-                    schedule_map[agent_id] = apply_schedule_override(
-                        schedule_map[agent_id],
-                        time_str,
-                        activity,
-                    )
-                    updated = ensure_action_space_for_activity(agent, actions[agent_id], activity)
-                    if updated and STATEFUL:
-                        save_agent_actions(agent_id, actions[agent_id])
-
-                # P3: a *persistent* anomaly (non-resumable physical / emergency
-                # reaction) makes the disrupted activity unworkable for a while —
-                # defer its upcoming slots rather than only patching this step.
-                if REPLAN_ENABLED and changed and isinstance(_dyn_result, dict):
-                    _itr = _dyn_result.get("interrupt") or {}
-                    _extra = _itr.get("extra", {}) if isinstance(_itr, dict) else {}
-                    _persistent_anomaly = (
-                        isinstance(_itr, dict)
-                        and not _itr.get("resumable", True)
-                        and (bool(_extra.get("anomaly"))
-                             or _extra.get("event_type") in ("emergency", "local_physical"))
-                    )
-                    # P4: learn to avoid a *place* only for location-bound
-                    # anomalies (crowd surge / closed venue) — never for
-                    # city-wide macro anomalies, which aren't a place's fault.
-                    if (SPATIAL_PREF_ENABLED and _persistent_anomaly
-                            and _extra.get("event_type") == "local_physical"
-                            and _extra.get("location")):
-                        record_anomaly_experience(
-                            agent,
-                            location=str(_extra.get("location")),
-                            day=day,
-                            weight=SPATIAL_PREF_WEIGHT,
-                            reason=str(_itr.get("kind", "")),
-                            time_str=time_str,
-                        )
-                        if STATEFUL:
-                            save_agent_env_preferences(agent_id, agent.get("env_preferences", {}))
-                    _cur_min = _time_str_to_minutes(time_str)
-                    if _persistent_anomaly and scheduled_activity and _cur_min is not None:
-                        _sched_tuples = [
-                            (s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else tuple(s)
-                            for s in schedule_map.get(agent_id, [])
-                        ]
-                        _new_sched, _replan_changes = replan_affected_interval(
-                            _sched_tuples,
-                            time_str,
-                            _minutes_to_time_str(min(24 * 60 - 1, _cur_min + REPLAN_WINDOW_MINUTES)),
-                            is_affected=lambda t, a, _d=scheduled_activity: a == _d,
-                            defer=True,
-                            defer_gap_minutes=REPLAN_DEFER_GAP,
-                        )
-                        if _replan_changes:
-                            schedule_map[agent_id] = _new_sched
-                            _replan_log = (
-                                f"[Replan {time_str}] 因突发异常重排日程，"
-                                f"顺延 {len(_replan_changes)} 项（{scheduled_activity}）\n"
-                            )
-                            daily_logs[agent_id] += _replan_log
-                            append_agent_log(agent, _replan_log)
-
-                desired_location = resolve_location(agent, activity, time_str, city_map)
-                # P4: bias away from places the agent has learned to avoid.
-                if SPATIAL_PREF_ENABLED and desired_location:
-                    desired_location, _redirected = redirect_for_aversion(
-                        agent, city_map, desired_location, time_str,
-                        threshold=SPATIAL_PREF_THRESHOLD,
-                    )
-                movement = move_agent(
-                    agent,
-                    desired_location=desired_location,
-                    activity=activity,
-                    time_str=time_str,
-                    step_minutes=step_minutes,
-                    city_map=city_map,
-                )
-                if STATEFUL:
-                    persist_agent_locations_if_changed(agent)
-                location = movement["display_location"]
-                resolved_location = movement["resolved_location"]
-                travel = movement["travel"]
-                effective_activity = activity
-                if travel.get("status") in {"departed", "in_transit"}:
-                    act = f"乘坐{travel.get('mode', '交通工具')}移动"
-                    action_meta = {
-                        "decision_driver": "时空约束",
-                        "commitment_level": _activity_commitment_level(activity),
-                        "scores": {act: {"weight": 1.0, "components": {}, "styles": ["quick"]}},
-                    }
-                    outcome = (
-                        f"从【{resolved_location}】前往【{movement['target_location']}】，"
-                        f"使用【{travel.get('mode', '未知方式')}】，路程约 {travel.get('distance_km', 0.0):.1f} km，"
-                        f"预计 {travel.get('minutes', 0)} 分钟"
-                    )
-                    location_bias = {}
-                    effective_activity = f"前往{movement['target_location']}"
-                else:
-                    location_bias = get_location_action_bias(
-                        agent,
-                        resolved_location,
-                        city_map_text,
-                        actions[agent_id],
-                    )
-                    location_time_relevant = _is_location_time_relevant(activity, time_str=time_str, location=resolved_location)
-                    action_prefetch_refs = _build_decision_reference_bundle(
-                        agent,
-                        activity,
-                        time_str=time_str,
-                        location=resolved_location,
-                        env_context=step_env_context,
-                        env_events=agent_env_events,
-                        policy_desc=policy_desc,
-                        social_context=social_context,
-                    )
-                    action_recall = evoke_memory(
-                        agent,
-                        "action",
-                        activity,
-                        perc,
-                        plan_text,
-                        social_context if action_prefetch_refs.get("social_network_relevant") else "",
-                        action_prefetch_refs.get("physical_env_text", "") if action_prefetch_refs.get("physical_env_relevant") else "",
-                        action_prefetch_refs.get("social_env_text", "") if action_prefetch_refs.get("social_env_relevant") else "",
-                        resolved_location if location_time_relevant else "",
-                        time_str if location_time_relevant else "",
-                        context_labels=_build_recall_context_labels(
-                            agent,
-                            activity=activity,
-                            time_str=time_str if location_time_relevant else "",
-                            location=resolved_location if location_time_relevant else "",
-                            commitment_level=_activity_commitment_level(activity),
-                        ),
-                    )
-                    if action_recall.get("recollection"):
-                        step_recollections.append(action_recall["recollection"])
-                    action_refs = dict(action_prefetch_refs)
-                    action_refs["memory_hint"] = action_recall.get("hint", "")
-                    action_refs["recollection"] = action_recall.get("recollection", "")
-                    action_refs["transient_thought"] = transient_thought
-                    act, action_meta = choose_action(
-                        agent,
-                        activity,
-                        actions[agent_id],
-                        context=f"{activity} {perc} {plan_text}",
-                        location_bias=location_bias,
-                        location=resolved_location,
-                        time_str=time_str,
-                        recall_context=action_recall,
-                        decision_refs=action_refs,
-                        return_debug=True,
-                    )
-                    outcome = f"在【{activity}】中执行了【{act}】"
-                    if real_work_runtime is not None:
-                        rw_outcome = real_work_runtime.router.maybe_dispatch(
-                            agent, activity=activity, chosen_action=act,
-                            sim_day=day, sim_time=time_str,
-                        )
-                        if rw_outcome:
-                            outcome = rw_outcome
-                        rw_done = real_work_runtime.absorb_for(
-                            agent, sim_day=day, sim_time=time_str,
-                        )
-                        if rw_done:
-                            outcome = f"{outcome}｜回收：{_rw_summarise(rw_done)}"
-                reflection_recall = evoke_memory(
-                    agent,
-                    "reflection",
-                    effective_activity,
-                    act,
-                    outcome,
-                    time_str if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
-                    context_labels=_build_recall_context_labels(
-                        agent,
-                        activity=effective_activity,
-                        time_str=time_str if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
-                        location=resolved_location if _is_location_time_relevant(effective_activity, time_str=time_str, location=resolved_location) else "",
-                        commitment_level=action_meta.get("commitment_level", _activity_commitment_level(effective_activity)),
-                    ),
-                )
-                if reflection_recall.get("recollection"):
-                    step_recollections.append(reflection_recall["recollection"])
-                refl = reflection(agent, outcome, recall_context=reflection_recall)
-                refl_text = format_reflection_text(refl)
-                if HUMAN_REALISM_ENABLED:
-                    update_needs(
-                        agent,
-                        time_str,
-                        effective_activity,
-                        cfg=HUMAN_REALISM_CONFIG,
-                        changed=changed,
-                        travel=travel,
-                    )
-
-                if agent_env_events:
-                    for ev in agent_env_events:
-                        inferred = infer_event_effect(agent, ev.get("description", ev.get("name", "")), ev.get("type", "event"))
-                        for k, v in inferred.items():
-                            agent["state"][k] += v
-                if agent_life_events:
-                    _apply_life_event_state_effects(agent, agent_life_events)
-
-                if policy:
-                    inferred = infer_event_effect(agent, policy_desc, "policy")
-                    for k, v in inferred.items():
-                        agent["state"][k] += v
-
-                social_influence(agent, agents_by_id)
-                update_state(agent)
-                intervention_metrics = {}
-                if INTERVENTION_ENABLED:
-                    intervention_metrics = update_agent_intervention_metrics(
-                        agent,
-                        feed=intervention_feed,
-                        action=act,
-                        outcome=outcome,
-                        reflection=refl_text,
-                        agents_by_id=agents_by_id,
-                        config=INTERVENTION_CONFIG,
-                    )
-                    source_counts = intervention_feed.get("source_counts", {}) if isinstance(intervention_feed, dict) else {}
-                    append_intervention_metrics(
-                        INTERVENTION_OUTPUT_DIR,
-                        {
-                            "day": day,
-                            "time": time_str,
-                            "agent_id": agent_id,
-                            "feed_items": len(intervention_feed.get("items", [])) if isinstance(intervention_feed, dict) else 0,
-                            "relational_items": source_counts.get("relational", 0),
-                            "personalized_items": source_counts.get("personalized", 0),
-                            "headline_items": source_counts.get("headline", 0),
-                            **intervention_metrics,
-                        },
-                    )
-                sent_remote_messages = []
-                if distributed_client.enabled:
-                    sent_remote_messages = distributed_client.send_agent_messages(
-                        agent,
-                        day=day,
-                        time_str=time_str,
-                        activity=effective_activity,
-                        reflection=refl_text,
-                        outcome=outcome,
-                    )
-                    if sent_remote_messages:
-                        sent_summary = "; ".join(
-                            f"to#{int(msg.get('to_agent', 0))}:{str(msg.get('text', ''))[:40]}"
-                            for msg in sent_remote_messages
-                            if isinstance(msg, dict)
-                        )
-                        if sent_summary:
-                            sent_log = (
-                                f"[DistributedOutbox {agent['name']} @ {time_str}] "
-                                f"{sent_summary}\n"
-                            )
-                            daily_logs[agent_id] += sent_log
-                            append_agent_log(agent, sent_log)
-                            vector_db_add_entry(
-                                agent_id,
-                                "distributed_out",
-                                sent_summary,
-                                sim_day=day,
-                                sim_time=time_str,
-                            )
-                if HUMAN_REALISM_ENABLED:
-                    partners = list(agent.get("_recent_social_partners", []))
-                    for sender_id in extract_sender_agent_ids(inbox_messages):
-                        if sender_id not in partners:
-                            partners.append(sender_id)
-                    signal = infer_interaction_signal(refl_text)
-                    for pid in partners:
-                        relationship_update(agent, pid, signal, HUMAN_REALISM_CONFIG)
-                    state_after = dict(agent.get("state", {}))
-                    delta = {}
-                    for key, before_v in state_before.items():
-                        after_v = state_after.get(key)
-                        if isinstance(before_v, (int, float)) and isinstance(after_v, (int, float)):
-                            delta[key] = float(after_v) - float(before_v)
-                    thought_intensity = (
-                        float(transient_thought.get("intensity", 0.0))
-                        if isinstance(transient_thought, dict)
-                        else 0.0
-                    )
-                    event_intensity = min(
-                        1.0,
-                        0.2 * len(agent_env_events) + (0.2 if policy else 0.0) + 0.18 * thought_intensity,
-                    )
-                    recent_actions = [
-                        e.get("action", "")
-                        for e in agent.get("episodes", [])[-20:]
-                        if isinstance(e, dict)
-                    ]
-                    novelty = 1.0 if act not in recent_actions else 0.2
-                    priorities = agent.get("intentions", {}).get("priorities", [])
-                    goal_relevance = 0.2
-                    for p in priorities:
-                        if p and (p in effective_activity or p in plan_text or p in refl_text):
-                            goal_relevance = 0.8
-                            break
-                    salience = compute_episode_salience(
-                        delta.get("stress", 0.0),
-                        event_intensity,
-                        novelty,
-                        goal_relevance,
-                    )
-                    tags = infer_episode_tags(
-                        effective_activity,
-                        act,
-                        refl_text,
-                        env_events=[ev.get("description", ev.get("name", "")) for ev in agent_env_events],
-                        policy_event=policy_desc if policy else "",
-                    )
-                    need_snapshot = {
-                        "energy": round(float(state_after.get("energy", 0.75)), 3),
-                        "hunger": round(float(state_after.get("hunger", 0.25)), 3),
-                        "social_need": round(float(state_after.get("social_need", 0.40)), 3),
-                        "fatigue_debt": round(float(state_after.get("fatigue_debt", 0.20)), 3),
-                        "self_control": round(float(state_after.get("self_control", 0.60)), 3),
-                        "time_pressure": round(float(state_after.get("time_pressure", 0.25)), 3),
-                    }
-                    episode = {
-                        "episode_id": str(uuid.uuid4()),
-                        "day": day,
-                        "time": time_str,
-                        "scheduled_activity": scheduled_activity,
-                        "final_activity": effective_activity,
-                        "action": act,
-                        "location": location,
-                        "target_location": movement["target_location"],
-                        "travel": travel,
-                        "env_events": [ev.get("description", ev.get("name", "")) for ev in agent_env_events],
-                        "life_events": [dict(event) for event in agent_life_events],
-                        "policy_event": policy_desc if policy else "",
-                        "social_partners": partners,
-                        "perception": perc,
-                        "plan": plan_text,
-                        "plan_struct": plan,
-                        "outcome": outcome,
-                        "reflection": refl_text,
-                        "reflection_struct": refl,
-                        "transient_thought": transient_thought or {},
-                        "state_before": state_before,
-                        "state_after": state_after,
-                        "need_snapshot": need_snapshot,
-                        "delta": delta,
-                        "tags": tags,
-                        "recollections": list(step_recollections),
-                        "salience": salience,
-                        "valence": float(np.clip(delta.get("emotion", 0.0), -1.0, 1.0)),
-                        "decision_driver": action_meta.get("decision_driver", "惯性延续"),
-                        "change_reason": change_reason or "",
-                        "commitment_level": action_meta.get("commitment_level", _activity_commitment_level(effective_activity)),
-                        "expected_outcome": str(plan.get("expected_outcome", "")).strip(),
-                        "created_at_day": day,
-                    }
-                    if INTERESTS_ENABLED:
-                        progress_minutes = step_minutes
-                        if INTERESTS_PROGRESS_MINUTES is not None:
-                            parsed_minutes = _parse_step_minutes(INTERESTS_PROGRESS_MINUTES)
-                            if parsed_minutes is not None:
-                                progress_minutes = parsed_minutes
-                        updated_growth, growth_progress = update_growth_from_episode(
-                            agent.get("growth_profile"),
-                            episode,
-                            step_minutes=progress_minutes,
-                        )
-                        agent["growth_profile"] = updated_growth
-                        episode["growth_matches"] = list(growth_progress.get("matches", []))
-                        episode["growth_progress"] = growth_progress
-                        if STATEFUL:
-                            save_agent_growth_profile(
-                                agent_id,
-                                agent.get("growth_profile", {}),
-                                CONFIG.get("memory_dir", "output/memory"),
-                            )
-                    else:
-                        episode["growth_matches"] = []
-                        episode["growth_progress"] = {"matches": [], "minutes": 0, "level_changes": {}}
-                    agent.setdefault("episodes", []).append(episode)
-                    update_habits_from_episode(agent, episode, HUMAN_REALISM_CONFIG)
-                    append_agent_episode(agent_id, episode)
-                    episode_text = (
-                        f"Day {day} {time_str} {effective_activity}/{act} @ {location} "
-                        f"driver={episode['decision_driver']} commitment={episode['commitment_level']} "
-                        f"thought={format_transient_thought(transient_thought) if transient_thought else 'none'} "
-                        f"needs={json.dumps(need_snapshot, ensure_ascii=False)} "
-                        f"tags={','.join(tags)} salience={salience:.2f} reflection={refl_text}"
-                    )
-                    vector_db_add_entry(agent_id, "episode", episode_text, sim_day=day, sim_time=time_str)
-                    agent["last_activity"] = effective_activity
-                    agent["last_action"] = act
-                    memory_review = maybe_review_memories(
-                        agent,
-                        day,
-                        time_str,
-                        recent_episode=episode,
-                        llm_budget_ctx=llm_budget_by_agent.get(agent_id),
-                    )
-                else:
-                    memory_review = ""
-                    agent["last_activity"] = effective_activity
-                    agent["last_action"] = act
-                agent["last_reflection"] = refl_text
-                for metric in state_history[agent["id"]]:
-                    state_history[agent["id"]][metric].append(agent["state"][metric])
-
-                # --- activity header (fold RoutineChange into one line) ---
-                if changed:
-                    reason_text = change_reason or "临时改变"
-                    _activity_header = f"{scheduled_activity} → {effective_activity} ({reason_text})"
-                    routine_line = f"RoutineChange: {scheduled_activity} -> {effective_activity} ({reason_text})\n"
-                else:
-                    _activity_header = scheduled_activity
-                    routine_line = ""
-
-                # --- optional lines (only rendered when non-empty) ---
-                recall_line = ""
-                unique_recollections = []
-                for item in step_recollections:
-                    text = str(item).strip()
-                    if text and text not in unique_recollections:
-                        unique_recollections.append(text)
-                if unique_recollections:
-                    recall_line = f"Recall: {' | '.join(unique_recollections)}\n"
-                transient_thought_line = ""
-                if transient_thought:
-                    transient_thought_line = f"Thought: {format_transient_thought(transient_thought)}\n"
-                memory_review_line = f"Review: {memory_review}\n" if memory_review else ""
-                decision_line = ""
-                if action_meta.get("decision_driver"):
-                    decision_line = (
-                        f"Driver: {action_meta.get('decision_driver')} "
-                        f"(commit={action_meta.get('commitment_level', '')})\n"
-                    )
-                needs_line = ""
-                if HUMAN_REALISM_ENABLED:
-                    needs_line = (
-                        "Needs: "
-                        f"nrg={agent['state'].get('energy', 0.75):.2f} "
-                        f"hun={agent['state'].get('hunger', 0.25):.2f} "
-                        f"soc={agent['state'].get('social_need', 0.40):.2f} "
-                        f"fat={agent['state'].get('fatigue_debt', 0.20):.2f} "
-                        f"ctrl={agent['state'].get('self_control', 0.60):.2f} "
-                        f"tprs={agent['state'].get('time_pressure', 0.25):.2f}\n"
-                    )
-
-                # --- compact location + travel (collapsed to 1 line) ---
-                _travel_status = travel.get("status", "stationary")
-                if _travel_status != "stationary":
-                    _travel_info = (
-                        f"  [{travel.get('mode', '?')} "
-                        f"{travel.get('distance_km', 0.0):.1f}km "
-                        f"{travel.get('minutes', 0)}min]"
-                    )
-                    _loc_line = f"Loc: {location} → {resolved_location}{_travel_info}\n"
-                else:
-                    _travel_info = ""
-                    _loc_line = f"Loc: {resolved_location}\n"
-
-                # --- env context (omitted when empty) ---
-                _env_line = f"Env: {step_env_context}\n" if step_env_context else ""
-
-                # -------------------------------------------------------
-                # Simple mode: one clean block per tick, Chinese-only,
-                # stripping LLM reasoning leakage and repeated boilerplate.
-                # Verbose mode: full details for debugging.
-                # -------------------------------------------------------
-                if _LOG_SIMPLE:
-                    _env_simple = _clean_env_context(step_env_context)
-                    _refl_simple = _clean_reflection(refl_text)
-                    log = (
-                        f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
-                        f"Loc: {resolved_location}{_travel_info}\n"
-                        + (f"Env: {_env_simple}\n" if _env_simple else "")
-                        + f"Act: {act}\n"
-                        f"Refl: {_refl_simple}\n"
-                    )
-                else:
-                    log = (
-                        f"\n── [{agent['name']} @ {time_str}] {_activity_header} ──\n"
-                        f"{_loc_line}"
-                        f"{_env_line}"
-                        f"Perc: {perc}\n"
-                        f"Plan: {plan_text}\n"
-                        f"{transient_thought_line}"
-                        f"{recall_line}"
-                        f"Act: {act}  |  Out: {outcome}\n"
-                        f"{decision_line}"
-                        f"{needs_line}"
-                        f"Refl: {refl_text}\n"
-                        f"{memory_review_line}"
-                    )
-                print(log)
-                daily_logs[agent["id"]] += log
-                append_agent_log(agent, log)
-                vector_db_add_entry(agent["id"], "log", log, sim_day=day, sim_time=time_str)
-                vector_db_add_entry(agent["id"], "plan", plan_text, sim_day=day, sim_time=time_str)
-                vector_db_add_entry(agent["id"], "reflection", refl_text, sim_day=day, sim_time=time_str)
-                vector_db_add_entry(agent["id"], "action", outcome, sim_day=day, sim_time=time_str)
-                step_ctx.update({
-                    "perception": perc,
-                    "plan": plan_text,
-                    "plan_struct": plan,
-                    "transient_thought": transient_thought or {},
-                    "activity": effective_activity,
-                    "action": act,
-                    "outcome": outcome,
-                    "reflection": refl_text,
-                    "reflection_struct": refl,
-                    "log": log,
-                    "env_context": step_env_context,
-                    "intervention_metrics": intervention_metrics,
-                    "changed": changed,
-                    "change_reason": change_reason,
-                    "location": location,
-                    "resolved_location": resolved_location,
-                    "target_location": movement["target_location"],
-                    "travel": travel,
-                })
-                if visualizer is not None:
-                    frame_steps.append(
-                        build_agent_step_payload(
-                            agent,
-                            time_str=time_str,
-                            location=location,
-                            resolved_location=resolved_location,
-                            target_location=movement["target_location"],
-                            scheduled_activity=scheduled_activity,
-                            activity=effective_activity,
-                            action=act,
-                            outcome=outcome,
-                            perception=perc,
-                            plan=plan_text,
-                            reflection=refl_text,
-                            changed=changed,
-                            change_reason=change_reason,
-                            travel=travel,
-                        )
-                    )
+                # K2: the former ~770-line inline step body now runs as the
+                # configurable cognition pipeline (see gaworld/sim/pipeline.py).
+                step_ctx = {}
+                step_pipeline.run_step(agent, step_ctx, sim_ctx)
                 hook_bus.emit(
                     "on_agent_post_step",
                     day=day,
@@ -3913,8 +3990,8 @@ def run_simulation():
                     schedule_map=schedule_map,
                     actions=actions,
                     daily_logs=daily_logs,
-                    env_events=agent_env_events,
-                    env_context=step_env_context,
+                    env_events=step_ctx.get("_env_events", []),
+                    env_context=step_ctx.get("_env_context", env_context),
                     policy=policy,
                     step=step_ctx,
                     extension_state=extension_state,
@@ -3926,9 +4003,8 @@ def run_simulation():
                     time_str=time_str,
                     day_context=day_context,
                     env_context=env_context,
-                    env_events=list(env_events or []) + [
-                        _life_event_as_env_event(event) for event in due_life_events
-                    ],
+                    env_events=list(env_events or [])
+                    + hook_bus.collect("env.events.tick", day=day, time_str=time_str),
                     agent_steps=frame_steps,
                     policy=policy or {},
                 )
@@ -4016,6 +4092,12 @@ def run_simulation():
                 )
             except Exception as _lifecycle_exc:  # noqa: BLE001
                 print(f"⚠️ memory lifecycle hook failed for {agent.get('name')}: {_lifecycle_exc}")
+            # K3c: plugins run their own day-end memory passes here (e.g.
+            # the Skill library's experience-to-skill distillation).
+            hook_bus.emit("memory.consolidate", agent=agent, day=day)
+        # K3d: growth day-tick (decay + interest-set evolution) now rides
+        # `on_day_end` at priority=10 (gaworld/interests_plugin.py), keeping
+        # it ahead of the economy's config-registered day-end settlement.
         hook_bus.emit(
             "on_day_end",
             day=day,
@@ -4051,6 +4133,8 @@ def run_simulation():
         state_history=state_history,
         extension_state=extension_state,
     )
+    sim_ctx.registry.teardown_all(sim_ctx)
+    sim_ctx.recorder.close()
     visualize_social_network(agents, output_dir=NETWORK_OUTPUT_DIR)
     save_state_history(state_history, output_dir=STATE_OUTPUT_DIR)
     visualize_agent_state_changes(
@@ -4450,6 +4534,16 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
         overrides["sim_days"] = int(args.sim_days)
     if args.agent_ids:
         overrides["agent_ids"] = list(args.agent_ids)
+    if getattr(args, "fast", False):
+        # Fast mode: cut LLM calls per agent-day (deterministic cognition, skip
+        # daily summary/diary) and shrink the cohort. Trades fidelity for speed
+        # so local models can run longer horizons.
+        overrides["fos_fast_mode"] = {
+            "deterministic_cognition": True,
+            "skip_daily_summary": True,
+            "skip_daily_diary": True,
+        }
+        overrides.setdefault("agent_ids", [1, 2, 3])  # unless --agent-id was given
     if getattr(args, "llm_provider", None):
         routing = CONFIG.get("llm", {}).get("routing", {})
         task_map = routing.get("tasks", {})
@@ -4656,6 +4750,16 @@ def _cli_compare_event(args):
     os.makedirs(baseline_dir, exist_ok=True)
     os.makedirs(event_dir, exist_ok=True)
 
+    # Stamp run metadata so downstream scoring can flag low-fidelity (--fast) runs.
+    with open(os.path.join(root, "run_meta.json"), "w", encoding="utf-8") as _meta:
+        json.dump({
+            "fast": bool(getattr(args, "fast", False)),
+            "sim_days": args.sim_days,
+            "seed": getattr(args, "seed", None),
+            "llm_provider": getattr(args, "llm_provider", None),
+            "event_name": str(args.event_name),
+        }, _meta, ensure_ascii=False, indent=2)
+
     baseline_overrides = _build_compare_overrides(
         baseline_dir,
         include_event=False,
@@ -4836,6 +4940,12 @@ def _build_arg_parser():
         "--output-root",
         default="output/comparisons",
         help="Output root for comparison artifacts",
+    )
+    compare_event.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: deterministic cognition + skip daily summary/diary + 3-agent cohort "
+             "(fewer LLM calls; trades fidelity for speed, e.g. for local models).",
     )
 
     serve_viz = subparsers.add_parser(

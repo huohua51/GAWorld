@@ -4,6 +4,123 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-07-11 — Microkernel plugin architecture (K1 + K2-lite)
+
+Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design doc: `docs/proposals/2026-07-11-microkernel-plugin-architecture.md`; author guide: `docs/PLUGIN_AUTHORING.md`. Behavior-preserving: full suite 551 passed / 6 pre-existing failures, identical to baseline.
+
+### Added
+
+- **`gaworld/kernel/`** — six kernel services (<800 lines total): `Clock` (deterministic sim time, advanced only by the main loop), `EventBus` (observe/collect/filter hook semantics with priorities; drop-in HookBus superset that loads the same `CONFIG["extensions"]` hooks), `PluginRegistry` + `Plugin` base (assembly from `CONFIG["plugins"]` class paths and `gaworld.plugins` entry points, dependency-ordered setup/teardown, trust-boundary error containment), `Controller` (priority-ordered action validator chain + audited named interventions — skeleton until K4 routes actions through it), `Recorder` (unified JSONL event stream under `output/records/`, auto `_day`/`_time` stamping), `SimContext` (single runtime source of truth; `plugin_state()` and `agent_ext()` namespace helpers replace bare agent-dict keys for plugin state).
+- **`generative_city_sim.py`** — two cognition dispatch points inside the step loop, no-ops with zero subscribers: `perception.compose` (collect → snippets merged into the step env context) and `action.selected` (filter over the chosen action). Kernel bootstrap replaces the HookBus instance; all 7 legacy extension phases fire unchanged.
+- **`tests/test_kernel.py`** — 23 unit tests for the six services; **`tests/test_kernel_plugin_e2e.py`** — end-to-end proof that a plugin declared only in `CONFIG["plugins"]` is assembled, injects perception that reaches an LLM prompt, and filters selected actions (zero simulator source edits).
+- **`docs/PLUGIN_AUTHORING.md`** — plugin author guide (lifecycle, hook semantics, event catalog, state ownership, controller usage).
+
+### Changed
+
+- **`generative_city_sim.py::run_simulation`** — hook dispatch now goes through `gaworld.kernel.EventBus`; `sim_ctx.clock` is advanced at day start and each timeline tick; plugin `setup_all`/`teardown_all` wrap the simulation lifecycle. `gaworld/hooks.py` (HookBus) remains for legacy callers.
+
+### K2 — cognition pipeline (configurable agent step)
+
+- **`gaworld/sim/pipeline.py`** (`StagePipeline`, `DEFAULT_AGENT_STEP_ORDER`) — the ~770-line inline per-agent step body in `run_simulation` is now 12 named stages: `prepare / perceive / interrupts / plan / adjust_activity / move / select_action / reflect / update_state / broadcast / memorize / record`. Stage bodies are verbatim moves (closures over the loop's locals); cross-stage data rides the step dict — hook-visible keys keep their legacy names, working keys are underscore-prefixed, so pre/post-step hook consumers (economy, intervention plugin) are untouched.
+- **Pipeline order is configuration**: `CONFIG["pipeline"]["agent_step"]` accepts builtin stage names, `"module:function"` import paths (custom stages), and `{"name", "call"}` dicts. Omitting a builtin name ablates that stage. Acceptance tests (`tests/test_pipeline_ablation.py`): removing `reflect` runs a full mock-LLM simulation with zero reflection LLM calls; a path-inserted custom stage runs once per agent-step with the step data bus and kernel clock visible.
+
+### Fixed
+
+- **Routine changes were silently disabled on the mainline path** (since commit `3f7edba`, ~5 months): the loop re-read `step_ctx["activity"]` unconditionally after `maybe_adjust_activity`, and the key was seeded with `scheduled_activity` at step start — so absent a pre-step hook override, the seeded value clobbered every LLM/dynamic activity adjustment. Fixed post-K2: a hook override wins only when it actually changed the seeded value. Red-green verified in `tests/test_routine_change_mainline.py`. **This changes simulation dynamics — agents now actually execute routine changes; re-baseline ongoing experiments.**
+
+### K5 — runtime intervention API (migration complete)
+
+- **`gaworld/kernel/interventions.py`** — every kernel ships three domain-free interventions, all audited: `set_agent_state` (immediate state write), `update_config` (dotted-path write into live CONFIG), and `remove_agent` (queued; the main loop applies removals at the day boundary and scrubs the removed ids from every remaining agent's `social_neighbors`). `LifeEventsPlugin` registers `inject_life_event`. The intervention API is the in-process programmatic surface — a dashboard HTTP bridge and `add_agent` (needs a seed-ingestion design) are tracked as follow-ups.
+- `visualize_agent_state_changes` now plots each series against its own step range — state histories have unequal lengths once an agent is removed mid-run.
+- Acceptance (`tests/test_interventions.py`): an agent removed via the API on day 1 no longer acts on day 2 of a real mock-LLM run.
+- **This closes the K1–K5 microkernel migration** (design doc: `docs/proposals/2026-07-11-microkernel-plugin-architecture.md`).
+
+### K4 — Controller validation gate wired into the move stage
+
+- Structured moves now pass `Controller.validate` (an `ActionRequest("move", {to, activity})`) after location resolution. A denial keeps the agent where it is (move_agent falls back to the origin), is audited to `output/records/action.denied.jsonl`, and the reason surfaces in the agent's **next perception** as a "刚才的行动受阻：…" line — the structured feedback loop that catches hallucinated destinations.
+- **`LocalPhysicalPlugin`** registers the first two validators: `location_exists` (**on by default** — `resolve_location` only yields map nodes, so it never fires in normal operation; it catches rogue rewrites from plugins/hooks, verified by a zero-denial control test) and `venue_open` (**off by default** — hard-blocking closed venues would change dynamics since the P0/P2 layers handle closures reactively; opt in via `CONFIG["controller"]["validators"]["venue_open"] = True`). An economy affordability validator is deferred until a concrete pre-move cost rule is defined.
+- Acceptance (`tests/test_action_gate.py`): a config-declared plugin rewriting destinations to a nonexistent place gets denied, audited, and fed back into a subsequent perception prompt, end to end.
+
+### K3i — dynamic behavior + spatial preferences migrated (K3 complete)
+
+- **`gaworld/behavior/plugin.py`** (`DynamicBehaviorPlugin`) — interrupt/thought computation rides the new **`interrupts.compose`** filter. The engines return `{}` for "no change" (never `None`), so `None` flowing out of the filter means no producer ran — the interrupts stage then falls back to the legacy spontaneity path, exactly matching the old `dynamic_behavior.enabled` if/else. Third-party interrupt producers can pre-empt at higher priority. The `dynamic_result` *application* (activity change, mood delta, schedule insertion, P3 replanning) deliberately stays in the adjust_activity stage as the generic contract between interrupt producers and the pipeline; after application the stage emits the new **`interrupt.applied`** observe event.
+- **`gaworld/world/plugin.py`** (`SpatialPreferencesPlugin`) — the P4 location-aversion layer: stateful load on `agents.built`, recency decay on `on_day_start`, aversion-aware redirection on the new **`location.resolve`** filter (move stage), anomaly-experience recording on `interrupt.applied` (with the pre-migration replan-gate nesting preserved as a documented parity quirk).
+- With this, **all eight built-in subsystems ride the plugin surface**; `run_simulation` retains only the pipeline scaffolding, the legacy spontaneity fallback, and generic contract application.
+
+### K3h — real-work task system migrated to a plugin
+
+- **`gaworld/work/plugin.py`** (`RealWorkPlugin`) — owns the `RealWorkRuntime` lifecycle: create/start on `on_simulation_start`, job-market day tick on `on_day_start`, and dispatch/absorption on the new **`action.outcome`** filter event (fires in the select_action stage after the outcome line is built). Disabled runs store a `None` runtime and every hook no-ops, as before. Small improvement over the inline code: `teardown` now actually stops the worker pool (it previously leaked past simulation end).
+
+### K3g — local physical perception migrated to a plugin
+
+- **`gaworld/world/plugin.py`** (`LocalPhysicalPlugin`) — the P0 physical-perception layer rides the plugin surface: per-tick map refresh (sim time + occupancy) on `on_time_tick`, and the per-agent snapshot on `perception.compose` at priority 30 (stores `agent["_local_physical"]` for the interrupt engine and contributes the "身边的物理环境：…" line ahead of the life-event/intervention contributions — text order preserved exactly). `env_system` joins `city_map` in `sim_ctx.extras`. The spatial-preference layer (P4) deliberately stays inline: it is entangled with dynamic-behavior interrupt results and migrates together with that plugin.
+
+### K3f — economy formalized as a plugin
+
+- **`gaworld/economy/plugin.py`** (`EconomyPlugin`) — the six `gaworld.economy.finance` lifecycle handlers move from `CONFIG["extensions"]["hooks"]` declarations (`gaworld/settings/integrations.py`, now an empty user-extension map) to first-class builtin plugin assembly. Same handlers, same events, same self-gating and `extension_state["economy_module"]` runtime; ordering parity preserved (intervention post-step and interests day-end priorities still run first). The `test_extension_hooks_resolve` guard was re-expressed for the new wiring and now also verifies every builtin plugin sets up cleanly.
+
+### K3e — life events migrated to a plugin (first event *producer*)
+
+- **`gaworld/events/plugin.py`** (`LifeEventsPlugin`) — the life-event queue and its five consumers now ride dispatch points: ghost injection on `on_day_start` (human_realism-gated, same 0.18 dice), tick drain + env-timeline mirror on `on_time_tick` (priority 10), per-agent contribution/recording/`step["life_events"]` on the new **`env.events.compose`** collect event, the "人生事件：…" context line on `perception.compose` (priority 20), state deltas on the new **`state.effects`** observe event (emitted in the update_state stage before social influence), and the visualizer frame merge on the new **`env.events.tick`** collect event. Five inline sites and four helper functions removed from `run_simulation`.
+- Behavior note: the perception context line now renders after the local-physical snippet instead of before it (same reordering class as the K3a intervention note).
+
+### K3d — interest/skill-growth lifecycle migrated to a plugin
+
+- **`gaworld/interests_plugin.py`** (`InterestsPlugin`) — owns the growth-profile lifecycle: bootstrap on `agents.built` (disabled runs still seed `{}` for schema parity), per-episode progress on the new **`episode.compose`** observe event (the memorize stage pre-sets empty `growth_matches`/`growth_progress` defaults, so the episode schema survives without the plugin), and day-end decay/evolution/🌱 line on `on_day_end` at priority 10 (ahead of the economy's config-registered settlement, matching the old inline order). Three inline blocks removed from `run_simulation`.
+- Interim coupling documented in the plugin docstring: the profile stays at `agent["growth_profile"]` because two read-side consumers are still inline (schedule-prompt context via `format_growth_context`, location/action matching via `match_growth_items`); the key moves to `agent["ext"]["interests"]` when those migrate. Wiring pinned by `tests/test_interests_plugin.py`.
+
+### K3c — Skill library migrated to a plugin
+
+- **`gaworld/skills/plugin.py`** (`SkillsPlugin`) — skill injection moved from a hard-wired call inside `_cognition.perception` to the new `perception.sections` collect event (dispatched in the perceive stage; contributions render at the exact prompt position the old suffix occupied, so prompt structure is unchanged). Skill distillation moved from `memory/lifecycle.py` to the new `memory.consolidate` observe event emitted per agent at the day boundary, honoring the same `CONFIG["memory"]["skill_consolidation"]` cadence. `perception()` gained an `extra_sections` parameter; `_agent_skill_block` is gone and `gaworld/sim/_cognition.py` no longer imports the skills domain. Wiring pinned by `tests/test_skills_plugin.py` (inject / suppress / cadence).
+
+### K3a — intervention subsystem migrated to a plugin
+
+- **`gaworld/policy/plugin.py`** (`InterventionPlugin`) + **`gaworld/plugins/__init__.py`** (`builtin_plugins()`, the one domain-side aggregation point). The inline feed/metrics/init code is removed from `run_simulation`; the plugin rides `agents.built` (new pre-snapshot observe event), `perception.compose`, and `on_agent_post_step`. Metric state keys are still seeded when the feature is disabled (schema parity). `tests/test_intervention_plugin.py` pins the wiring both ways.
+- **Behavior changes (intervention-enabled runs only)**: the feed snippet now *appends* to the step env context instead of rebuilding it from `env_context` — the inline version silently dropped the life-event context whenever a feed existed (latent bug); snippet ordering moved after the local-physical line; per-step metrics update happens at `on_agent_post_step` (after the step log/visualizer snapshot instead of before), so those auxiliary artifacts show metrics one step stale. Simulation dynamics are otherwise unchanged; `intervention_metrics.csv` schema is identical.
+
+## [Unreleased] — 2026-07-04 — Personal Growth v2 (learning dynamics + interest evolution)
+
+Multi-disciplinary redesign of the interest/skill-growth system (design doc: `docs/proposals/2026-07-04-personal-growth-v2.md`). All new mechanics are pure rules — no extra LLM calls; the persisted `agent_N_growth.json` schema is unchanged and backward compatible.
+
+### Added
+
+- **`gaworld/interests.py`** — learning dynamics: power-law diminishing returns (gains shrink with mastery), streak momentum (unbroken practice compounds), and milestone events (入门/熟练/精通 threshold crossings surfaced in `episode["growth_progress"]["milestones"]`). New `growth_phase()` derives the Hidi & Renninger four-phase label (触发期/维持期/浮现期/成熟期) from level + practice volume; `format_growth_context` now shows it, so prompt self-image evolves with development.
+- **`gaworld/interests.py::apply_daily_growth_decay`** — day-end forgetting tick: unpracticed items lose level after a grace period, retention rises with accumulated practice (consolidated skills barely decay), decay is phase-aware (triggered ×1.5, well-developed ×0.5), idle gaps break streaks.
+- **`gaworld/interests.py::evolve_growth_profile`** — day-end interest-set turnover: stale triggered-phase items are retired (never below 1 item); new interests are adopted by social contagion from the day's social partners (bounded by `adopt_chance`, `max_new_per_day`, `max_items`; deterministic via injectable rng).
+- **`generative_city_sim.py`** — day-end growth tick wired into PHASE 3c: gathers partner growth focus from the day's episodes, runs decay + evolution, persists when stateful, prints a 🌱 change line.
+- **`gaworld/settings/behavior.py`** — `interests.decay` and `interests.evolution` config blocks (both enabled by default, individually switchable).
+- **`tests/test_interest_growth_dynamics.py`** — 18 cases: diminishing returns, streak momentum, milestones, decay (grace/retention/floor/streak-break/disabled), phase boundaries, evolution (retire/keep-last/adopt/chance/dedupe/caps/disabled).
+
+### Fixed
+
+- **`gaworld/sim/_summary.py::_growth_diff`** — read the actual `GrowthProfile` schema (`items` / float `level` / `total_minutes`) instead of the never-existing `interests` / int level / `minutes`, so end-of-run growth diffs are no longer always empty.
+
+### Docs
+
+- **`README.md` / `README.zh-CN.md`** — feature bullet, `interests` config note, and an expanded **Interest And Skill Growth / 兴趣爱好与技能成长系统** section covering the v2 dynamics, bilingual.
+- **`docs/TUTORIAL.v2.md`** — §5.5 expanded with the v2 mechanics and their config keys; config-table row updated.
+- **`docs/FEATURES.md`** — feature-table row updated with the day-end mechanics and config pointers.
+- **`docs/PROJECT_STRUCTURE.md`** — `gaworld/interests.py` entry now mentions decay and interest-set evolution.
+- **`docs/proposals/2026-07-04-personal-growth-v2.md`** — the design document (four-perspective expert review, mechanism specs, non-goals, validation).
+
+## [Unreleased] — 2026-07-04 — Agent Studio (single-agent builder/inspector)
+
+A visual builder/inspector for a single agent, integrated into the local dashboard. Seven steps bound to GAWorld's real seed model — identity + the nine `[0,1]` state variables, skills, tiered memory, Dunbar social circles, behavior dials, and review/deploy — with read/write back to the state CSV and profile Markdown.
+
+### Added
+
+- **`site/dashboard/studio.html` / `studio.css` / `studio.js`** — the Agent Studio front-end: a 7-step wizard (Identity, State & Personality, Abilities & Skills, Memory, Social & Relationships, Behavior & Goals, Review & Deploy) with an editable state radar, dependency-free SVG visualizations, an optional LLM interview hook, and a create-new-agent flow. Reachable from the console toolbar (**Agent Studio ↗**) or directly at `/site/dashboard/studio.html`.
+- **`gaworld/apps/dashboard_server.py`** — Studio backend endpoints: `GET /api/agents/{id}/state`, `GET /api/agents/{id}/detail` (aggregate state + profile + memory counts + finance + social + skills), `GET /api/skills`, `POST /api/agents/{id}/state` (write to the state CSV), `POST /api/agents` (create agent). State writes are mirrored into the profile Markdown's `**核心状态变量**` / `**研究增强变量初始化**` lines so the CSV and MD don't drift; creation reuses the imported-agent format and preserves the CSV BOM. Social/finance readers pull from `output/memory` and `output/economy` and degrade gracefully before a run.
+- **`site/dashboard/index.html`** — console toolbar link to the Studio.
+- **`tests/test_dashboard_studio.py`** — 8 unittest cases: state round-trip + profile sync, identity edit, `[0,1]` clamping, create-agent (CSV row + profile block + BOM preserved), and social-snapshot parsing.
+
+### Docs
+
+- **`README.md` / `README.zh-CN.md`** — feature bullet, structure note, and a new **Agent Studio** subsection (7 steps, write-back rules, API table), bilingual.
+- **`docs/FEATURES.md`** — feature-table row with the entry URL.
+- **`docs/TUTORIAL.v2.md`** — new §12.1 Agent Studio (steps × data sources, write-back rules, API, tests) plus TOC anchor.
+- **`docs/PROJECT_STRUCTURE.md`** / **`AGENTS.md`** — `site/dashboard/` studio note and `site/` tree entry.
+
 ## [Unreleased] — 2026-05-22 — Robustness Audit (S4)
 
 Static-analysis sweep over the post-S3 codebase. Confirmed that the LLM provider retry framework, worker-pool fault chain, and per-adapter LLM guards were already production-ready; identified and closed 5 surviving silent-failure spots.

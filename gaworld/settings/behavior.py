@@ -25,13 +25,36 @@ def news_settings() -> dict[str, Any]:
                 "max_seeks_per_day": 3,
                 "preferred_sites_per_agent": 6,
                 "prefer_source_visit_ratio": 0.55,
-                "engines": ["baidu", "google", "bing"],
+                "engines": ["x", "baidu", "google", "bing"],
                 "max_results": 4,
                 "timeout": 8,
                 "content_timeout": 8,
                 "content_max_chars": 2000,
                 "memory_excerpt_chars": 700,
                 "user_agent": "GAWorld/1.0",
+                # Hosted X API MCP server, App-only Bearer route (read-only;
+                # see https://docs.x.com/tools/mcp). The "x" engine is skipped
+                # silently when the token env var is unset, and falls through
+                # to the web engines on throttle / rate limit.
+                "x_mcp": {
+                    "enabled": True,
+                    "url": "https://api.x.com/mcp",
+                    "bearer_token_env": "X_BEARER_TOKEN",
+                    "max_results": 5,
+                    "timeout": 8,
+                    "min_interval_seconds": 5.0,
+                    "cooldown_on_429_seconds": 900,
+                    "cache_ttl_seconds": 900,
+                },
+                "contextual_keywords": True,
+                "contextual_max_keywords": 3,
+                "event_driven": {
+                    "enabled": True,
+                    "max_extra_seeks_per_day": 2,
+                    "stress_threshold": 0.6,
+                    "curiosity_threshold": 0.6,
+                    "trigger_chance_on_event": 0.5,
+                },
             },
         },
     }
@@ -86,6 +109,22 @@ def human_realism_settings() -> dict[str, Any]:
             # Null means use the current timeline step length.
             "progress_minutes_per_step": None,
             "cache_path": "output/memory/growth_profiles.json",
+            # Day-end forgetting: unpracticed items lose level after a
+            # grace period; accumulated practice raises retention.
+            "decay": {
+                "enabled": True,
+                "grace_days": 2,
+                "daily_rate": 0.012,
+                "floor": 0.05,
+            },
+            # Day-end interest-set turnover: retire stale triggered-phase
+            # items, adopt new ones from social partners (contagion).
+            "evolution": {
+                "enabled": True,
+                "retire_after_days": 14,
+                "adopt_chance": 0.35,
+                "max_new_per_day": 1,
+            },
         },
         # Human realism (experience accumulation + habit/need dynamics)
         "human_realism": {
