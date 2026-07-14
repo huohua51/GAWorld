@@ -23,39 +23,39 @@
 
     <section class="toolbar panel">
       <label>
-        <span>Agent IDs</span>
-        <input id="agentIdsInput" placeholder="1,2,3" />
+        <span data-i18n="agent.ids">Agent IDs</span>
+        <input id="agentIdsInput" data-i18n-placeholder="agent.ids_placeholder" placeholder="1,2,3" />
       </label>
       <label>
-        <span>仿真天数</span>
+        <span data-i18n="sim.days">仿真天数</span>
         <input id="simDaysInput" type="number" min="1" />
       </label>
       <label>
-        <span>每天秒数</span>
+        <span data-i18n="sim.seconds_per_day">每天秒数</span>
         <input id="secondsPerDayInput" type="number" min="1" />
       </label>
       <label>
-        <span>时间步长</span>
+        <span data-i18n="sim.time_step">时间步长</span>
         <input id="timeStepInput" placeholder="None / 60 / 2 hours" />
       </label>
       <label>
-        <span>默认 LLM</span>
+        <span data-i18n="sim.default_llm">默认 LLM</span>
         <select id="defaultProviderSelect"></select>
       </label>
       <label>
-        <span>日程 LLM</span>
+        <span data-i18n="sim.schedule_llm">日程 LLM</span>
         <select id="scheduleProviderSelect"></select>
       </label>
       <label class="checkline">
         <input id="realtimeInput" type="checkbox" />
-        <span>实时等待</span>
+        <span data-i18n="sim.realtime">实时等待</span>
       </label>
       <div class="button-row">
-        <a href="/site/dashboard/studio.html" class="button">Agent Studio ↗</a>
-        <button id="saveConfigBtn" class="button">保存配置</button>
-        <button id="runBtn" class="button primary">运行仿真</button>
-        <button id="resetRunBtn" class="button">重置并运行</button>
-        <button id="stopBtn" class="button danger">停止</button>
+        <a href="/site/dashboard/studio.html" class="button" data-i18n="btn.agent_studio">Agent Studio ↗</a>
+        <button id="saveConfigBtn" class="button" data-i18n="btn.save_config">保存配置</button>
+        <button id="runBtn" class="button primary" data-i18n="btn.run_simulation">运行仿真</button>
+        <button id="resetRunBtn" class="button" data-i18n="btn.reset_and_run">重置并运行</button>
+        <button id="stopBtn" class="button danger" data-i18n="btn.stop">停止</button>
       </div>
     </section>
 
@@ -63,10 +63,10 @@
       <section class="panel map-panel">
         <div class="section-head">
           <div>
-            <p class="kicker">Live Trace</p>
-            <h2 id="frameTitle">未加载轨迹</h2>
+            <p class="kicker" data-i18n="trace.live">Live Trace</p>
+            <h2 id="frameTitle" data-i18n="trace.not_loaded">未加载轨迹</h2>
           </div>
-          <button id="reloadTraceBtn" class="button small">刷新轨迹</button>
+          <button id="reloadTraceBtn" class="button small" data-i18n="btn.reload_trace">刷新轨迹</button>
         </div>
         <canvas id="mapCanvas" width="1440" height="900" aria-label="simulation map"></canvas>
         <div class="timeline">
@@ -75,9 +75,9 @@
             <input id="followLatestInput" type="checkbox" checked />
             <span>跟随最新</span>
           </label>
-          <span id="timelineLabel">暂无帧</span>
+          <span id="timelineLabel" data-i18n="trace.no_frames">暂无帧</span>
         </div>
-        <pre id="latestFrameBox" class="codebox">暂无当前帧。</pre>
+        <pre id="latestFrameBox" class="codebox" data-i18n="trace.no_current_frame">暂无当前帧。</pre>
       </section>
 
       <aside class="right-stack">
@@ -88,8 +88,8 @@
                 <img id="selectedAgentAvatar" class="dashboard-avatar" alt="" />
               </div>
               <div>
-                <p class="kicker">Agent Profile</p>
-                <h2>人物设定</h2>
+                <p class="kicker" data-i18n="agent.profile">Agent Profile</p>
+                <h2 data-i18n="agent.profile_title">人物设定</h2>
               </div>
             </div>
             <select id="agentSelect"></select>
@@ -97,70 +97,95 @@
           <textarea id="profileEditor" class="profile-editor" spellcheck="false"></textarea>
           <div class="button-row end">
             <button id="toggleSimBtn" class="button">加入仿真</button>
-            <button id="saveProfileBtn" class="button">保存 Profile</button>
-            <button id="refreshAgentBtn" class="button">刷新</button>
+            <button id="saveProfileBtn" class="button" data-i18n="btn.save_profile">保存 Profile</button>
+            <button id="refreshAgentBtn" class="button" data-i18n="btn.refresh">刷新</button>
           </div>
         </section>
 
         <section class="panel">
           <div class="section-head">
             <div>
-              <p class="kicker">Interview</p>
-              <h2>采访</h2>
+              <p class="kicker" data-i18n="interview.title">Interview</p>
+              <h2 data-i18n="interview.title">采访</h2>
             </div>
           </div>
-          <textarea id="interviewContext" class="compact-editor" placeholder="可选背景上下文"></textarea>
-          <textarea id="interviewQuestions" class="compact-editor" placeholder="每行一个问题"></textarea>
+          <textarea id="interviewContext" class="compact-editor" data-i18n-placeholder="interview.context_placeholder" placeholder="可选背景上下文"></textarea>
+          <textarea id="interviewQuestions" class="compact-editor" data-i18n-placeholder="interview.questions_placeholder" placeholder="每行一个问题"></textarea>
           <div class="button-row end">
-            <button id="interviewBtn" class="button primary">开始采访</button>
+            <button id="interviewBtn" class="button primary" data-i18n="btn.start_interview">开始采访</button>
           </div>
-          <pre id="interviewOutput" class="codebox">采访结果会显示在这里。</pre>
+          <pre id="interviewOutput" class="codebox" data-i18n="interview.title">采访结果会显示在这里。</pre>
         </section>
 
         <section class="panel">
           <div class="section-head">
             <div>
-              <p class="kicker">Life Event</p>
-              <h2>人生事件</h2>
+              <p class="kicker" data-i18n="life_event.title">Life Event</p>
+              <h2 data-i18n="life_event.title">人生事件</h2>
             </div>
-            <button id="reloadLifeEventsBtn" class="button small">刷新</button>
+            <button id="reloadLifeEventsBtn" class="button small" data-i18n="btn.reload_life_events">刷新</button>
           </div>
           <div class="event-grid">
             <label>
-              <span>事件模板</span>
+              <span data-i18n="life_event.template">事件模板</span>
               <select id="lifeEventTemplateSelect"></select>
             </label>
             <label>
-              <span>目标 Agent</span>
-              <input id="lifeEventAgentInput" placeholder="留空=所有，或 4,5" />
+              <span data-i18n="life_event.target_agent">目标 Agent</span>
+              <input id="lifeEventAgentInput" data-i18n-placeholder="life_event.target_placeholder" placeholder="留空=所有，或 4,5" />
             </label>
             <label>
-              <span>触发方式</span>
+              <span data-i18n="life_event.trigger_mode">触发方式</span>
               <select id="lifeEventModeSelect">
-                <option value="immediate">下一时间步</option>
-                <option value="scheduled">指定 Day/Time</option>
+                <option value="immediate" data-i18n="life_event.immediate">下一时间步</option>
+                <option value="scheduled" data-i18n="life_event.scheduled">指定 Day/Time</option>
               </select>
             </label>
             <label>
-              <span>Day</span>
-              <input id="lifeEventDayInput" type="number" min="1" placeholder="当前 Day" />
+              <span data-i18n="life_event.day">Day</span>
+              <input id="lifeEventDayInput" type="number" min="1" data-i18n-placeholder="life_event.day_placeholder" placeholder="当前 Day" />
             </label>
             <label>
-              <span>Time</span>
+              <span data-i18n="life_event.time">Time</span>
               <input id="lifeEventTimeInput" placeholder="HH:MM" />
             </label>
             <label>
-              <span>强度</span>
+              <span data-i18n="life_event.severity">强度</span>
               <input id="lifeEventSeverityInput" type="number" min="0" max="1" step="0.05" value="0.7" />
             </label>
           </div>
-          <input id="lifeEventTitleInput" class="event-title-input" placeholder="事件标题（可覆盖模板）" />
-          <textarea id="lifeEventDescriptionInput" class="compact-editor" placeholder="事件描述（可覆盖模板）"></textarea>
+          <input id="lifeEventTitleInput" class="event-title-input" data-i18n-placeholder="life_event.title_placeholder" placeholder="事件标题（可覆盖模板）" />
+          <textarea id="lifeEventDescriptionInput" class="compact-editor" data-i18n-placeholder="life_event.description_placeholder" placeholder="事件描述（可覆盖模板）"></textarea>
           <div class="button-row end">
-            <button id="useSelectedAgentBtn" class="button">使用当前人物</button>
-            <button id="addLifeEventBtn" class="button primary">添加事件</button>
+            <button id="useSelectedAgentBtn" class="button" data-i18n="btn.use_selected_agent">使用当前人物</button>
+            <button id="addLifeEventBtn" class="button primary" data-i18n="btn.add_event">添加事件</button>
           </div>
-          <pre id="lifeEventListBox" class="codebox event-list">暂无人生事件。</pre>
+          <pre id="lifeEventListBox" class="codebox event-list" data-i18n="life_event.none">暂无人生事件。</pre>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="kicker" data-i18n="fos_export.title">FOS Export</p>
+              <h2 data-i18n="fos_export.title">FOS AI Scientist Export</h2>
+            </div>
+            <button id="reloadFosBtn" class="button small" data-i18n="btn.refresh">Refresh</button>
+          </div>
+          <div class="fos-options">
+            <label>
+              <span data-i18n="fos_export.hint_label">Analyst Hint</span>
+              <input id="fosHintInput" data-i18n-placeholder="fos_export.hint_placeholder" placeholder="e.g. Look for social withdrawal" />
+            </label>
+            <label class="checkline">
+              <input id="fosEnglishCheckbox" type="checkbox" />
+              <span data-i18n="fos_export.english">English summary (translate Chinese output)</span>
+            </label>
+          </div>
+          <div class="button-row end">
+            <button id="fosExportBtn" class="button primary" data-i18n="fos_export.generate_btn">Generate FOS Prompt</button>
+            <button id="fosCopyBtn" class="button" data-i18n="fos_export.copy_btn">Copy to Clipboard</button>
+          </div>
+          <pre id="fosOutputBox" class="codebox fos-output" data-i18n="fos_export.no_output">Click &quot;Generate FOS Prompt&quot; after running a simulation.</pre>
         </section>
       </aside>
     </section>
@@ -169,32 +194,33 @@
       <section class="panel">
         <div class="section-head">
           <div>
-            <p class="kicker">Memory</p>
-            <h2>记忆与习惯</h2>
+            <p class="kicker" data-i18n="memory.title">Memory</p>
+            <h2 data-i18n="memory.title">记忆与习惯</h2>
           </div>
-          <button id="reloadMemoryBtn" class="button small">刷新记忆</button>
+          <button id="reloadMemoryBtn" class="button small" data-i18n="btn.reload_memory">刷新记忆</button>
         </div>
         <div class="memory-grid">
-          <article><h3>长期记忆</h3><pre id="memoryBox" class="codebox"></pre></article>
-          <article><h3>日程/习惯/意图</h3><pre id="stateMemoryBox" class="codebox"></pre></article>
-          <article><h3>近期 episode</h3><pre id="episodesBox" class="codebox"></pre></article>
-          <article><h3>Agent 日志</h3><pre id="agentLogBox" class="codebox"></pre></article>
+          <article><h3 data-i18n="memory.long_term">长期记忆</h3><pre id="memoryBox" class="codebox"></pre></article>
+          <article><h3 data-i18n="memory.schedule">日程/习惯/意图</h3><pre id="stateMemoryBox" class="codebox"></pre></article>
+          <article><h3 data-i18n="memory.recent_episodes">近期 episode</h3><pre id="episodesBox" class="codebox"></pre></article>
+          <article><h3 data-i18n="memory.agent_log">Agent 日志</h3><pre id="agentLogBox" class="codebox"></pre></article>
         </div>
       </section>
 
       <section class="panel">
         <div class="section-head">
           <div>
-            <p class="kicker">Run Log</p>
-            <h2>运行输出</h2>
+            <p class="kicker" data-i18n="run_log.title">Run Log</p>
+            <h2 data-i18n="run_log.title">运行输出</h2>
           </div>
-          <button id="reloadStatusBtn" class="button small">刷新状态</button>
+          <button id="reloadStatusBtn" class="button small" data-i18n="btn.reload_status">刷新状态</button>
         </div>
-        <pre id="runLogBox" class="codebox run-log">暂无运行日志。</pre>
+        <pre id="runLogBox" class="codebox run-log" data-i18n="run_log.no_log">暂无运行日志。</pre>
       </section>
     </section>
   </main>
   <div id="messageLine" class="toast" role="status"></div>
+  <script src="/site/dashboard/i18n.js"></script>
   <script src="/site/dashboard/app.js?v=3"></script>
 </body>
 </html>

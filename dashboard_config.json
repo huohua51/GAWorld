@@ -1,9 +1,9 @@
 {
   "llm": {
     "routing": {
-      "default": "minimax",
+      "default": "local_qwen4b",
       "tasks": {
-        "schedule": "minimax"
+        "schedule": "local_qwen4b"
       }
     }
   },

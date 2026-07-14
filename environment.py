@@ -13,6 +13,19 @@ def _clip(value, lo=0.0, hi=1.0):
     return max(lo, min(hi, float(value)))
 
 
+
+def _safe_float(value, default=0.0):
+    """Convert a value to float safely, handling lists, None, and type errors."""
+    if value is None:
+        return default
+    if isinstance(value, (list, tuple)):
+        return _safe_float(value[0], default) if value else default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class EnvironmentSystem:
     def __init__(self, config, llm_fn=None):
         config = config or {}
@@ -23,7 +36,7 @@ class EnvironmentSystem:
         )
 
         self.legacy_enabled = bool(legacy_cfg.get("enabled", True))
-        self.event_chance = float(legacy_cfg.get("event_chance", 0.5))
+        self.event_chance = _safe_float(legacy_cfg.get("event_chance", 0.5))
         self.max_events_per_tick = int(legacy_cfg.get("max_events_per_tick", 1))
         self.natural_events = list(legacy_cfg.get("natural_events", []))
         self.social_events = list(legacy_cfg.get("social_events", []))
@@ -49,7 +62,7 @@ class EnvironmentSystem:
         self._intraday_rules = {}
         self._recent_day_summaries = []
         self._weather_state = "clear"
-        self._market_index = float(self.external_cfg.get("economic", {}).get("market_index_base", 100.0))
+        self._market_index = _safe_float(self.external_cfg.get("economic", {}).get("market_index_base", 100.0))
 
     def _extract_json_object(self, text):
         if not text:
@@ -247,7 +260,7 @@ class EnvironmentSystem:
             return []
         events = []
         day_label = f"Day {day} 全天"
-        if self.rng.random() < float(cfg.get("daily_weather_chance", 0.95)):
+        if self.rng.random() < _safe_float(cfg.get("daily_weather_chance", 0.95)):
             weather_name = self._weighted_pick(cfg.get("weather_states", []), "多云")
             self._weather_state = weather_name
             desc = f"今日主要天气为{weather_name}，将影响出行与情绪。"
@@ -266,7 +279,7 @@ class EnvironmentSystem:
                     day=day,
                 )
             )
-        if self.rng.random() < float(cfg.get("extreme_chance", 0.08)):
+        if self.rng.random() < _safe_float(cfg.get("extreme_chance", 0.08)):
             extreme_pool = list(cfg.get("extreme_events", [])) or ["短时强降雨预警", "空气质量恶化预警", "局地雷暴大风预警"]
             extreme = self.rng.choice(extreme_pool)
             events.append(
@@ -297,12 +310,12 @@ class EnvironmentSystem:
             return []
         events = []
         day_label = f"Day {day} 全天"
-        vol = max(0.001, float(cfg.get("daily_market_volatility", 0.012)))
-        drift = float(cfg.get("daily_market_drift", 0.0005))
+        vol = max(0.001, _safe_float(cfg.get("daily_market_volatility", 0.012)))
+        drift = _safe_float(cfg.get("daily_market_drift", 0.0005))
         daily_ret = self.rng.gauss(drift, vol)
         self._market_index = max(40.0, self._market_index * (1.0 + daily_ret))
         pct = daily_ret * 100
-        if abs(pct) >= float(cfg.get("market_news_threshold_pct", 0.6)):
+        if abs(pct) >= _safe_float(cfg.get("market_news_threshold_pct", 0.6)):
             direction = "上涨" if pct > 0 else "下跌"
             sev = _clip(abs(pct) / 2.5, lo=0.2, hi=0.85)
             events.append(
@@ -317,7 +330,7 @@ class EnvironmentSystem:
                     day=day,
                 )
             )
-        if self.rng.random() < float(cfg.get("macro_event_chance", 0.12)):
+        if self.rng.random() < _safe_float(cfg.get("macro_event_chance", 0.12)):
             macro_pool = list(cfg.get("macro_events", [])) or [
                 "社会消费数据走弱",
                 "就业市场边际改善",
@@ -354,7 +367,7 @@ class EnvironmentSystem:
         )
         if not cfg.get("enabled", True):
             return []
-        if self.rng.random() >= float(cfg.get("daily_policy_chance", 0.10)):
+        if self.rng.random() >= _safe_float(cfg.get("daily_policy_chance", 0.10)):
             return []
         event_name = self.rng.choice(list(cfg.get("policy_events", [])) or ["政策沟通会议召开"])
         return [
@@ -385,7 +398,7 @@ class EnvironmentSystem:
         )
         if not cfg.get("enabled", True):
             return []
-        if self.rng.random() >= float(cfg.get("daily_tech_chance", 0.12)):
+        if self.rng.random() >= _safe_float(cfg.get("daily_tech_chance", 0.12)):
             return []
         event_name = self.rng.choice(list(cfg.get("tech_events", [])) or ["技术服务更新"])
         return [
@@ -454,7 +467,7 @@ class EnvironmentSystem:
             return []
         events = []
 
-        if self.rng.random() < float(cfg.get("natural_shock_chance", 0.06)):
+        if self.rng.random() < _safe_float(cfg.get("natural_shock_chance", 0.06)):
             pool = list(cfg.get("natural_shocks", [])) or ["突发短时降雨", "局地交通受天气影响放缓", "空气质量短时恶化"]
             name = self.rng.choice(pool)
             events.append(
@@ -470,7 +483,7 @@ class EnvironmentSystem:
                     time_str=time_str,
                 )
             )
-        if self.rng.random() < float(cfg.get("economic_shock_chance", 0.05)):
+        if self.rng.random() < _safe_float(cfg.get("economic_shock_chance", 0.05)):
             pool = list(cfg.get("economic_shocks", [])) or ["市场波动加剧", "大宗商品价格短时上行", "消费情绪短时走弱"]
             name = self.rng.choice(pool)
             events.append(
@@ -486,7 +499,7 @@ class EnvironmentSystem:
                     time_str=time_str,
                 )
             )
-        if self.rng.random() < float(cfg.get("political_shock_chance", 0.03)):
+        if self.rng.random() < _safe_float(cfg.get("political_shock_chance", 0.03)):
             pool = list(cfg.get("political_shocks", [])) or ["临时监管提示发布", "公共治理通告更新"]
             name = self.rng.choice(pool)
             events.append(
@@ -502,7 +515,7 @@ class EnvironmentSystem:
                     time_str=time_str,
                 )
             )
-        if self.rng.random() < float(cfg.get("technology_shock_chance", 0.04)):
+        if self.rng.random() < _safe_float(cfg.get("technology_shock_chance", 0.04)):
             pool = list(cfg.get("technology_shocks", [])) or ["平台服务异常波动", "数字工具新功能灰度上线"]
             name = self.rng.choice(pool)
             events.append(

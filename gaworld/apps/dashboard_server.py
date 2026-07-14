@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from gaworld.settings import CONFIG
 from gaworld.events.life import add_life_event, list_life_event_templates, list_life_events
+from gaworld.integrations.fos_prompt import generate_fos_prompt
 from gaworld.logging_setup import get_logger
 
 _LOG = get_logger("gaworld.dashboard")
@@ -797,6 +798,43 @@ def _add_life_event(payload):
     }
 
 
+def _resolve_output_dir(output_dir: str | None) -> str:
+    """Resolve the output directory path.
+
+    If ``output_dir`` is empty or None, default to ``output/`` under REPO_ROOT.
+    If it's a relative path, resolve it against REPO_ROOT.
+    """
+    if not output_dir:
+        return os.path.join(REPO_ROOT, "output")
+    p = Path(output_dir)
+    if p.is_absolute():
+        return str(p)
+    return os.path.join(REPO_ROOT, output_dir)
+
+
+def _fos_export(payload: dict) -> dict:
+    """Handle ``POST /api/fos-export``.
+
+    Reads simulation output from the provided (or default) output directory,
+    calls GAWorld's LLM for analysis, and returns a FOS-ready prompt.
+    """
+    raw_dir = payload.get("output_dir") or ""
+    hint = payload.get("hint") or None
+    english = bool(payload.get("english", False))
+
+    resolved = _resolve_output_dir(raw_dir)
+    result = generate_fos_prompt(
+        output_dir=Path(resolved),
+        hint=hint,
+        english=english,
+    )
+    return {
+        "prompt": result.get("prompt"),
+        "summary": result.get("summary"),
+        "error": result.get("error"),
+    }
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     server_version = "GAWorldDashboard/0.1"
 
@@ -880,6 +918,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_interview_agent(payload))
         if path == "/api/life-events":
             return self._json_response(_add_life_event(payload))
+        if path == "/api/fos-export":
+            return self._json_response(_fos_export(payload))
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def do_GET(self):
