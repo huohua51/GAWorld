@@ -5,17 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GAWorld Console</title>
   <meta name="description" content="GAWorld 本地仿真控制台" />
-  <link rel="stylesheet" href="/site/dashboard/styles.css" />
+  <link rel="stylesheet" href="/site/dashboard/styles.css?v=3" />
 </head>
 <body>
   <main class="shell">
-    <header class="masthead">
-      <div class="masthead-copy">
+    <header class="hero">
+      <div class="hero-copy">
         <p class="kicker">GAWorld Console</p>
         <h1>仿真控制台</h1>
-        <p>配置、人物、运行、采访与记忆观察集中在一个本地面板中。</p>
+        <p class="hero-sub">配置 · 人物 · 运行 · 采访 · 记忆 — 一站式本地仿真面板</p>
       </div>
-      <img src="/video/public/gaworld-graphical-abstract.png" alt="GAWorld abstract map" />
+      <div class="hero-status">
+        <span id="runStatusBadge" class="status-badge">读取状态</span>
+        <span id="traceStatus" class="hero-chip">等待轨迹数据</span>
+      </div>
     </header>
 
     <section class="toolbar panel">
@@ -54,12 +57,6 @@
         <button id="resetRunBtn" class="button">重置并运行</button>
         <button id="stopBtn" class="button danger">停止</button>
       </div>
-    </section>
-
-    <section class="status-line">
-      <span id="runStatusBadge" class="status-badge">读取状态</span>
-      <span id="traceStatus">等待轨迹数据</span>
-      <span id="messageLine"></span>
     </section>
 
     <section class="workspace">
@@ -197,6 +194,7 @@
       </section>
     </section>
   </main>
-  <script src="/site/dashboard/app.js"></script>
+  <div id="messageLine" class="toast" role="status"></div>
+  <script src="/site/dashboard/app.js?v=3"></script>
 </body>
 </html>

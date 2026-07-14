@@ -803,6 +803,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=REPO_ROOT, **kwargs)
 
+    def end_headers(self):
+        # The dashboard JS/CSS and trace JSON change between runs; without
+        # this, browsers serve stale assets from memory cache indefinitely.
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def _json_response(self, payload, status=200):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)

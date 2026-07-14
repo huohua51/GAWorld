@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import UTC, datetime
 
 from gaworld.io.avatar import ensure_agent_avatar
@@ -124,6 +125,7 @@ class SimulationVisualizer:
     def _write_trace(self):
         self._refresh_meta()
         _atomic_write_json(self.trace_path, self.trace)
+        self._last_trace_flush = time.monotonic()
 
     def _write_latest_frame(self):
         self._refresh_meta()
@@ -151,7 +153,11 @@ class SimulationVisualizer:
         }
         self.trace["frames"].append(frame)
         self._write_latest_frame()
-        if self.flush_every_frames and len(self.trace["frames"]) % self.flush_every_frames == 0:
+        # Flush the full trace on the frame cadence OR every few wall-clock
+        # seconds, so live dashboards (and killed runs) still see frames.
+        due_by_count = self.flush_every_frames and len(self.trace["frames"]) % self.flush_every_frames == 0
+        due_by_time = time.monotonic() - getattr(self, "_last_trace_flush", 0.0) >= 2.0
+        if due_by_count or due_by_time:
             self._write_trace()
 
     def finalize(self):

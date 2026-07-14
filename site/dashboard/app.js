@@ -11,6 +11,7 @@ const state = {
   liveFrames: new Map(),
   frameIndex: 0,
   follow: true,
+  running: false,
   pollTimer: null,
   avatarCache: new Map(),
 };
@@ -157,14 +158,33 @@ async function api(path, options = {}) {
 let messageTimer = null;
 function message(text, tone = "") {
   els.messageLine.textContent = text || "";
-  els.messageLine.className = tone;
+  els.messageLine.className = `toast${text ? " show" : ""}${tone ? ` ${tone}` : ""}`;
   if (messageTimer) window.clearTimeout(messageTimer);
   if (text) {
     messageTimer = window.setTimeout(() => {
-      els.messageLine.textContent = "";
-      els.messageLine.className = "";
+      els.messageLine.className = "toast";
     }, tone === "error" ? 10000 : 4000);
   }
+}
+
+// Enable/disable controls according to whether a simulation is running:
+// run buttons and run-config inputs lock while running, stop unlocks.
+function syncRunButtons() {
+  const running = Boolean(state.running);
+  els.runBtn.disabled = running;
+  els.resetRunBtn.disabled = running;
+  els.stopBtn.disabled = !running;
+  [
+    els.agentIdsInput,
+    els.simDaysInput,
+    els.secondsPerDayInput,
+    els.timeStepInput,
+    els.defaultProviderSelect,
+    els.scheduleProviderSelect,
+    els.realtimeInput,
+  ].forEach((el) => { el.disabled = running; });
+  if (els.toggleSimBtn) els.toggleSimBtn.disabled = running;
+  document.body.classList.toggle("is-running", running);
 }
 
 // Wrap an async click handler: disable the button and show a spinner while
@@ -181,6 +201,9 @@ function withBusy(btn, fn) {
     } finally {
       btn.disabled = false;
       btn.classList.remove("busy");
+      // Re-apply run-state locking in case this button is one of the
+      // run controls (e.g. 停止 must stay disabled once nothing runs).
+      syncRunButtons();
     }
   };
 }
@@ -268,7 +291,8 @@ function refreshAgentOptionLabels() {
 function updateToggleSimBtn() {
   if (!els.toggleSimBtn) return;
   const inSim = configuredIdSet().has(Number(state.selectedAgentId));
-  els.toggleSimBtn.textContent = inSim ? "移出仿真" : "加入仿真";
+  els.toggleSimBtn.textContent = inSim ? "✓ 仿真中 · 点击移出" : "加入仿真";
+  els.toggleSimBtn.classList.toggle("primary", inSim);
 }
 
 function toggleSelectedAgentInSim() {
@@ -426,6 +450,8 @@ async function stopSimulation() {
 
 async function refreshStatus() {
   const status = await api("/api/run/status");
+  state.running = Boolean(status.running);
+  syncRunButtons();
   els.runStatusBadge.textContent = status.running ? "运行中" : status.returncode == null ? "未运行" : `已结束 ${status.returncode}`;
   els.runStatusBadge.className = `status-badge ${status.running ? "running" : status.returncode === 0 ? "done" : status.returncode ? "error" : ""}`;
   setLogText(els.runLogBox, status.log_tail || "暂无运行日志。");
