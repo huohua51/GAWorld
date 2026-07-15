@@ -41,6 +41,8 @@ from gaworld.world.city_map import (
     distance_between as city_distance_between,
     load_city_map as load_structured_city_map,
     load_city_map_text as load_structured_city_map_text,
+    load_real_city_map as load_real_structured_city_map,
+    real_city_map_text as real_structured_city_map_text,
     node_by_name as city_node_by_name,
     travel_plan as build_travel_plan,
     nearest_by_category,
@@ -400,6 +402,8 @@ CSV_PATH = CONFIG["csv_path"]
 MD_PATH = CONFIG["md_path"]
 STATEFUL = CONFIG["stateful"]
 MAP_PATH = CONFIG.get("map_path", "data/citymap.md")
+MAP_MODE = str(CONFIG.get("map_mode", "virtual")).lower()
+REAL_MAP_PATH = CONFIG.get("real_map_path", "data/hangzhou_real.geojson")
 PRINT_AGENT_PROFILE = CONFIG.get("print_agent_profile", False)
 BACKGROUND = CONFIG.get("background", "")
 MEMORY_MODEL_VERSION = int(CONFIG.get("memory_model_version", 1))
@@ -846,9 +850,19 @@ def build_social_network(agents, avg_degree=6, p_cross=0.15):
 # Map & Location
 # =========================================================
 def load_city_map(map_path):
+    """Load the world map for the configured mode.
+
+    ``map_mode="real"`` builds the map from the real Hangzhou OSM bundle
+    (``real_map_path``); otherwise the procedural grid map from ``map_path``.
+    All call sites route through here, so switching modes is config-only."""
+    if MAP_MODE == "real":
+        return load_real_structured_city_map(REAL_MAP_PATH)
     return load_structured_city_map(map_path)
 
 def load_city_map_text(map_path):
+    """Human-readable map context for prompts, matching the active mode."""
+    if MAP_MODE == "real":
+        return real_structured_city_map_text(load_city_map(map_path))
     return load_structured_city_map_text(map_path)
 
 def _all_locations(city_map):

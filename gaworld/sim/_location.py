@@ -28,6 +28,8 @@ from typing import Any
 from gaworld.world.city_map import (
     all_locations as city_all_locations,
     job_to_workplace_categories,
+    map_center_name,
+    node_by_name,
     resolve_best_location,
     travel_plan as build_travel_plan,
 )
@@ -43,6 +45,17 @@ def _pick_first_available(candidates: list[str], location_set: set[str]) -> str 
         if c in location_set:
             return c
     return None
+
+
+def _central_origin(city_map: Any, preferred: str = "Central Block") -> str:
+    """A valid central origin node for spatial inference.
+
+    Prefers the virtual map's ``Central Block``; on a real map (where that name
+    is absent) falls back to the node nearest the geometric centre so home/work
+    inference stays anchored instead of degenerating to a random node."""
+    if node_by_name(city_map, preferred) is not None:
+        return preferred
+    return map_center_name(city_map) or preferred
 
 
 def _infer_workplace(
@@ -76,7 +89,7 @@ def _infer_workplace(
         categories = ["commerce", "industry"]
 
     # Search from home or a central location
-    origin = home_node or "Central Block"
+    origin = home_node or _central_origin(city_map)
     candidates = resolve_best_location(
         city_map, origin, categories, top_k=3, max_radius_km=20.0
     )
@@ -103,7 +116,7 @@ def _infer_home(agent: dict[str, Any], city_map: Any) -> str:
     """
     location_set = set(city_all_locations(city_map))
     residential = resolve_best_location(
-        city_map, "Central Block", ["residential"], top_k=10, max_radius_km=30.0
+        city_map, _central_origin(city_map), ["residential"], top_k=10, max_radius_km=30.0
     )
     if residential:
         # Introduce mild randomness so not all agents live in the same block

@@ -991,6 +991,26 @@ def node_by_name(city_map, name):
     return None
 
 
+def map_center_name(city_map):
+    """Return the name of the node nearest the map's geometric centre.
+
+    A map-agnostic origin fallback for inference that would otherwise anchor on
+    a hardcoded landmark (e.g. "Central Block") — which never exists on a real
+    map.  Returns None only for an empty map."""
+    nodes = city_map.get("nodes", {})
+    if not nodes:
+        return None
+    bounds = city_map.get("bounds") or _compute_bounds(nodes)
+    cx = (float(bounds["min_x"]) + float(bounds["max_x"])) / 2.0
+    cy = (float(bounds["min_y"]) + float(bounds["max_y"])) / 2.0
+    best_name, best_d = None, float("inf")
+    for node in nodes.values():
+        d = (float(node["grid_x"]) - cx) ** 2 + (float(node["grid_y"]) - cy) ** 2
+        if d < best_d:
+            best_d, best_name = d, node["name"]
+    return best_name
+
+
 def distance_between(city_map, origin, target):
     source = node_by_name(city_map, origin)
     dest = node_by_name(city_map, target)
@@ -1841,3 +1861,250 @@ def load_city_map_cached(map_path, cache_path=None):
     except OSError:
         pass
     return city_map
+
+
+# ===================================================================
+# REAL MAP MODE (OpenStreetMap-derived, grounded on real geography)
+# ===================================================================
+#
+# The virtual map above lays nodes on a synthetic grid and *projects* them onto
+# fake lat/lng around Hangzhou's centre.  The real-map loader does the inverse:
+# it takes real POIs / metro / river with true lat/lng (an offline OSM bundle,
+# see ``scripts/dev/fetch_hangzhou_osm.py``) and materialises the SAME
+# ``city_map`` structure — so routing, distance, transport, spatial queries and
+# the visualizer all work unchanged, but on true geography.
+
+# Chinese labels for the category summary surfaced to LLM prompts.
+CATEGORY_LABEL_ZH = {
+    "residential": "居住区", "commerce": "商业区", "education": "教育区",
+    "medical": "医疗区", "industry": "产业区", "government": "行政区",
+    "leisure": "休闲区", "transit": "交通枢纽", "mixed": "综合区",
+}
+
+
+def _lnglat_to_grid(lng, lat):
+    """Inverse of the grid→lat/lng projection: map real WGS84 to grid units.
+
+    The forward projection lives in ``_make_node_from_spec`` /
+    ``_grid_to_lnglat``; keeping this its exact inverse means a real node's
+    recomputed lat/lng round-trips back to (within rounding) its true value."""
+    x_km = (float(lng) - BASE_LNG) / LNG_PER_KM
+    y_km = (float(lat) - BASE_LAT) / LAT_PER_KM
+    return x_km / KM_PER_GRID_X, y_km / KM_PER_GRID_Y
+
+
+def _real_road_network(nodes):
+    """Synthesize a hierarchical road network over real node coordinates.
+
+    Real POIs are not themselves a routable street graph, so we build a
+    plausible one grounded on their true positions: an arterial backbone
+    (MST + a few loops) between the designated hubs, then each smaller place
+    linked to its nearest hub (collector) and nearest neighbour (short local
+    street).  Mirrors the virtual map's hub/place hierarchy."""
+    ids = list(nodes.keys())
+    hub_ids = [nid for nid in ids if nodes[nid].get("kind") == "hub"]
+    if len(hub_ids) < 2:
+        # No usable hub set — fall back to an MST over every node so the graph
+        # is at least fully connected and routable.
+        return _dedupe_edges(_connect_hubs(nodes, ids))
+    edges = list(_connect_hubs(nodes, hub_ids))
+    for nid in ids:
+        if nodes[nid].get("kind") == "hub":
+            continue
+        nearest_hub = min(hub_ids, key=lambda h: _euclidean_distance_km(nodes[nid], nodes[h]))
+        edges.append(_make_edge(nid, nearest_hub, "collector"))
+        others = [o for o in ids if o != nid]
+        if others:
+            neighbor = min(others, key=lambda o: _euclidean_distance_km(nodes[nid], nodes[o]))
+            if _euclidean_distance_km(nodes[nid], nodes[neighbor]) <= 1.2:
+                edges.append(_make_edge(nid, neighbor, "local"))
+    return _dedupe_edges(edges)
+
+
+def _real_river_from_lnglat(nodes, river_spec):
+    """Build a normalized river dict from real (lng, lat) points.
+
+    ``city_map`` stores ``river.path`` as 0..1 fractions of the map bounds (see
+    ``_river_polyline``); we convert real coordinates to grid units, then to
+    those fractions using the same bounds every other builder derives."""
+    if not river_spec or not river_spec.get("lnglat"):
+        return dict(DEFAULT_RIVER)
+    bounds = _compute_bounds(nodes)
+    span_x = max(1e-6, bounds["max_x"] - bounds["min_x"])
+    span_y = max(1e-6, bounds["max_y"] - bounds["min_y"])
+    path = []
+    for lng, lat in river_spec["lnglat"]:
+        gx, gy = _lnglat_to_grid(lng, lat)
+        path.append((
+            round((gx - bounds["min_x"]) / span_x, 4),
+            round((gy - bounds["min_y"]) / span_y, 4),
+        ))
+    width_km = river_spec.get("width_km")
+    if width_km:
+        width = float(width_km) / (span_y * KM_PER_GRID_Y)
+    else:
+        width = DEFAULT_RIVER["width"]
+    return {
+        "name": river_spec.get("name") or DEFAULT_RIVER["name"],
+        "path": path or list(DEFAULT_RIVER["path"]),
+        "width": round(max(0.02, min(0.2, width)), 4),
+    }
+
+
+def _build_real_city_map(node_specs, roads=None, metro_lines=None, river_spec=None):
+    """Assemble a full ``city_map`` from real-geo node/road/metro/river specs.
+
+    Each node spec carries real grid coords (from ``_lnglat_to_grid``) plus an
+    explicit category/kind; everything else reuses the virtual-map builders so
+    the output is byte-for-byte the same shape as ``_build_city_map``."""
+    nodes = {}
+    for spec in node_specs:
+        node = _make_node_from_spec(
+            spec.get("name"), spec,
+            default_kind=spec.get("kind", "place"),
+            default_district=spec.get("district", spec.get("name")),
+            default_x=spec.get("x", 0.0),
+            default_y=spec.get("y", 0.0),
+            default_parent=spec.get("parent", ""),
+        )
+        nodes.setdefault(node["id"], node)  # first occurrence wins (OSM dupes)
+
+    road_edges = _normalize_explicit_roads(nodes, roads or [])
+    if not road_edges:
+        road_edges = _real_road_network(nodes)
+    road_edges = _dedupe_edges(road_edges)
+
+    metro = _normalize_metro_lines(nodes, metro_lines or [])
+    river = _real_river_from_lnglat(nodes, river_spec)
+    bridges = _detect_bridges(nodes, road_edges, river)
+    tile_map = _build_tile_map(nodes, road_edges, river=river, metro_lines=metro, bridges=bridges)
+    city_map = {
+        "nodes": nodes,
+        "edges": road_edges,
+        "metro_lines": metro,
+        "river": river,
+        "bridges": bridges,
+        "tile_map": tile_map,
+        "bounds": _compute_bounds(nodes),
+        "scale": {"km_per_grid_x": KM_PER_GRID_X, "km_per_grid_y": KM_PER_GRID_Y},
+        "interiors": {},
+        "meta": {"mode": "real", "source": "OpenStreetMap"},
+    }
+    _attach_derived(city_map)
+    return city_map
+
+
+def _parse_real_bundle(data):
+    """Parse a real-map bundle into (node_specs, roads, metro_lines, river_spec).
+
+    Accepts a GeoJSON ``FeatureCollection`` (same schema as ``export_geojson``,
+    with a few extra properties) or a plain ``{"nodes", "metro_lines",
+    "river"}`` dict.  Point features become nodes; ``kind=metro/river/road``
+    LineStrings become the respective overlays."""
+    node_specs, roads, metro_lines, river_spec = [], [], [], None
+
+    def _node_from_lnglat(lng, lat, props):
+        name = _slug(props.get("name") or props.get("id"))
+        if not name or lng is None or lat is None:
+            return None
+        gx, gy = _lnglat_to_grid(lng, lat)
+        return {
+            "name": name, "x": gx, "y": gy,
+            "kind": props.get("kind", "place"),
+            "category": props.get("category") or infer_category(name),
+            "district": props.get("district", name),
+            "capacity": props.get("capacity"),
+            "open": props.get("open"), "close": props.get("close"),
+            "popularity": props.get("popularity"), "density": props.get("density"),
+        }
+
+    if isinstance(data, dict) and data.get("type") == "FeatureCollection":
+        for feat in data.get("features", []):
+            geom = feat.get("geometry") or {}
+            props = feat.get("properties") or {}
+            gtype = geom.get("type")
+            coords = geom.get("coordinates") or []
+            if gtype == "Point" and len(coords) >= 2:
+                spec = _node_from_lnglat(coords[0], coords[1], props)
+                if spec:
+                    node_specs.append(spec)
+            elif gtype == "LineString":
+                kind = props.get("kind")
+                if kind == "metro":
+                    metro_lines.append({
+                        "name": _slug(props.get("line") or props.get("name")),
+                        "color": props.get("color", "#8f5bd8"),
+                        "stops": [_slug(s) for s in (props.get("stops") or [])],
+                    })
+                elif kind == "river":
+                    river_spec = {
+                        "name": _slug(props.get("name") or DEFAULT_RIVER["name"]),
+                        "lnglat": [(c[0], c[1]) for c in coords if len(c) >= 2],
+                        "width_km": props.get("width_km"),
+                    }
+                elif kind == "road":
+                    src, tgt = _slug(props.get("source", "")), _slug(props.get("target", ""))
+                    if src and tgt:
+                        roads.append({"source": src, "target": tgt,
+                                      "road_type": props.get("road_type", "arterial"),
+                                      "bridge": bool(props.get("bridge", False))})
+    else:
+        for n in (data.get("nodes") or []):
+            spec = _node_from_lnglat(n.get("lng"), n.get("lat"), n)
+            if spec:
+                node_specs.append(spec)
+        for line in (data.get("metro_lines") or []):
+            metro_lines.append({
+                "name": _slug(line.get("name")),
+                "color": line.get("color", "#8f5bd8"),
+                "stops": [_slug(s) for s in (line.get("stops") or [])],
+            })
+        river = data.get("river")
+        if river and river.get("lnglat"):
+            river_spec = {"name": _slug(river.get("name") or DEFAULT_RIVER["name"]),
+                          "lnglat": [(c[0], c[1]) for c in river["lnglat"] if len(c) >= 2],
+                          "width_km": river.get("width_km")}
+    return node_specs, roads, metro_lines, river_spec
+
+
+def load_real_city_map(path):
+    """Load a real (OSM-derived) offline bundle and build a full ``city_map``.
+
+    The bundle is produced by ``scripts/dev/fetch_hangzhou_osm.py`` and committed
+    for offline / reproducible runs.  Raises ``FileNotFoundError`` with guidance
+    when the bundle is missing so a mis-set ``map_mode`` fails loudly."""
+    resolved = _resolve_existing_path(path)
+    if not os.path.exists(resolved):
+        raise FileNotFoundError(
+            f"Real-map bundle not found at {path!r}. Generate it with "
+            "`python3 scripts/dev/fetch_hangzhou_osm.py`, or set map_mode='virtual'."
+        )
+    with open(resolved, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    node_specs, roads, metro_lines, river_spec = _parse_real_bundle(data)
+    return _build_real_city_map(node_specs, roads=roads, metro_lines=metro_lines,
+                                river_spec=river_spec)
+
+
+def real_city_map_text(city_map):
+    """A concise, human-readable summary of a real map for LLM prompt context.
+
+    The virtual map ships a hand-written ``.md`` spec; a real map has none, so
+    we synthesize an equivalent overview (landmarks by category + metro lines)."""
+    nodes = city_map.get("nodes", {})
+    by_cat = defaultdict(list)
+    for node in nodes.values():
+        by_cat[node.get("category", "mixed")].append(node.get("name"))
+    lines = ["# 真实杭州地图 (OpenStreetMap)"]
+    for cat, names in sorted(by_cat.items(), key=lambda kv: -len(kv[1])):
+        label = CATEGORY_LABEL_ZH.get(cat, cat)
+        sample = "、".join(names[:8])
+        extra = f" 等{len(names)}处" if len(names) > 8 else ""
+        lines.append(f"- {label}: {sample}{extra}")
+    for line in city_map.get("metro_lines", []):
+        stops = " → ".join(line.get("stops", [])[:12])
+        lines.append(f"- 地铁{line.get('name')}: {stops}")
+    river = city_map.get("river") or {}
+    if river.get("name"):
+        lines.append(f"- 河流: {river['name']}")
+    return "\n".join(lines)

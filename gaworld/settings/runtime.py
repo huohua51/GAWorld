@@ -51,6 +51,12 @@ def simulation_settings() -> dict[str, Any]:
         "csv_path": "data/hangzhou_agents_state_init.csv",
         "md_path": "data/hangzhou_profiles_with_names.md",
         "map_path": "data/citymap.md",
+        # Map mode: "virtual" = procedural grid map from `map_path`;
+        # "real" = real Hangzhou geography from the OSM bundle at `real_map_path`
+        # (generate it with `python3 scripts/dev/fetch_hangzhou_osm.py`).
+        #"map_mode": "virtual",
+        "map_mode": "real",
+        "real_map_path": "data/hangzhou_real.geojson",
         # Memory / logs
         "stateful": True,
         "memory_dir": "output/memory",
