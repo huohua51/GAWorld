@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GAWorld Console</title>
+  <meta name="description" content="GAWorld 一体化控制台：控制台 · 仿真回放 · 智能体工作台" />
+  <link rel="stylesheet" href="/site/console/console.css" />
+</head>
+<body>
+  <header class="console-bar">
+    <div class="brand">
+      <span class="brand-mark">GA</span>
+      <span class="brand-name">GAWorld Console</span>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="views">
+      <button class="tab" role="tab" data-tab="dashboard">控制台<span class="en">Dashboard</span></button>
+      <button class="tab" role="tab" data-tab="simviz">仿真回放<span class="en">Simulation</span></button>
+      <button class="tab" role="tab" data-tab="studio">智能体工作台<span class="en">Agent Studio</span></button>
+    </nav>
+    <a class="open-new" id="openNew" href="#" target="_blank" rel="noopener" title="在新窗口打开当前视图">在新窗口打开 ↗</a>
+  </header>
+  <main class="frames" id="frames"></main>
+  <script src="/site/console/console.js"></script>
+</body>
+</html>

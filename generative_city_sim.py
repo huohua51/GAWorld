@@ -446,6 +446,9 @@ ROUTINE_CHANGE_BASE_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("base_chance", 0.08
 ROUTINE_CHANGE_EVENT_BOOST = float(ROUTINE_CHANGE_CONFIG.get("event_boost", 0.08))
 ROUTINE_CHANGE_POLICY_BOOST = float(ROUTINE_CHANGE_CONFIG.get("policy_boost", 0.05))
 ROUTINE_CHANGE_MAX_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("max_chance", 0.45))
+ROUTINE_CHANGE_SEVERITY_PIVOT = float(ROUTINE_CHANGE_CONFIG.get("severity_pivot", 0.4))
+ROUTINE_CHANGE_EVENT_TRIGGER_SCALE = float(ROUTINE_CHANGE_CONFIG.get("event_trigger_scale", 1.0))
+ROUTINE_CHANGE_EVENT_TRIGGER_CAP = float(ROUTINE_CHANGE_CONFIG.get("event_trigger_cap", 0.6))
 SPONTANEITY_CONFIG = CONFIG.get("spontaneity", {})
 SPONTANEITY_ENABLED = bool(SPONTANEITY_CONFIG.get("enabled", True))
 SPONTANEITY_BASE_THOUGHT_CHANCE = float(SPONTANEITY_CONFIG.get("base_thought_chance", 0.18))
@@ -546,6 +549,12 @@ REPLAN_CONFIG = CONFIG.get("replan", {}) if isinstance(CONFIG, dict) else {}
 REPLAN_ENABLED = bool(REPLAN_CONFIG.get("enabled", True))
 REPLAN_WINDOW_MINUTES = max(1, int(REPLAN_CONFIG.get("window_minutes", 120)))
 REPLAN_DEFER_GAP = max(1, int(REPLAN_CONFIG.get("defer_gap_minutes", 30)))
+# Life-event-driven same-day reshaping (Part B).
+_LIFE_EVENT_RUNTIME_CONFIG = CONFIG.get("life_events", {}) if isinstance(CONFIG, dict) else {}
+_LIFE_EVENT_RESHAPE_CONFIG = _LIFE_EVENT_RUNTIME_CONFIG.get("reshape", {}) if isinstance(_LIFE_EVENT_RUNTIME_CONFIG, dict) else {}
+LIFE_EVENT_RESHAPE_ENABLED = bool(_LIFE_EVENT_RESHAPE_CONFIG.get("enabled", True))
+LIFE_EVENT_RESHAPE_SEVERITY = float(_LIFE_EVENT_RESHAPE_CONFIG.get("severity_threshold", 0.7))
+LIFE_EVENT_RESHAPE_WINDOW = max(1, int(_LIFE_EVENT_RESHAPE_CONFIG.get("window_minutes", 240)))
 # Spatial-preference (P4) constants moved to
 # gaworld.world.plugin.SpatialPreferencesPlugin (K3i).
 
@@ -560,6 +569,10 @@ DAILY_PLAN_MAX_ITEMS = max(DAILY_PLAN_MIN_ITEMS, int(DAILY_PLAN_FLEX_CONFIG.get(
 DAILY_PLAN_MAX_SHIFT_MINUTES = max(0, int(DAILY_PLAN_FLEX_CONFIG.get("max_time_shift_minutes", 120)))
 DAILY_PLAN_MIN_GAP_MINUTES = max(1, int(DAILY_PLAN_FLEX_CONFIG.get("min_gap_minutes", 15)))
 DAILY_PLAN_ALLOW_INSERTIONS = bool(DAILY_PLAN_FLEX_CONFIG.get("allow_insertions", True))
+# Part D: carry yesterday's plan forward as today's base instead of
+# regenerating from a fixed per-archetype template every day, so divergences
+# (from state, events, aftermath) persist and the days stop looking same-y.
+DAILY_PLAN_AUTOREGRESSIVE = bool(DAILY_PLANNING_CONFIG.get("autoregressive", True))
 EXTERNAL_RAG_CONFIG = CONFIG.get("external_rag", {})
 # EXTERNAL_RAG_TOP_K was moved to gaworld.sim._rag along with its only
 # caller (_external_rag_hint); the constant is now re-exported from there.
@@ -1252,7 +1265,10 @@ from gaworld.sim._schedule import (  # noqa: E402
     _fallback_reflection_struct,
     format_plan_text,
     format_reflection_text,
+    is_routine_impacting_event,
     replan_affected_interval,
+    reshape_day_for_life_event,
+    resolve_life_event_activities,
 )
 
 
@@ -1354,11 +1370,21 @@ def _bootstrap_agent_external_rag(agent, news_cache=None, news_sources=None):
 
     max_chars = int(bootstrap_cfg.get("max_chars_per_item", 280))
     inserted = []
-    profile_items = _llm_bootstrap_external_items(
-        agent,
-        max_items=int(bootstrap_cfg.get("profile_items", 3)),
-        max_chars=max_chars,
-    )
+    try:
+        profile_items = _llm_bootstrap_external_items(
+            agent,
+            max_items=int(bootstrap_cfg.get("profile_items", 3)),
+            max_chars=max_chars,
+        )
+    except Exception as exc:  # noqa: BLE001 — bootstrap must never abort the run.
+        # Match the sibling seed-script substep: degrade to no profile seed and
+        # keep the simulation going (e.g. LLM endpoint down / transient error).
+        _LOG.warning(
+            "external_rag profile-seed bootstrap failed for agent %s: %s — skipping seed, continuing",
+            agent.get("id"),
+            exc,
+        )
+        profile_items = []
     for item in profile_items:
         payload = _store_external_info_for_agent(
             agent,
@@ -1408,13 +1434,22 @@ def _bootstrap_agent_external_rag(agent, news_cache=None, news_sources=None):
         content = _sanitize_extra_text(target.get("content", ""), max_chars=900)
         if not content:
             continue
-        text = _summarize_bootstrap_web_item(
-            agent,
-            target.get("title", ""),
-            content,
-            url,
-            max_chars=max_chars,
-        )
+        try:
+            text = _summarize_bootstrap_web_item(
+                agent,
+                target.get("title", ""),
+                content,
+                url,
+                max_chars=max_chars,
+            )
+        except Exception as exc:  # noqa: BLE001 — web seeding is best-effort.
+            _LOG.warning(
+                "external_rag web-seed summarize failed for agent %s (%s): %s — skipping item",
+                agent.get("id"),
+                url,
+                exc,
+            )
+            continue
         domain = _domain_from_url(url) or "web"
         payload = _store_external_info_for_agent(
             agent,
@@ -1470,6 +1505,7 @@ from gaworld.sim._prompt import (  # noqa: E402
     _state_brief_for_prompt,
     _yesterday_recap_for_prompt,
     _recent_life_events_for_prompt,
+    _event_aftermath_for_prompt,
     _social_pulse_for_prompt,
 )
 
@@ -1524,6 +1560,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     state_brief_text = _state_brief_for_prompt(agent)
     yesterday_recap_text = _yesterday_recap_for_prompt(agent, day)
     recent_events_text = _recent_life_events_for_prompt(agent, day)
+    aftermath_text = _event_aftermath_for_prompt(agent, day)
     social_pulse_text = _social_pulse_for_prompt(agent, day)
     prompt = f"""
 你是城市生活模拟器的“今日日程”制定器。请基于角色资料与基础日程，生成今天的日程。
@@ -1535,6 +1572,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 {state_brief_text}
 {yesterday_recap_text}
 {recent_events_text}
+{aftermath_text}
 {social_pulse_text}
 可参考的近期记忆：{memory_hint}
 可参考的额外信息：{external_hint}
@@ -1553,8 +1591,9 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 7) 日程应自然反映“当前身心状态”：情绪低/压力高/疲劳重时减少高强度任务、增加恢复性活动；精力充沛/情绪积极时可加入挑战性或社交活动。
 8) “昨日关键回顾”里的未完成或被打断事项可被自然延续到今日；昨日已让人疲惫或受挫的事项今日应缩减或推后。
 9) “近期突发事件”应优先反映在前一/两个时段（例如就医、处理纠纷、家庭责任、处理影响等），但不要凭空编造未在事件中提及的细节。
-10) “近期社交脉动”里有强互动对象时，可在合适时段加入跟进社交（约见、电话、回信等）；如最近无社交，可适度补一次轻量联络。
-11) 仅输出 JSON，不要其他文字。
+10) “事件余波”仍在持续时，应让今日日程为其让路：影响很强时明显收缩高强度/高承诺活动并保留恢复、善后或处理时段，影响消退时逐步恢复常态；不要凭空编造事件未提及的细节。
+11) “近期社交脉动”里有强互动对象时，可在合适时段加入跟进社交（约见、电话、回信等）；如最近无社交，可适度补一次轻量联络。
+12) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="daily_routine", agent_id=agent["id"])
     schedule = _parse_schedule(response)
@@ -1639,12 +1678,50 @@ def generate_schedule(agent):
 # --------------------------------------------------------------------
 from gaworld.sim._schedule import _extract_json_block, _parse_schedule_change  # noqa: E402
 
+def _event_severity(event):
+    """Severity of an env/life event, defaulting to 0.5 when unspecified.
+
+    The 0.5 fallback is deliberate: it makes a plain env event (which
+    historically carried no severity) contribute the same routine-change
+    pressure it did before severity-weighting was introduced.
+    """
+    if not isinstance(event, dict):
+        return 0.5
+    raw = event.get("severity")
+    if raw is None:
+        return 0.5
+    try:
+        return float(np.clip(float(raw), 0.0, 1.0))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def _pick_reshape_life_event(events):
+    """Highest-severity routine-impacting life event above the reshape
+    threshold, or ``None`` when no event this tick warrants reshaping the day."""
+    best = None
+    best_sev = -1.0
+    for ev in events or []:
+        if not isinstance(ev, dict) or not is_routine_impacting_event(ev):
+            continue
+        sev = _event_severity(ev)
+        if sev < LIFE_EVENT_RESHAPE_SEVERITY:
+            continue
+        if sev > best_sev:
+            best = ev
+            best_sev = sev
+    return best
+
+
 def _routine_change_probability(agent, env_events, policy_desc):
     if not ROUTINE_CHANGE_ENABLED:
         return 0.0
     prob = ROUTINE_CHANGE_BASE_CHANCE
     if env_events:
-        prob += ROUTINE_CHANGE_EVENT_BOOST * len(env_events)
+        # Weight each event by severity: sev=0.5 reproduces the old flat
+        # per-event boost, a serious life event (0.86) counts ~1.36×.
+        weighted = sum(min(2.0, 0.5 + _event_severity(ev)) for ev in env_events)
+        prob += ROUTINE_CHANGE_EVENT_BOOST * weighted
     if policy_desc:
         prob += ROUTINE_CHANGE_POLICY_BOOST
     s = agent.get("state", {})
@@ -1680,7 +1757,15 @@ def _routine_change_trigger_strength(agent, env_events, policy_desc):
     trigger += max(0.0, time_pressure - 0.60) * 0.45
     trigger += max(0.0, 0.42 - self_control) * 0.65
     trigger += max(0.0, 0.35 - energy) * 0.35
-    trigger += min(0.25, 0.10 * len(env_events or []))
+    # Severity-weighted event pressure (was flat 0.10 per event, capped 0.25):
+    # each event contributes in proportion to how far its severity exceeds the
+    # pivot, so a high-severity life event can single-handedly beat a
+    # high-commitment activity's resistance.
+    event_pressure = sum(
+        max(0.0, _event_severity(ev) - ROUTINE_CHANGE_SEVERITY_PIVOT)
+        for ev in env_events or []
+    )
+    trigger += min(ROUTINE_CHANGE_EVENT_TRIGGER_CAP, event_pressure * ROUTINE_CHANGE_EVENT_TRIGGER_SCALE)
     if policy_desc:
         trigger += 0.10
     return float(np.clip(trigger, 0.0, 1.0))
@@ -3071,6 +3156,43 @@ def run_simulation():
                     )
                     daily_logs[agent_id] += _replan_log
                     append_agent_log(agent, _replan_log)
+        # Part B: a serious, routine-impacting life event (illness, family
+        # emergency, being framed) deterministically bends the rest of the day
+        # around it — bypassing the probabilistic routine-change gate above,
+        # which a high-commitment activity's resistance would usually win.
+        if LIFE_EVENT_RESHAPE_ENABLED:
+            _reshape_ev = _pick_reshape_life_event(step.get("life_events", []))
+            if _reshape_ev is not None:
+                _sched_tuples = [
+                    (s.get("time", ""), s.get("activity", "")) if isinstance(s, dict) else tuple(s)
+                    for s in schedule_map.get(agent_id, [])
+                ]
+                _imm, _fol = resolve_life_event_activities(_reshape_ev)
+                _new_sched, _reshape_changes = reshape_day_for_life_event(
+                    _sched_tuples,
+                    time_str,
+                    _reshape_ev,
+                    window_minutes=LIFE_EVENT_RESHAPE_WINDOW,
+                    immediate_activity=_imm,
+                    follow_activity=_fol,
+                )
+                if _reshape_changes:
+                    schedule_map[agent_id] = [{"time": t, "activity": a} for t, a in _new_sched]
+                    activity = _imm
+                    changed = True
+                    change_reason = f"人生事件：{_reshape_ev.get('title', '突发事件')}"
+                    for _evt_activity in (_imm, _fol):
+                        _upd = ensure_action_space_for_activity(agent, actions[agent_id], _evt_activity)
+                        if _upd and STATEFUL:
+                            save_agent_actions(agent_id, actions[agent_id])
+                    _reshape_log = (
+                        f"[LifeReshape {time_str}] 因“{_reshape_ev.get('title', '突发事件')}”"
+                        f"（严重度 {_event_severity(_reshape_ev):.2f}）重排当天，"
+                        f"改动 {len(_reshape_changes)} 项\n"
+                    )
+                    daily_logs[agent_id] += _reshape_log
+                    append_agent_log(agent, _reshape_log)
+
         # K3i: observers react to the applied interrupt result (e.g. the
         # spatial-preferences plugin records location-bound anomalies).
         hook_bus.emit(
@@ -3801,6 +3923,14 @@ def run_simulation():
                     break
             daily_wake_times[agent_id] = wake_time or (daily_schedule[0][0] if daily_schedule else None)
             daily_routine_logged[agent_id] = False
+
+        # Part D: carry today's plan forward as tomorrow's base so the schedule
+        # evolves day to day instead of resetting to the fixed archetype every
+        # morning. Day 1 still seeds from ``generate_schedule`` (the archetype).
+        if DAILY_PLAN_AUTOREGRESSIVE:
+            for agent_id, daily_schedule in daily_schedules.items():
+                if daily_schedule:
+                    base_schedule_map[agent_id] = [tuple(slot) for slot in daily_schedule]
 
         schedule_map = build_schedule_map(daily_schedules)
         timeline = build_master_timeline(daily_schedules, TIME_STEP_MINUTES)

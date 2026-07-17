@@ -533,7 +533,15 @@ function renderTrace() {
   const frames = allFrames();
   const frame = frames[state.frameIndex] || null;
   if (!frame) {
-    drawEmptyMap();
+    // No agent frames yet — but if the trace already carries the map, draw it
+    // (terrain + nodes) instead of a blank placeholder, so the city map is
+    // visible as soon as a run starts, before any frame is produced.
+    const mapNodes = state.trace && state.trace.map && state.trace.map.nodes;
+    if (Array.isArray(mapNodes) && mapNodes.length) {
+      drawMap([]);
+    } else {
+      drawEmptyMap();
+    }
     if (state.trace) els.traceStatus.textContent = "轨迹已初始化 · 0 帧";
     return;
   }
@@ -606,8 +614,9 @@ function drawTrails(framesUpTo, nodes, offsetX, offsetY, scale) {
 }
 
 function drawMap(framesUpTo) {
+  // frame may be undefined (no agent frames yet) — the map base (terrain +
+  // nodes) still renders; only the agent/trail overlay needs a frame.
   const frame = framesUpTo[framesUpTo.length - 1];
-  if (!frame) return;
   const map = (state.trace || {}).map || {};
   const tileMap = map.tile_map || {};
   const terrain = Array.isArray(tileMap.terrain) ? tileMap.terrain : [];
@@ -634,6 +643,8 @@ function drawMap(framesUpTo) {
     ctx.fillStyle = node.kind === "hub" ? "#17211d" : "#385866";
     ctx.fillRect(x - 3, y - 3, 6, 6);
   });
+
+  if (!frame) return;   // map base drawn; no agents to overlay yet
 
   drawTrails(framesUpTo, nodes, offsetX, offsetY, scale);
 

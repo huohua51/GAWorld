@@ -113,7 +113,7 @@ class TestYesterdayRecap(unittest.TestCase):
 class TestRecentLifeEvents(unittest.TestCase):
     def test_returns_empty_when_no_events(self):
         agent = _make_agent()
-        with patch.object(sim, "list_life_events", return_value=[]):
+        with patch("gaworld.sim._prompt.list_life_events", return_value=[]):
             text = sim._recent_life_events_for_prompt(agent, day=5)
         self.assertIn("近期突发事件：无", text)
 
@@ -142,7 +142,7 @@ class TestRecentLifeEvents(unittest.TestCase):
                 "agent_ids": [99],
             },
         ]
-        with patch.object(sim, "list_life_events", return_value=events):
+        with patch("gaworld.sim._prompt.list_life_events", return_value=events):
             text = sim._recent_life_events_for_prompt(agent, day=5, max_age_days=2)
         self.assertIn("突然生病", text)
         self.assertNotIn("未触发事件", text)
@@ -159,7 +159,7 @@ class TestRecentLifeEvents(unittest.TestCase):
                 "agent_ids": [],
             }
         ]
-        with patch.object(sim, "list_life_events", return_value=events):
+        with patch("gaworld.sim._prompt.list_life_events", return_value=events):
             text = sim._recent_life_events_for_prompt(agent, day=5)
         self.assertIn("城市公告", text)
 
@@ -224,7 +224,7 @@ class TestGenerateDailyRoutinePromptComposition(unittest.TestCase):
             return '[{"time":"07:00","activity":"起床"},{"time":"23:00","activity":"睡觉"}]'
 
         with patch.object(sim, "call_llm", side_effect=fake_llm), \
-             patch.object(sim, "list_life_events", return_value=[]):
+             patch("gaworld.sim._prompt.list_life_events", return_value=[]):
             sim.generate_daily_routine(agent, base_schedule, day=3)
         return captured.get("prompt", "")
 
@@ -242,6 +242,7 @@ class TestGenerateDailyRoutinePromptComposition(unittest.TestCase):
         self.assertIn("当前身心状态", prompt)
         self.assertIn("昨日关键回顾", prompt)
         self.assertIn("近期突发事件", prompt)
+        self.assertIn("事件余波", prompt)
         self.assertIn("近期社交脉动", prompt)
         self.assertIn("基础日程", prompt)  # original section preserved
 

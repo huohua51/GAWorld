@@ -932,14 +932,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 # HTTP boundary: log the full traceback and surface a 500.
                 _LOG.exception("GET %s failed: %s", path, exc)
                 return self._json_response({"error": str(exc)}, status=500)
-        if path in ("/", "/dashboard", "/dashboard/"):
+        if path in ("/", "/console", "/console/"):
+            self.path = "/site/console/index.html"
+        elif path in ("/dashboard", "/dashboard/"):
             self.path = "/site/dashboard/index.html"
         return super().do_GET()
 
     def do_HEAD(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
-        if path in ("/", "/dashboard", "/dashboard/"):
+        if path in ("/", "/console", "/console/"):
+            self.path = "/site/console/index.html"
+        elif path in ("/dashboard", "/dashboard/"):
             self.path = "/site/dashboard/index.html"
         return super().do_HEAD()
 
@@ -958,8 +962,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 def run_server(host="127.0.0.1", port=8766):
     server = ThreadingHTTPServer((host, int(port)), DashboardHandler)
-    url = f"http://{host}:{int(port)}/dashboard"
-    print(f"GAWorld dashboard: {url}")
+    url = f"http://{host}:{int(port)}/"
+    print(f"GAWorld console: {url}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()

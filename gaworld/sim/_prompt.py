@@ -210,6 +210,38 @@ def _recent_life_events_for_prompt(
     return "近期突发事件（仍在影响今天）：\n" + "\n".join(lines)
 
 
+def _event_aftermath_for_prompt(agent: dict[str, Any], day: int | None = None) -> str:
+    """Describe still-active event aftermath as a planning constraint.
+
+    Reads ``agent["event_aftermath"]`` (maintained + decayed at day start by
+    the LifeEventsPlugin), so it reflects serious events *beyond* the 2-day
+    recency window of :func:`_recent_life_events_for_prompt`. The residual is
+    surfaced qualitatively so the planner scales its response to how fresh the
+    event still is.
+    """
+    entries = agent.get("event_aftermath") if isinstance(agent, dict) else None
+    if not entries:
+        return "事件余波：无。"
+    ranked = sorted(entries, key=lambda e: float(e.get("residual", 0.0)), reverse=True)
+    lines = []
+    for entry in ranked[:3]:
+        residual = float(entry.get("residual", 0.0))
+        if residual >= 0.5:
+            strength = "影响仍然很强"
+        elif residual >= 0.3:
+            strength = "影响尚在持续"
+        else:
+            strength = "影响正在消退"
+        title = str(entry.get("title", "突发事件")).strip()
+        started = entry.get("started_day")
+        started_txt = f"Day {int(started)} 起" if isinstance(started, int) else ""
+        lines.append(f"- {title}（{started_txt}，{strength}）")
+    return (
+        "事件余波（近日发生、今天仍需为之调整）：\n"
+        + "\n".join(lines)
+    )
+
+
 def _social_pulse_for_prompt(
     agent: dict[str, Any], day: int | None,
     agents_by_id: dict[Any, Any] | None = None,
@@ -280,5 +312,6 @@ __all__ = [
     "_state_brief_for_prompt",
     "_yesterday_recap_for_prompt",
     "_recent_life_events_for_prompt",
+    "_event_aftermath_for_prompt",
     "_social_pulse_for_prompt",
 ]

@@ -66,7 +66,13 @@ class LifeEventsPlugin(Plugin):
         self._append_agent_log = append_agent_log
         self._append_memory_record = _append_memory_record
         self._generate_ghost_event = generate_ghost_event
+        self._push_aftermath = impl.push_event_aftermath
+        self._decay_aftermath_impl = impl.decay_event_aftermath
+        self._apply_aftermath_pressure = impl.apply_aftermath_state_pressure
+        life_cfg = (ctx.config.get("life_events", {}) or {}) if hasattr(ctx, "config") else {}
+        self._severity_state_amplify = float(life_cfg.get("severity_state_amplify", 0.8))
         ctx.bus.on("on_day_start", self._inject_ghost_events)
+        ctx.bus.on("on_day_start", self._decay_aftermath)
         ctx.bus.on("on_time_tick", self._drain_tick, priority=10)
         ctx.bus.on("env.events.compose", self._agent_events)
         ctx.bus.on("env.events.tick", self._tick_events)
@@ -91,6 +97,17 @@ class LifeEventsPlugin(Plugin):
         day = hook_ctx.get("day")
         for agent in hook_ctx.get("agents", []):
             self._maybe_inject_ghost_event(sim, agent, day, "08:30")
+
+    def _decay_aftermath(self, hook_ctx):
+        """Advance event-aftermath decay one day and apply the lingering state
+        pressure. Runs after daily planning has already read the (undecayed)
+        residual, so the day right after a serious event feels its full weight."""
+        sim = hook_ctx["sim"]
+        day = hook_ctx.get("day")
+        config = getattr(sim, "config", None)
+        for agent in hook_ctx.get("agents", []):
+            self._decay_aftermath_impl(agent, day, config)
+            self._apply_aftermath_pressure(agent, config)
 
     def _maybe_inject_ghost_event(self, sim, agent, day, time_str):
         """Dice-gated off-screen ghost event; failures are swallowed —
@@ -175,6 +192,9 @@ class LifeEventsPlugin(Plugin):
             hook_ctx.get("time_str"),
             hook_ctx.get("daily_logs"),
         )
+        # Part C: seed a decaying cross-day aftermath from serious events.
+        for event in agent_life_events:
+            self._push_aftermath(agent, event, hook_ctx.get("day"), sim.config)
         return [self._as_env_event(event) for event in agent_life_events]
 
     def _record_for_agent(self, agent, events, day, time_str, daily_logs):
@@ -226,6 +246,23 @@ class LifeEventsPlugin(Plugin):
 
     # -- state effects ------------------------------------------------------------
 
+    def _severity_state_factor(self, event):
+        """Scale a life event's state deltas by its severity.
+
+        ``clip(1 + amplify * (severity - 0.5), 0.5, 1.8)``. An event with no
+        severity (or a non-numeric one) yields factor 1.0, leaving the
+        configured deltas untouched — the pre-severity behaviour.
+        """
+        raw = event.get("severity") if isinstance(event, dict) else None
+        if raw is None:
+            return 1.0
+        try:
+            severity = float(raw)
+        except (TypeError, ValueError):
+            return 1.0
+        factor = 1.0 + self._severity_state_amplify * (severity - 0.5)
+        return max(0.5, min(1.8, factor))
+
     def _apply_state_effects(self, hook_ctx):
         agent = hook_ctx["agent"]
         step = hook_ctx.get("step") or {}
@@ -235,10 +272,11 @@ class LifeEventsPlugin(Plugin):
             effects = event.get("state_effects", {})
             if not isinstance(effects, dict):
                 continue
+            factor = self._severity_state_factor(event)
             for key, delta in effects.items():
                 if key not in state:
                     continue
                 try:
-                    state[key] = _clip01(float(state.get(key, 0.5)) + float(delta))
+                    state[key] = _clip01(float(state.get(key, 0.5)) + float(delta) * factor)
                 except (TypeError, ValueError):
                     continue

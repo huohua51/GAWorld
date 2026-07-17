@@ -85,9 +85,9 @@ def llm_settings() -> dict[str, Any]:
                 },
             },
             "routing": {
-                "default": "local_qwen4b",
+                "default": "ollama_gemma4",
                 "tasks": {
-                    "schedule": "local_qwen4b",
+                    "schedule": "ollama_gemma4",
                 },
             },
         },

@@ -383,6 +383,122 @@ def replan_affected_interval(
     return kept, changes
 
 
+# ---------------------------------------------------------------------------
+# Life-event-driven same-day reshaping (Part B).
+#
+# The probabilistic routine-change gate (``maybe_adjust_activity``) is easily
+# won by a high-commitment activity's resistance, so a serious life event —
+# illness, a family emergency, being framed — could barely dent the day. These
+# helpers let such an event *deterministically* bend the rest of the day around
+# it: the current slot becomes the event's immediate response, and upcoming
+# high/medium-commitment slots inside a window are swapped for a follow-on
+# activity. Low-commitment slots (meals, rest, sleep) are left in place so the
+# agent still eats and sleeps.
+# ---------------------------------------------------------------------------
+
+# Impact tags that make an event worth reshaping the day around. Positive or
+# purely internal events (a promotion, a lottery win) are intentionally absent:
+# they colour mood and actions via state effects, but don't pull you out of work.
+LIFE_EVENT_ROUTINE_TAGS = frozenset({"routine", "health", "obligation", "family", "conflict"})
+
+# (immediate response activity, follow-on activity for later high-commit slots),
+# keyed by template_key first, then by impact tag.
+_LIFE_EVENT_ACTIVITY_MAP = {
+    "illness": ("就医处理", "在家休养"),
+    "health": ("就医处理", "在家休养"),
+    "family_emergency": ("处理家中急事", "陪伴家人"),
+    "family": ("处理家中急事", "陪伴家人"),
+    "framed": ("处理纠纷", "善后与澄清"),
+    "conflict": ("处理纠纷", "善后处理"),
+    "relationship_break": ("处理冲突情绪", "独自缓一缓"),
+    "obligation": ("处理急事", "跟进后续"),
+    "routine": ("临时处理要务", "跟进后续"),
+}
+
+
+def resolve_life_event_activities(event: dict[str, Any]) -> tuple[str, str]:
+    """Pick ``(immediate, follow)`` activities for a routine-impacting event."""
+    template = str((event or {}).get("template_key", "")).strip()
+    if template in _LIFE_EVENT_ACTIVITY_MAP:
+        return _LIFE_EVENT_ACTIVITY_MAP[template]
+    for tag in (event or {}).get("impact_tags", []) or []:
+        tag = str(tag).strip()
+        if tag in _LIFE_EVENT_ACTIVITY_MAP:
+            return _LIFE_EVENT_ACTIVITY_MAP[tag]
+    return ("临时处理要务", "跟进后续")
+
+
+def is_routine_impacting_event(
+    event: dict[str, Any], tags: frozenset[str] = LIFE_EVENT_ROUTINE_TAGS
+) -> bool:
+    """True when the event carries a tag that warrants reshaping the day."""
+    if not isinstance(event, dict):
+        return False
+    ev_tags = {str(t).strip() for t in (event.get("impact_tags") or [])}
+    return bool(ev_tags & tags)
+
+
+def reshape_day_for_life_event(
+    schedule: list[tuple[str, str]],
+    time_str: str,
+    event: dict[str, Any],
+    *,
+    window_minutes: int = 240,
+    immediate_activity: str | None = None,
+    follow_activity: str | None = None,
+) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
+    """Deterministically bend the rest of the day around a serious life event.
+
+    * the slot at ``time_str`` (or a fresh slot, if none lands there) becomes
+      ``immediate_activity``;
+    * within ``[time_str, time_str + window_minutes)``, high/medium-commitment
+      activities are swapped for ``follow_activity``;
+    * low-commitment slots (meals, rest) and sleep are left untouched.
+
+    Returns ``(new_schedule, changes)``; an empty ``changes`` means nothing
+    needed reshaping (caller should treat that as a no-op).
+    """
+    cur = _time_str_to_minutes(time_str)
+    if cur is None or not event:
+        return list(schedule or []), []
+    if immediate_activity is None or follow_activity is None:
+        _imm, _fol = resolve_life_event_activities(event)
+        immediate_activity = immediate_activity or _imm
+        follow_activity = follow_activity or _fol
+    end = min(24 * 60 - 1, cur + max(1, int(window_minutes)))
+
+    changes: list[dict[str, Any]] = []
+    kept: list[tuple[str, str]] = []
+    overrode_current = False
+    for t, act in schedule or []:
+        tmin = _time_str_to_minutes(t)
+        if tmin is None:
+            kept.append((t, act))
+            continue
+        if tmin == cur:
+            if act != immediate_activity:
+                changes.append({"time": t, "from": act, "to": immediate_activity, "kind": "override"})
+            kept.append((t, immediate_activity))
+            overrode_current = True
+        elif (
+            cur < tmin < end
+            and not is_sleep_activity(act)
+            and _activity_commitment_level(act) in ("high", "medium")
+        ):
+            changes.append({"time": t, "from": act, "to": follow_activity, "kind": "relocate"})
+            kept.append((t, follow_activity))
+        else:
+            kept.append((t, act))
+
+    if not overrode_current:
+        kept.append((time_str, immediate_activity))
+        changes.append({"time": time_str, "from": None, "to": immediate_activity, "kind": "insert"})
+
+    kept = _dedupe_schedule_items(kept)
+    kept.sort(key=lambda x: _time_str_to_minutes(x[0]) or 0)
+    return kept, changes
+
+
 def _align_daily_planning_start_time(
     schedule: list[tuple[str, str]],
     anchor_step: int = 30,
@@ -639,6 +755,7 @@ def _has_enough_schedule_anchors(
     base_schedule: list[tuple[str, str]],
     candidate_schedule: list[tuple[str, str]],
     max_shift_minutes: int,
+    min_ratio: float = 0.45,
 ) -> bool:
     if not base_schedule or not candidate_schedule:
         return False
@@ -660,7 +777,8 @@ def _has_enough_schedule_anchors(
     for base_minute in base_minutes:
         if any(abs(candidate_minute - base_minute) <= max_shift_minutes for candidate_minute in candidate_minutes):
             close_count += 1
-    required = min(len(base_minutes), max(2, int(round(len(base_minutes) * 0.45))))
+    ratio = max(0.0, min(1.0, float(min_ratio)))
+    required = min(len(base_minutes), max(2, int(round(len(base_minutes) * ratio))))
     return close_count >= required
 
 
@@ -683,6 +801,7 @@ def normalize_flexible_schedule(
     max_shift_minutes = max(0, int(flex_cfg.get("max_time_shift_minutes", 120)))
     min_gap_minutes = max(1, int(flex_cfg.get("min_gap_minutes", 15)))
     allow_insertions = bool(flex_cfg.get("allow_insertions", True))
+    min_anchor_match = float(flex_cfg.get("min_anchor_match", 0.45))
 
     if not flex_enabled:
         if len(cleaned) != len(base_schedule):
@@ -703,6 +822,7 @@ def normalize_flexible_schedule(
         base_schedule,
         cleaned,
         max_shift_minutes=max_shift_minutes,
+        min_ratio=min_anchor_match,
     ):
         return None
     return cleaned
@@ -732,6 +852,10 @@ __all__ = [
     "_schedule_profile_flags",
     "_schedule_times",
     "_state_recall_labels",
+    "LIFE_EVENT_ROUTINE_TAGS",
+    "resolve_life_event_activities",
+    "is_routine_impacting_event",
+    "reshape_day_for_life_event",
     "ensure_sleep_in_schedule",
     "format_plan_text",
     "format_reflection_text",

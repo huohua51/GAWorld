@@ -149,6 +149,34 @@ def simulation_settings() -> dict[str, Any]:
             "enabled": True,
             "event_dir": "output/life_events",
             "events_file": "events.json",
+            # Scale a life event's ``state_effects`` deltas by its severity so a
+            # serious event moves the agent's state more than a mild one. The
+            # multiplier is ``clip(1 + amplify * (severity - 0.5), 0.5, 1.8)``;
+            # an event without a severity falls back to factor 1.0 (unchanged).
+            "severity_state_amplify": 0.8,
+            # Deterministic same-day reshaping (Part B): a serious,
+            # routine-impacting event bends the rest of the day around it
+            # instead of only rolling the probabilistic routine-change dice
+            # (which a high-commitment activity would usually win).
+            "reshape": {
+                "enabled": True,
+                "severity_threshold": 0.7,
+                "window_minutes": 240,
+            },
+            # Cross-day aftermath (Part C): a serious event leaves a residual
+            # that decays over days, is fed to the next days' planning as a
+            # "still affecting you" constraint, and applies a small lingering
+            # state pressure. Extends impact beyond the single firing tick and
+            # the 2-day recency window of ``_recent_life_events_for_prompt``.
+            "aftermath": {
+                "enabled": True,
+                "min_severity": 0.55,
+                "decay_per_day": 0.5,
+                "min_residual": 0.15,
+                "max_age_days": 6,
+                "max_items": 4,
+                "state_pressure_scale": 0.5,
+            },
         },
         # Routine change (chance to deviate from schedule during the day)
         "routine_change": {
@@ -157,10 +185,26 @@ def simulation_settings() -> dict[str, Any]:
             "event_boost": 0.08,
             "policy_boost": 0.05,
             "max_chance": 0.45,
+            # Severity-weighting of env/life events on the routine-change
+            # decision. Previously events were counted (each +0.10 trigger,
+            # +event_boost prob) regardless of how serious they were, so a
+            # 0.86 "framed" life event moved the schedule no more than a
+            # trivial one. Now each event contributes in proportion to
+            # ``max(0, severity - severity_pivot)``. Defaults are tuned so a
+            # plain event with the fallback severity (0.5) reproduces the old
+            # magnitude, while a high-severity life event nearly guarantees a
+            # re-plan.
+            "severity_pivot": 0.4,
+            "event_trigger_scale": 1.0,
+            "event_trigger_cap": 0.6,
         },
         "daily_planning": {
             "anchor_minutes": 30,
             "random_delay_max_minutes": 10,
+            # Use yesterday's plan (not a fixed per-archetype template) as
+            # today's base schedule, so day-to-day changes accumulate instead
+            # of resetting each morning.
+            "autoregressive": True,
             "flexible": {
                 "enabled": True,
                 "min_items": 6,
@@ -168,6 +212,10 @@ def simulation_settings() -> dict[str, Any]:
                 "max_time_shift_minutes": 120,
                 "min_gap_minutes": 15,
                 "allow_insertions": True,
+                # Fraction of base-schedule anchors a candidate must stay near to
+                # be accepted (else it's rejected back to the base). Lowered from
+                # the former hard-coded 0.45 so the day is less template-locked.
+                "min_anchor_match": 0.30,
             },
         },
         "spontaneity": {

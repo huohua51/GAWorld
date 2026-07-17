@@ -23,7 +23,7 @@ def test_default_config_builder_returns_fresh_dicts():
     first["llm"]["routing"]["default"] = "changed"
 
     assert 999 not in second["agent_ids"]
-    assert second["llm"]["routing"]["default"] == "minimax"
+    assert second["llm"]["routing"]["default"] == "ollama_gemma4"
 
 
 def test_deep_update_preserves_nested_sections():

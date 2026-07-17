@@ -150,6 +150,8 @@ venv.bak/
 /site/*
 !/site/dashboard/
 !/site/dashboard/**
+!/site/console/
+!/site/console/**
 dashboard_config.json
 
 # mypy

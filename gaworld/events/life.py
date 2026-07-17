@@ -392,6 +392,157 @@ def life_events_for_agent(events, agent_id):
     return selected
 
 
+DEFAULT_AFTERMATH_CONFIG = {
+    "enabled": True,
+    "min_severity": 0.55,
+    "decay_per_day": 0.5,
+    "min_residual": 0.15,
+    "max_age_days": 6,
+    "max_items": 4,
+    "state_pressure_scale": 0.5,
+}
+
+
+def aftermath_config(config=None):
+    cfg = dict(DEFAULT_AFTERMATH_CONFIG)
+    raw = (config or CONFIG).get("life_events", {})
+    if isinstance(raw, dict) and isinstance(raw.get("aftermath"), dict):
+        cfg.update(raw["aftermath"])
+    return cfg
+
+
+def _clip01(value):
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def push_event_aftermath(agent, event, day, config=None):
+    """Record a decaying aftermath for a serious event on ``agent``.
+
+    No-op for mild events (severity below ``min_severity``) or when the
+    aftermath channel is disabled. Re-firing the same event id refreshes the
+    existing entry rather than duplicating it.
+    """
+    if not isinstance(agent, dict) or not isinstance(event, dict):
+        return None
+    cfg = aftermath_config(config)
+    if not cfg.get("enabled", True):
+        return None
+    try:
+        severity = float(event.get("severity", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        severity = 0.0
+    if severity < float(cfg.get("min_severity", 0.55)):
+        return None
+    try:
+        started_day = int(day)
+    except (TypeError, ValueError):
+        return None
+
+    entries = agent.setdefault("event_aftermath", [])
+    event_id = str(event.get("id") or "")
+    state_effects = event.get("state_effects", {})
+    if not isinstance(state_effects, dict):
+        state_effects = {}
+    entry = {
+        "id": event_id,
+        "template_key": str(event.get("template_key", "custom") or "custom"),
+        "title": str(event.get("title", "突发事件") or "突发事件"),
+        "tags": _clean_tags(event.get("impact_tags")),
+        "severity": severity,
+        "residual": severity,
+        "state_effects": {k: float(v) for k, v in state_effects.items() if isinstance(v, (int, float))},
+        "started_day": started_day,
+        "last_day": started_day,
+    }
+    if event_id:
+        for i, existing in enumerate(entries):
+            if str(existing.get("id", "")) == event_id:
+                entries[i] = entry
+                return entry
+    entries.append(entry)
+    max_items = max(1, int(cfg.get("max_items", 4)))
+    if len(entries) > max_items:
+        entries.sort(key=lambda e: float(e.get("residual", 0.0)), reverse=True)
+        del entries[max_items:]
+    return entry
+
+
+def decay_event_aftermath(agent, day, config=None):
+    """Advance aftermath decay to ``day`` (idempotent per day) and prune.
+
+    Each entry decays once per elapsed day by ``residual *= (1 - decay_per_day)``
+    and is dropped when its residual falls below ``min_residual`` or it exceeds
+    ``max_age_days``. Returns the surviving entries.
+    """
+    if not isinstance(agent, dict):
+        return []
+    entries = agent.get("event_aftermath")
+    if not entries:
+        return []
+    cfg = aftermath_config(config)
+    try:
+        current_day = int(day)
+    except (TypeError, ValueError):
+        return entries
+    decay = float(cfg.get("decay_per_day", 0.5))
+    min_residual = float(cfg.get("min_residual", 0.15))
+    max_age = int(cfg.get("max_age_days", 6))
+    survivors = []
+    for entry in entries:
+        try:
+            last_day = int(entry.get("last_day", entry.get("started_day", current_day)))
+            started_day = int(entry.get("started_day", current_day))
+        except (TypeError, ValueError):
+            continue
+        elapsed = current_day - last_day
+        residual = float(entry.get("residual", 0.0))
+        if elapsed > 0:
+            residual *= (1.0 - decay) ** elapsed
+            entry["residual"] = residual
+            entry["last_day"] = current_day
+        if residual < min_residual:
+            continue
+        if current_day - started_day > max_age:
+            continue
+        survivors.append(entry)
+    agent["event_aftermath"] = survivors
+    return survivors
+
+
+def apply_aftermath_state_pressure(agent, config=None):
+    """Apply a small lingering state nudge from active aftermath entries.
+
+    Each entry re-applies its event's ``state_effects`` scaled by the entry's
+    current residual and ``state_pressure_scale`` — so a serious illness keeps
+    fatigue/stress somewhat elevated for a day or two, fading as it decays.
+    """
+    if not isinstance(agent, dict):
+        return
+    cfg = aftermath_config(config)
+    scale = float(cfg.get("state_pressure_scale", 0.5))
+    if scale <= 0:
+        return
+    entries = agent.get("event_aftermath") or []
+    state = agent.get("state")
+    if not isinstance(state, dict):
+        return
+    for entry in entries:
+        residual = float(entry.get("residual", 0.0))
+        effects = entry.get("state_effects", {})
+        if not isinstance(effects, dict):
+            continue
+        for key, delta in effects.items():
+            if key not in state:
+                continue
+            try:
+                state[key] = _clip01(float(state[key]) + float(delta) * residual * scale)
+            except (TypeError, ValueError):
+                continue
+
+
 def format_life_event(event):
     title = str(event.get("title") or "人生事件").strip()
     desc = str(event.get("description") or "").strip()
