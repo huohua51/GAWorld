@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GAWorld · Cooperation Observatory</title>
+  <meta name="description" content="GAWorld 多智能体协作任务观测台" />
+  <link rel="stylesheet" href="/site/dashboard/collaboration.css" />
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">GAWORLD / COOPERATION PROTOCOL</p>
+      <h1>协作任务观测台</h1>
+      <p class="deck">编组居民、委派角色，并沿着计划、活动与产物轨道观察一项真实合作。</p>
+    </div>
+    <div class="mast-status">
+      <span class="signal" aria-hidden="true"></span>
+      <div>
+        <small>当前链路</small>
+        <strong id="taskStatus" role="status" aria-live="polite">等待任务</strong>
+      </div>
+    </div>
+  </header>
+
+  <main class="cooperation-grid">
+    <aside class="rail team-rail" aria-label="团队编组与任务历史">
+      <section class="paper-card composer-card">
+        <div class="section-index">01 / 编组</div>
+        <h2>组建任务团队</h2>
+        <label class="field" for="taskInput">
+          <span>任务说明</span>
+          <textarea id="taskInput" rows="4" placeholder="例如：调研社区公共空间并形成可执行建议"></textarea>
+        </label>
+
+        <div class="field">
+          <span id="memberPickerLabel">选择成员 <small>至少 2 位</small></span>
+          <div id="memberPicker" class="member-picker" role="group" aria-labelledby="memberPickerLabel"></div>
+        </div>
+
+        <label class="field" for="leaderSelect">
+          <span>任务负责人 <small>可选</small></span>
+          <select id="leaderSelect">
+            <option value="">自动推选</option>
+          </select>
+        </label>
+
+        <fieldset id="roleOverrides" class="role-overrides">
+          <legend>角色覆盖 <small>可选</small></legend>
+          <p class="field-note">选中成员后可指定研究、撰写或审阅职责。</p>
+        </fieldset>
+
+        <button id="startTaskBtn" class="primary-action" type="button" disabled>
+          <span>启动协作任务</span>
+          <small>Start cooperation</small>
+        </button>
+        <p id="formStatus" class="form-status" role="status" aria-live="polite">正在读取居民名录…</p>
+      </section>
+
+      <section class="paper-card history-card">
+        <div class="section-head">
+          <div>
+            <div class="section-index">02 / 档案</div>
+            <h2>任务历史</h2>
+          </div>
+          <button id="refreshSessionsBtn" class="icon-action" type="button" aria-label="刷新任务历史">↻</button>
+        </div>
+        <div id="sessionList" class="session-list" aria-live="polite"></div>
+      </section>
+    </aside>
+
+    <section class="workspace" aria-label="协作任务工作区">
+      <header class="workspace-head">
+        <div>
+          <p class="workspace-code" id="sessionCode">NO ACTIVE SESSION</p>
+          <h2 id="activeTaskTitle">选择历史任务或启动新的协作</h2>
+        </div>
+        <div class="session-actions" aria-label="任务控制">
+          <button id="pauseTaskBtn" type="button" hidden>暂停</button>
+          <button id="resumeTaskBtn" type="button" hidden>继续</button>
+          <button id="cancelTaskBtn" class="danger-action" type="button" hidden>终止</button>
+        </div>
+      </header>
+
+      <section class="progress-board" aria-labelledby="progressTitle">
+        <div class="progress-copy">
+          <div>
+            <p class="eyebrow">LIVE EXECUTION</p>
+            <h3 id="progressTitle">执行进度</h3>
+          </div>
+          <strong id="progressText">0 / 0</strong>
+        </div>
+        <div id="taskProgress" class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="taskProgressBar"></span>
+        </div>
+      </section>
+
+      <section class="workspace-team" aria-labelledby="workspaceTeamTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">ACTIVE ROSTER</p>
+            <h3 id="workspaceTeamTitle">团队与角色</h3>
+          </div>
+          <span id="leaderBadge" class="leader-badge">未指定负责人</span>
+        </div>
+        <div id="activeTeam" class="active-team"></div>
+      </section>
+
+      <section class="plan-board" aria-labelledby="planTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">TASK TOPOLOGY</p>
+            <h3 id="planTitle">任务计划</h3>
+          </div>
+          <span id="currentStepText" class="steel-label">等待计划生成</span>
+        </div>
+        <ol id="taskPlan" class="task-plan"></ol>
+      </section>
+    </section>
+
+    <aside class="rail signal-rail" aria-label="实时活动与任务产物">
+      <section class="signal-card activity-card">
+        <div class="section-head">
+          <div>
+            <div class="section-index">03 / 信号</div>
+            <h2>实时活动</h2>
+          </div>
+          <span id="eventCursor" class="event-cursor">SEQ 0000</span>
+        </div>
+        <div id="activityFeed" class="activity-feed" role="log" aria-live="polite" aria-relevant="additions text"></div>
+      </section>
+
+      <section class="paper-card artifacts-card">
+        <div class="section-head">
+          <div>
+            <div class="section-index">04 / 产物</div>
+            <h2>交付成果</h2>
+          </div>
+          <span id="artifactCount" class="artifact-count">0 files</span>
+        </div>
+        <div id="artifactList" class="artifact-list"></div>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/site/dashboard/collaboration-core.js"></script>
+  <script src="/site/dashboard/collaboration.js"></script>
+</body>
+</html>

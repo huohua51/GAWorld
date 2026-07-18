@@ -1,0 +1,900 @@
+(function (root, factory) {
+  "use strict";
+
+  const api = factory();
+  if (typeof module === "object" && module.exports) {
+    module.exports = api;
+  }
+  if (root) {
+    root.GAWorldCooperationPage = api;
+  }
+  if (root && root.document) {
+    api.boot();
+  }
+}(typeof window !== "undefined" ? window : globalThis, function () {
+  "use strict";
+
+  function safeArtifactUrl(rawUrl, sessionId, baseHref) {
+    if (typeof rawUrl !== "string" || !rawUrl.trim()) {
+      return null;
+    }
+    try {
+      const base = new URL(baseHref);
+      const parsed = new URL(rawUrl, base);
+      if (
+        parsed.origin !== base.origin
+        || parsed.username
+        || parsed.password
+        || parsed.search
+        || parsed.hash
+      ) {
+        return null;
+      }
+      const pathname = decodeURIComponent(parsed.pathname);
+      const scope = "/" + String(sessionId) + "/artifacts/";
+      const scopeIndex = pathname.indexOf(scope);
+      if (scopeIndex < 0) {
+        return null;
+      }
+      const relative = pathname.slice(scopeIndex + scope.length);
+      const segments = relative.split("/");
+      if (
+        !relative
+        || segments.some(function (segment) {
+          return !segment || segment === "." || segment === "..";
+        })
+      ) {
+        return null;
+      }
+      return parsed.pathname;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function boot() {
+    const core = window.GAWorldCollaborationCore;
+    if (!core) {
+      return;
+    }
+
+    const state = {
+      agents: [],
+      agentDetails: new Map(),
+      detailLoading: new Set(),
+      selected: new Set(),
+      roles: new Map(),
+      sessions: [],
+      session: null,
+      generation: 0,
+      lastSeq: 0,
+      pollTimer: null,
+      polling: null,
+      actionGeneration: 0,
+      actionPending: null,
+      creating: false,
+    };
+
+    const els = {};
+
+    async function request(path, options) {
+      const settings = Object.assign({}, options || {});
+      settings.headers = Object.assign(
+        {"Content-Type": "application/json"},
+        settings.headers || {},
+      );
+      const response = await fetch(path, settings);
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (_) {
+        payload = {};
+      }
+      if (!response.ok || payload.error) {
+        throw new Error(String(payload.error || "HTTP " + response.status));
+      }
+      return payload;
+    }
+
+    function setFormStatus(message, error) {
+      els.formStatus.textContent = String(message || "");
+      els.formStatus.classList.toggle("is-error", Boolean(error));
+    }
+
+    function clearPollTimer() {
+      if (state.pollTimer !== null) {
+        window.clearTimeout(state.pollTimer);
+        state.pollTimer = null;
+      }
+    }
+
+    function identity(generation, sessionId) {
+      return {generation, sessionId};
+    }
+
+    function currentIdentity() {
+      return identity(
+        state.generation,
+        state.session ? state.session.id : null,
+      );
+    }
+
+    function isCurrent(candidate) {
+      return core.isCurrentPoll(currentIdentity(), candidate);
+    }
+
+    function invalidateSession() {
+      clearPollTimer();
+      state.generation += 1;
+      state.polling = null;
+      state.actionPending = null;
+      return state.generation;
+    }
+
+    function agentFor(agentId) {
+      return state.agents.find(function (agent) {
+        return Number(agent.id) === Number(agentId);
+      });
+    }
+
+    function agentName(agentId) {
+      const agent = agentFor(agentId);
+      return agent
+        ? String(agent.name || "居民 " + agentId)
+        : "居民 " + String(agentId);
+    }
+
+    function capabilityHint(agentId) {
+      const detail = state.agentDetails.get(Number(agentId));
+      if (!detail) {
+        return state.detailLoading.has(Number(agentId))
+          ? "正在读取能力…"
+          : "选择后加载能力线索";
+      }
+      const capabilities = detail.capabilities || {};
+      const values = []
+        .concat(capabilities.skills || [])
+        .concat(capabilities.deliverables || [])
+        .filter(Boolean)
+        .slice(0, 3);
+      return values.length ? values.join(" · ") : "暂无能力标签";
+    }
+
+    function selectedIds() {
+      return core.normalizeAgentIds(Array.from(state.selected));
+    }
+
+    function selectedRoles() {
+      const roles = {};
+      selectedIds().forEach(function (agentId) {
+        const value = String(state.roles.get(agentId) || "").trim();
+        if (value) {
+          roles[String(agentId)] = value;
+        }
+      });
+      return roles;
+    }
+
+    function renderMemberPicker() {
+      els.memberPicker.replaceChildren();
+      if (!state.agents.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "暂无可用居民。";
+        els.memberPicker.appendChild(empty);
+        return;
+      }
+      const controlsLocked = state.creating || Boolean(state.actionPending);
+      state.agents.forEach(function (agent) {
+        const agentId = Number(agent.id);
+        const selected = state.selected.has(agentId);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "member-card";
+        button.classList.toggle("is-selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+        button.disabled = controlsLocked;
+
+        const id = document.createElement("span");
+        id.className = "member-id";
+        id.textContent = "AGENT / " + String(agentId);
+        const name = document.createElement("strong");
+        name.className = "member-name";
+        name.textContent = String(agent.name || "");
+        const capability = document.createElement("span");
+        capability.className = "member-capability";
+        capability.textContent = capabilityHint(agentId);
+        button.append(id, name, capability);
+        button.addEventListener("click", function () {
+          toggleMember(agentId);
+        });
+        els.memberPicker.appendChild(button);
+      });
+    }
+
+    function renderLeaderSelect() {
+      const previous = els.leaderSelect.value;
+      els.leaderSelect.replaceChildren();
+      const automatic = document.createElement("option");
+      automatic.value = "";
+      automatic.textContent = "自动推选";
+      els.leaderSelect.appendChild(automatic);
+      selectedIds().forEach(function (agentId) {
+        const option = document.createElement("option");
+        option.value = String(agentId);
+        option.textContent = "#" + String(agentId) + " · " + agentName(agentId);
+        els.leaderSelect.appendChild(option);
+      });
+      els.leaderSelect.value = state.selected.has(Number(previous))
+        ? previous
+        : "";
+      els.leaderSelect.disabled = state.creating
+        || Boolean(state.actionPending);
+    }
+
+    function renderRoleOverrides() {
+      els.roleOverrides.replaceChildren();
+      const legend = document.createElement("legend");
+      legend.textContent = "角色覆盖（可选）";
+      const note = document.createElement("p");
+      note.className = "field-note";
+      note.textContent = "为选中成员指定研究、撰写或审阅职责。";
+      els.roleOverrides.append(legend, note);
+
+      selectedIds().forEach(function (agentId) {
+        const row = document.createElement("div");
+        row.className = "role-row";
+        const label = document.createElement("label");
+        const inputId = "role-agent-" + String(agentId);
+        label.setAttribute("for", inputId);
+        label.textContent = agentName(agentId);
+        const input = document.createElement("input");
+        input.id = inputId;
+        input.className = "role-input";
+        input.type = "text";
+        input.placeholder = "自动分配";
+        input.value = String(state.roles.get(agentId) || "");
+        input.disabled = state.creating || Boolean(state.actionPending);
+        input.addEventListener("input", function () {
+          state.roles.set(agentId, input.value);
+        });
+        row.append(label, input);
+        els.roleOverrides.appendChild(row);
+      });
+    }
+
+    function renderComposerControls() {
+      const invalid = selectedIds().length < 2
+        || !els.taskInput.value.trim();
+      const locked = state.creating || Boolean(state.actionPending);
+      els.taskInput.disabled = locked;
+      els.startTaskBtn.disabled = invalid || locked;
+      els.startTaskBtn.classList.toggle("busy", state.creating);
+      renderMemberPicker();
+      renderLeaderSelect();
+      renderRoleOverrides();
+    }
+
+    function loadAgentDetail(agentId) {
+      if (
+        state.agentDetails.has(agentId)
+        || state.detailLoading.has(agentId)
+      ) {
+        return;
+      }
+      state.detailLoading.add(agentId);
+      renderMemberPicker();
+      request("/api/agents/" + encodeURIComponent(String(agentId)) + "/detail")
+        .then(function (detail) {
+          state.agentDetails.set(agentId, detail);
+        })
+        .catch(function () {
+          state.agentDetails.set(agentId, {capabilities: {}});
+        })
+        .finally(function () {
+          state.detailLoading.delete(agentId);
+          renderMemberPicker();
+        });
+    }
+
+    function toggleMember(agentId) {
+      if (state.creating || state.actionPending) {
+        return;
+      }
+      if (state.selected.has(agentId)) {
+        state.selected.delete(agentId);
+        state.roles.delete(agentId);
+      } else {
+        state.selected.add(agentId);
+        loadAgentDetail(agentId);
+      }
+      renderComposerControls();
+    }
+
+    function renderSessionList() {
+      els.sessionList.replaceChildren();
+      if (!state.sessions.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "还没有合作任务记录。";
+        els.sessionList.appendChild(empty);
+        return;
+      }
+      const locked = state.creating || Boolean(state.actionPending);
+      state.sessions.forEach(function (session) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "session-entry";
+        button.classList.toggle(
+          "is-active",
+          Boolean(state.session && state.session.id === session.id),
+        );
+        button.disabled = locked;
+        const title = document.createElement("strong");
+        title.textContent = String(session.task || session.title || session.id);
+        const meta = document.createElement("span");
+        meta.textContent = String(session.status || "unknown")
+          + " · "
+          + String(session.id || "");
+        button.append(title, meta);
+        button.addEventListener("click", function () {
+          openSession(session);
+        });
+        els.sessionList.appendChild(button);
+      });
+    }
+
+    function renderEmptyActivity() {
+      if (els.activityFeed.childElementCount) {
+        return;
+      }
+      const empty = document.createElement("p");
+      empty.className = "empty-state";
+      empty.dataset.activityEmpty = "true";
+      empty.textContent = "任务活动将在这里按序出现。";
+      els.activityFeed.appendChild(empty);
+    }
+
+    function appendEvents(events) {
+      (Array.isArray(events) ? events : []).forEach(function (event) {
+        const sequence = Number(event.seq || 0);
+        if (sequence <= state.lastSeq) {
+          return;
+        }
+        state.lastSeq = sequence;
+        const empty = els.activityFeed.querySelector(
+          "[data-activity-empty]",
+        );
+        if (empty) {
+          empty.remove();
+        }
+        const item = document.createElement("article");
+        item.className = "activity-event";
+        item.dataset.eventType = String(event.type || "");
+        const time = document.createElement("time");
+        time.textContent = "#" + String(sequence).padStart(4, "0");
+        const body = document.createElement("div");
+        const type = document.createElement("strong");
+        type.textContent = String(event.type || "event").toUpperCase();
+        const content = document.createElement("p");
+        content.textContent = String(event.content || "");
+        body.append(type, content);
+        item.append(time, body);
+        els.activityFeed.appendChild(item);
+      });
+      els.eventCursor.textContent = "SEQ "
+        + String(state.lastSeq).padStart(4, "0");
+      renderEmptyActivity();
+      els.activityFeed.scrollTop = els.activityFeed.scrollHeight;
+    }
+
+    function renderActiveTeam() {
+      els.activeTeam.replaceChildren();
+      const session = state.session;
+      if (!session || !(session.member_ids || []).length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "尚未装载协作团队。";
+        els.activeTeam.appendChild(empty);
+        els.leaderBadge.textContent = "未指定负责人";
+        return;
+      }
+      const roles = Object.assign(
+        {},
+        session.role_overrides || {},
+        session.roles || {},
+      );
+      (session.member_ids || []).forEach(function (agentId) {
+        const card = document.createElement("article");
+        card.className = "active-member";
+        const id = document.createElement("b");
+        id.textContent = "#" + String(agentId);
+        const name = document.createElement("strong");
+        name.textContent = agentName(agentId);
+        const role = document.createElement("span");
+        role.textContent = String(roles[String(agentId)] || "角色待分配");
+        card.append(id, name, role);
+        els.activeTeam.appendChild(card);
+      });
+      els.leaderBadge.textContent = session.leader_id
+        ? "负责人 · " + agentName(session.leader_id)
+        : "负责人由系统推选";
+    }
+
+    function renderPlan() {
+      els.taskPlan.replaceChildren();
+      const session = state.session;
+      const plan = session && Array.isArray(session.plan)
+        ? session.plan
+        : [];
+      if (!plan.length) {
+        const empty = document.createElement("li");
+        empty.className = "empty-state";
+        empty.textContent = "计划生成后，步骤会沿执行拓扑展开。";
+        els.taskPlan.appendChild(empty);
+        els.currentStepText.textContent = "等待计划生成";
+        els.progressText.textContent = "0 / 0";
+        els.taskProgress.setAttribute("aria-valuenow", "0");
+        els.taskProgressBar.style.width = "0%";
+        return;
+      }
+      const currentStep = Number(session.current_step || 0);
+      const completed = plan.filter(function (step, index) {
+        return step.status === "completed" || index < currentStep;
+      }).length;
+      const progress = Math.round((completed / plan.length) * 100);
+      els.progressText.textContent = String(completed)
+        + " / "
+        + String(plan.length);
+      els.taskProgress.setAttribute("aria-valuenow", String(progress));
+      els.taskProgressBar.style.width = String(progress) + "%";
+      els.currentStepText.textContent = currentStep < plan.length
+        ? "当前步骤 " + String(currentStep + 1)
+        : "计划已执行完毕";
+
+      plan.forEach(function (step, index) {
+        const item = document.createElement("li");
+        item.className = "plan-step";
+        item.classList.toggle("is-current", index === currentStep);
+        item.classList.toggle(
+          "is-completed",
+          step.status === "completed" || index < currentStep,
+        );
+        const body = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = String(step.title || "未命名步骤");
+        const owner = document.createElement("span");
+        owner.textContent = agentName(step.agent_id)
+          + (step.artifact ? " · " + String(step.artifact) : "");
+        body.append(title, owner);
+        const status = document.createElement("span");
+        status.className = "step-status";
+        status.textContent = String(step.status || "pending");
+        item.append(body, status);
+        els.taskPlan.appendChild(item);
+      });
+    }
+
+    function artifactName(artifact) {
+      if (artifact && artifact.filename) {
+        return String(artifact.filename);
+      }
+      if (artifact && artifact.path) {
+        const parts = String(artifact.path).split("/");
+        return parts[parts.length - 1] || "artifact";
+      }
+      return "artifact";
+    }
+
+    function renderArtifacts() {
+      els.artifactList.replaceChildren();
+      const artifacts = state.session && Array.isArray(state.session.artifacts)
+        ? state.session.artifacts
+        : [];
+      els.artifactCount.textContent = String(artifacts.length) + " files";
+      if (!artifacts.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "暂无交付成果。";
+        els.artifactList.appendChild(empty);
+        return;
+      }
+      artifacts.forEach(function (artifact) {
+        const item = document.createElement("div");
+        item.className = "artifact-item";
+        const safeUrl = safeArtifactUrl(
+          artifact && artifact.url,
+          state.session.id,
+          window.location.href,
+        );
+        let label;
+        if (safeUrl) {
+          label = document.createElement("a");
+          label.href = safeUrl;
+          label.target = "_blank";
+          label.rel = "noopener";
+        } else {
+          label = document.createElement("span");
+        }
+        label.textContent = artifactName(artifact);
+        item.appendChild(label);
+        els.artifactList.appendChild(item);
+      });
+    }
+
+    function renderSessionActions() {
+      const session = state.session;
+      const status = String(session && session.status || "");
+      const locked = state.creating || Boolean(state.actionPending);
+      els.pauseTaskBtn.hidden = status !== "running";
+      els.resumeTaskBtn.hidden = ![
+        "paused",
+        "failed",
+        "interrupted",
+      ].includes(status);
+      els.cancelTaskBtn.hidden = !session
+        || ["completed", "cancelled"].includes(status);
+      [
+        els.pauseTaskBtn,
+        els.resumeTaskBtn,
+        els.cancelTaskBtn,
+      ].forEach(function (button) {
+        button.disabled = locked;
+        button.classList.toggle(
+          "busy",
+          Boolean(
+            state.actionPending
+            && state.actionPending.action === button.dataset.action
+          ),
+        );
+      });
+    }
+
+    function renderWorkspace() {
+      const session = state.session;
+      els.taskStatus.textContent = state.creating
+        ? "正在创建任务"
+        : String(session && session.status || "等待任务");
+      els.sessionCode.textContent = session
+        ? String(session.id)
+        : "NO ACTIVE SESSION";
+      els.activeTaskTitle.textContent = session
+        ? String(session.task || session.title || session.id)
+        : "选择历史任务或启动新的协作";
+      renderSessionActions();
+      renderActiveTeam();
+      renderPlan();
+      renderArtifacts();
+      renderSessionList();
+      renderComposerControls();
+    }
+
+    function schedulePoll() {
+      clearPollTimer();
+      if (
+        document.hidden
+        || state.creating
+        || state.actionPending
+        || !core.shouldPoll(state.session)
+      ) {
+        return;
+      }
+      state.pollTimer = window.setTimeout(function () {
+        refreshSession();
+      }, 1000);
+    }
+
+    function terminal(session) {
+      return Boolean(
+        session
+        && ["completed", "cancelled"].includes(session.status)
+      );
+    }
+
+    async function refreshSession() {
+      if (
+        !state.session
+        || document.hidden
+        || state.creating
+        || state.actionPending
+      ) {
+        return;
+      }
+      const candidate = identity(state.generation, String(state.session.id));
+      if (core.isCurrentPoll(state.polling, candidate)) {
+        return;
+      }
+      state.polling = candidate;
+      clearPollTimer();
+      const sessionId = encodeURIComponent(String(candidate.sessionId));
+      try {
+        const results = await Promise.all([
+          request("/api/collaboration/sessions/" + sessionId),
+          request(
+            "/api/collaboration/sessions/"
+            + sessionId
+            + "/events?after="
+            + String(state.lastSeq),
+          ),
+        ]);
+        if (!isCurrent(candidate)) {
+          return;
+        }
+        const wasTerminal = terminal(state.session);
+        state.session = results[0];
+        appendEvents(results[1].events);
+        renderWorkspace();
+        if (!wasTerminal && terminal(state.session)) {
+          loadSessions();
+        }
+      } catch (error) {
+        if (isCurrent(candidate)) {
+          setFormStatus(error.message, true);
+        }
+      } finally {
+        if (!isCurrent(candidate)) {
+          return;
+        }
+        state.polling = core.releaseCurrentPoll(
+          state.polling,
+          candidate,
+        );
+        schedulePoll();
+      }
+    }
+
+    async function loadAgents() {
+      try {
+        const payload = await request("/api/agents");
+        state.agents = Array.isArray(payload.agents)
+          ? payload.agents.slice()
+          : [];
+        setFormStatus(
+          state.agents.length
+            ? "选择至少两位成员并描述任务。"
+            : "居民名录为空。",
+          false,
+        );
+      } catch (error) {
+        state.agents = [];
+        setFormStatus(error.message, true);
+      }
+      renderComposerControls();
+    }
+
+    async function loadSessions() {
+      els.refreshSessionsBtn.disabled = true;
+      try {
+        const payload = await request(
+          "/api/collaboration/sessions?kind=cooperation",
+        );
+        state.sessions = Array.isArray(payload.sessions)
+          ? payload.sessions.slice()
+          : [];
+        renderSessionList();
+      } catch (error) {
+        setFormStatus(error.message, true);
+      } finally {
+        els.refreshSessionsBtn.disabled = false;
+      }
+    }
+
+    function resetActivity() {
+      state.lastSeq = 0;
+      els.activityFeed.replaceChildren();
+      els.eventCursor.textContent = "SEQ 0000";
+      renderEmptyActivity();
+    }
+
+    function openSession(session) {
+      if (state.creating || state.actionPending) {
+        return;
+      }
+      invalidateSession();
+      state.session = session;
+      resetActivity();
+      renderWorkspace();
+      refreshSession();
+    }
+
+    async function startTask() {
+      if (state.creating || state.actionPending) {
+        return;
+      }
+      const agentIds = selectedIds();
+      const task = els.taskInput.value.trim();
+      if (agentIds.length < 2 || !task) {
+        setFormStatus("请填写任务并至少选择两位成员。", true);
+        return;
+      }
+      const previousSession = state.session;
+      const generation = invalidateSession();
+      state.creating = true;
+      state.session = null;
+      resetActivity();
+      renderWorkspace();
+      setFormStatus("正在创建合作任务…", false);
+      const payload = core.cooperationPayload(
+        agentIds,
+        task,
+        els.leaderSelect.value,
+        selectedRoles(),
+      );
+      try {
+        const session = await request(
+          "/api/collaboration/sessions",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+        );
+        if (generation !== state.generation) {
+          return;
+        }
+        state.creating = false;
+        state.session = session;
+        resetActivity();
+        renderWorkspace();
+        setFormStatus("合作任务已创建。", false);
+        loadSessions();
+        refreshSession();
+      } catch (error) {
+        if (generation !== state.generation) {
+          return;
+        }
+        state.creating = false;
+        state.session = previousSession;
+        renderWorkspace();
+        setFormStatus(error.message, true);
+        schedulePoll();
+      }
+    }
+
+    function actionIdentity(
+      generation,
+      sessionId,
+      actionGeneration,
+      action,
+    ) {
+      return {
+        generation,
+        sessionId,
+        actionGeneration,
+        action,
+      };
+    }
+
+    function isCurrentAction(candidate) {
+      return core.isCurrentAction(state.actionPending, candidate)
+        && isCurrent(candidate);
+    }
+
+    async function changeSession(action) {
+      if (!state.session || state.creating || state.actionPending) {
+        return;
+      }
+      const sessionId = String(state.session.id);
+      const generation = invalidateSession();
+      state.actionGeneration += 1;
+      const candidate = actionIdentity(
+        generation,
+        sessionId,
+        state.actionGeneration,
+        action,
+      );
+      state.actionPending = candidate;
+      renderWorkspace();
+      try {
+        const session = await request(
+          "/api/collaboration/sessions/"
+          + encodeURIComponent(sessionId)
+          + "/"
+          + action,
+          {
+            method: "POST",
+            body: "{}",
+          },
+        );
+        if (!isCurrentAction(candidate)) {
+          return;
+        }
+        state.session = session;
+        state.actionPending = core.releaseCurrentAction(
+          state.actionPending,
+          candidate,
+        );
+        renderWorkspace();
+        setFormStatus("任务状态已更新。", false);
+        loadSessions();
+        schedulePoll();
+      } catch (error) {
+        if (!isCurrentAction(candidate)) {
+          return;
+        }
+        state.actionPending = core.releaseCurrentAction(
+          state.actionPending,
+          candidate,
+        );
+        renderWorkspace();
+        setFormStatus(error.message, true);
+        schedulePoll();
+      }
+    }
+
+    function bindEvents() {
+      els.taskInput.addEventListener("input", renderComposerControls);
+      els.startTaskBtn.addEventListener("click", startTask);
+      els.refreshSessionsBtn.addEventListener("click", loadSessions);
+      els.pauseTaskBtn.addEventListener("click", function () {
+        changeSession("pause");
+      });
+      els.resumeTaskBtn.addEventListener("click", function () {
+        changeSession("resume");
+      });
+      els.cancelTaskBtn.addEventListener("click", function () {
+        changeSession("cancel");
+      });
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) {
+          clearPollTimer();
+        } else if (
+          !state.creating
+          && !state.actionPending
+          && core.shouldPoll(state.session)
+        ) {
+          refreshSession();
+        }
+      });
+    }
+
+    function collectElements() {
+      els.taskInput = document.getElementById("taskInput");
+      els.memberPicker = document.getElementById("memberPicker");
+      els.leaderSelect = document.getElementById("leaderSelect");
+      els.roleOverrides = document.getElementById("roleOverrides");
+      els.startTaskBtn = document.getElementById("startTaskBtn");
+      els.formStatus = document.getElementById("formStatus");
+      els.refreshSessionsBtn = document.getElementById("refreshSessionsBtn");
+      els.sessionList = document.getElementById("sessionList");
+      els.taskStatus = document.getElementById("taskStatus");
+      els.sessionCode = document.getElementById("sessionCode");
+      els.activeTaskTitle = document.getElementById("activeTaskTitle");
+      els.pauseTaskBtn = document.getElementById("pauseTaskBtn");
+      els.resumeTaskBtn = document.getElementById("resumeTaskBtn");
+      els.cancelTaskBtn = document.getElementById("cancelTaskBtn");
+      els.taskProgress = document.getElementById("taskProgress");
+      els.taskProgressBar = document.getElementById("taskProgressBar");
+      els.progressText = document.getElementById("progressText");
+      els.activeTeam = document.getElementById("activeTeam");
+      els.leaderBadge = document.getElementById("leaderBadge");
+      els.currentStepText = document.getElementById("currentStepText");
+      els.taskPlan = document.getElementById("taskPlan");
+      els.activityFeed = document.getElementById("activityFeed");
+      els.eventCursor = document.getElementById("eventCursor");
+      els.artifactList = document.getElementById("artifactList");
+      els.artifactCount = document.getElementById("artifactCount");
+      els.pauseTaskBtn.dataset.action = "pause";
+      els.resumeTaskBtn.dataset.action = "resume";
+      els.cancelTaskBtn.dataset.action = "cancel";
+    }
+
+    function init() {
+      collectElements();
+      bindEvents();
+      renderWorkspace();
+      renderEmptyActivity();
+      Promise.all([loadAgents(), loadSessions()]);
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  }
+
+  return {
+    boot,
+    safeArtifactUrl,
+  };
+}));

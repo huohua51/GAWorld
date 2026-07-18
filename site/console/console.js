@@ -1,4 +1,4 @@
-// Unified console shell: hosts the three GAWorld apps as tabs.
+// Unified console shell: hosts the GAWorld apps as tabs.
 // Each app is an independent same-origin page loaded in its own iframe. Frames
 // are created on first visit and kept alive (hidden, not destroyed) so each app
 // preserves its state when you switch away and back.
@@ -9,6 +9,7 @@
     { id: "dashboard", src: "/dashboard" },
     { id: "simviz", src: "/site/simviz/index.html" },
     { id: "studio", src: "/site/dashboard/studio.html" },
+    { id: "collaboration", src: "/site/dashboard/collaboration.html" },
   ];
 
   var framesEl = document.getElementById("frames");

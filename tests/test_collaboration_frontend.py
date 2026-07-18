@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD = ROOT / "site" / "dashboard"
+CONSOLE = ROOT / "site" / "console"
 
 
 def test_collaboration_core_node_suite():
@@ -166,6 +167,118 @@ def test_current_action_failure_releases_controls_and_reschedules_poll():
         re.DOTALL,
     )
     assert "finally" not in action_source
+
+
+def test_console_registers_persistent_cooperation_tab():
+    html = (CONSOLE / "index.html").read_text(encoding="utf-8")
+    source = (CONSOLE / "console.js").read_text(encoding="utf-8")
+
+    assert 'data-tab="collaboration"' in html
+    assert re.search(
+        r'\{\s*id:\s*"collaboration",\s*'
+        r'src:\s*"/site/dashboard/collaboration\.html"\s*\}',
+        source,
+    )
+
+
+def test_cooperation_page_exposes_workspace_controls():
+    html = (DASHBOARD / "collaboration.html").read_text(encoding="utf-8")
+    required_ids = [
+        "taskInput",
+        "memberPicker",
+        "leaderSelect",
+        "roleOverrides",
+        "startTaskBtn",
+        "sessionList",
+        "taskPlan",
+        "taskProgress",
+        "activityFeed",
+        "artifactList",
+        "taskStatus",
+        "pauseTaskBtn",
+        "resumeTaskBtn",
+        "cancelTaskBtn",
+    ]
+
+    assert all(f'id="{element_id}"' in html for element_id in required_ids)
+    assert 'aria-live="polite"' in html
+    assert "/site/dashboard/collaboration-core.js" in html
+    assert "/site/dashboard/collaboration.js" in html
+
+
+def test_cooperation_page_uses_safe_nodes_and_core_payload():
+    source = (DASHBOARD / "collaboration.js").read_text(encoding="utf-8")
+
+    assert "innerHTML" not in source
+    assert "outerHTML" not in source
+    assert "insertAdjacentHTML" not in source
+    assert "window.GAWorldCollaborationCore" in source
+    assert "core.cooperationPayload" in source
+    assert 'document.createElement("a")' in source
+    assert re.search(r"\.textContent\s*=", source)
+
+
+def test_cooperation_artifact_urls_are_same_origin_and_session_scoped():
+    module_path = DASHBOARD / "collaboration.js"
+    script = f"""
+      const assert = require("node:assert/strict");
+      const page = require({json.dumps(str(module_path))});
+      const base = "http://127.0.0.1:8000/site/dashboard/collaboration.html";
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/cs_1/artifacts/result.md",
+          "cs_1",
+          base,
+        ),
+        "/output/collaboration/sessions/cs_1/artifacts/result.md",
+      );
+      assert.equal(
+        page.safeArtifactUrl("https://evil.example/cs_1/artifacts/x", "cs_1", base),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl("/runtime/sessions/cs_2/artifacts/x", "cs_1", base),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl("/runtime/sessions/cs_1/not-artifacts/x", "cs_1", base),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl("/runtime/sessions/cs_1/artifacts/", "cs_1", base),
+        null,
+      );
+    """
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cooperation_layout_and_console_tabs_are_responsive():
+    page_css = (DASHBOARD / "collaboration.css").read_text(encoding="utf-8")
+    console_css = (CONSOLE / "console.css").read_text(encoding="utf-8")
+
+    assert "grid-template-columns:" in page_css
+    assert re.search(
+        r"@media\s*\(max-width:\s*899px\).*?"
+        r"grid-template-columns:\s*1fr",
+        page_css,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"@media\s*\(max-width:\s*860px\).*?"
+        r"overflow-x:\s*auto",
+        console_css,
+        re.DOTALL,
+    )
+    assert "flex-shrink: 0" in console_css
+    assert ":focus-visible" in page_css
 
 
 def test_collaboration_locale_keys_match_in_order():
