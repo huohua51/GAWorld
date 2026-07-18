@@ -4,6 +4,7 @@ import json
 import os
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -77,7 +78,12 @@ class SessionStore:
     def list(self, *, kind: str = "", status: str = "") -> list[CollaborationSession]:
         sessions: list[CollaborationSession] = []
         self._load_errors = []
-        for path in sorted(self.root.glob("*/session.json")):
+        directories = sorted(path for path in self.root.iterdir() if path.is_dir())
+        for directory in directories:
+            path = directory / "session.json"
+            if not path.is_file():
+                self._load_errors.append(directory.name)
+                continue
             try:
                 session = CollaborationSession.from_dict(
                     json.loads(path.read_text(encoding="utf-8"))
@@ -187,6 +193,7 @@ class SessionStore:
             if session.status is SessionStatus.RUNNING:
                 session.transition(SessionStatus.INTERRUPTED)
                 self.save(session)
-                self.append_event(session.id, "interrupted", "服务重启，会话等待恢复")
+                with suppress(OSError, TypeError, ValueError):
+                    self.append_event(session.id, "interrupted", "服务重启，会话等待恢复")
                 recovered.append(session.id)
         return recovered

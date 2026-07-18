@@ -1,3 +1,5 @@
+import json
+
 from gaworld.collaboration.models import CollaborationSession, SessionStatus
 from gaworld.collaboration.store import SessionStore
 
@@ -54,6 +56,25 @@ def test_recovery_marks_running_sessions_interrupted(tmp_path):
     assert store.get(session.id).status is SessionStatus.INTERRUPTED
 
 
+def test_recovery_continues_after_malformed_event_log(tmp_path):
+    store = SessionStore(tmp_path)
+    healthy = CollaborationSession.new(kind="discussion", member_ids=[1, 2])
+    store.create(healthy)
+    healthy.transition(SessionStatus.RUNNING)
+    store.save(healthy)
+    broken = CollaborationSession.new(kind="discussion", member_ids=[3, 4])
+    store.create(broken)
+    broken.transition(SessionStatus.RUNNING)
+    store.save(broken)
+    (tmp_path / broken.id / "events.jsonl").write_text("{bad json\n", encoding="utf-8")
+
+    recovered = store.recover_interrupted()
+
+    assert recovered == [broken.id, healthy.id]
+    assert store.get(broken.id).status is SessionStatus.INTERRUPTED
+    assert store.get(healthy.id).status is SessionStatus.INTERRUPTED
+
+
 def test_artifact_path_rejects_traversal(tmp_path):
     store = SessionStore(tmp_path)
     session = CollaborationSession.new(kind="cooperation", member_ids=[1, 2])
@@ -68,8 +89,19 @@ def test_artifact_path_rejects_traversal(tmp_path):
 
 def test_event_sink_receives_persisted_event(tmp_path):
     seen = []
-    store = SessionStore(tmp_path, event_sink=seen.append)
     session = CollaborationSession.new(kind="discussion", member_ids=[1, 2])
+
+    def sink(event):
+        persisted = [
+            json.loads(line)
+            for line in (tmp_path / session.id / "events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert persisted[-1] == event
+        seen.append(event)
+
+    store = SessionStore(tmp_path, event_sink=sink)
     store.create(session)
     store.append_event(session.id, "created", "讨论")
     assert seen == [
@@ -91,3 +123,12 @@ def test_malformed_session_is_skipped_and_reported(tmp_path):
     store = SessionStore(tmp_path)
     assert store.list() == []
     assert store.health()["malformed_sessions"] == ["broken"]
+
+
+def test_orphan_session_directory_is_reported_as_malformed(tmp_path):
+    (tmp_path / "orphan").mkdir()
+
+    store = SessionStore(tmp_path)
+
+    assert store.list() == []
+    assert store.health()["malformed_sessions"] == ["orphan"]
