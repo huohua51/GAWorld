@@ -324,3 +324,72 @@ def bootstrap_goals(agents: list, *, llm: LlmFn, memory_dir: str,
             if stateful:
                 save_agent_goals(agent_id, goals, memory_dir)
         agent["goals"] = goals
+
+
+# ---------------------------------------------------------------------
+# Prompt formatting & episode-salience matching (read side, no LLM)
+# ---------------------------------------------------------------------
+
+def format_goals_context(goals: Any, *, max_items: int = 8) -> str:
+    """Compact goals block for prompts. Short-term/long-term goals carry
+    ``[id]`` markers so consolidate_day's ``goal_progress`` can reference them."""
+    if not isinstance(goals, dict) or not any(goals.get(t) for t in _TIERS):
+        return "无"
+    lines: list[str] = []
+    life = [g for g in goals.get("life_goals", []) if g.get("status") == "active"]
+    if life:
+        lines.append("人生方向：" + "；".join(str(g.get("title", "")) for g in life))
+    for g in goals.get("long_term_goals", []):
+        if g.get("status") != "active":
+            continue
+        lines.append(
+            f"- 长期[{g.get('id')}]：{g.get('title')}（进度 {_clamp(g.get('progress', 0.0)):.0%}）"
+        )
+    for g in goals.get("short_term_goals", []):
+        if g.get("status") != "active":
+            continue
+        note = f"；最近：{g['recent_note']}" if g.get("recent_note") else ""
+        lines.append(
+            f"- 短期[{g.get('id')}]：{g.get('title')}"
+            f"（进度 {_clamp(g.get('progress', 0.0)):.0%}，目标 Day {g.get('target_day', '?')}{note}）"
+        )
+    return "\n".join(lines[: max(1, max_items)]) if lines else "无"
+
+
+def _goal_terms(text: Any) -> list[str]:
+    tokens = [t for t in re.split(r"[，。；、！？\s/（）()\[\]]+", str(text or "")) if len(t) >= 2]
+    terms = list(tokens)
+    # Unsegmented CJK tokens (e.g. a whole goal title) rarely appear verbatim
+    # in episode text; add character bigrams so keyword overlap still works.
+    for tok in tokens:
+        if len(tok) > 2 and re.search(r"[一-鿿]", tok):
+            terms.extend(tok[i:i + 2] for i in range(len(tok) - 1))
+    return terms
+
+
+def match_goal_relevance(goals: Any, *texts: Any, config: dict | None = None) -> float:
+    """Keyword overlap between active goals and episode text → salience input.
+
+    Returns ``relevance_floor`` (unrelated) .. ``relevance_cap`` (strong
+    short-term match). No LLM — same spirit as interests.match_growth_items.
+    """
+    cfg = goals_config(config)
+    floor = float(cfg["relevance_floor"])
+    cap = float(cfg["relevance_cap"])
+    if not isinstance(goals, dict):
+        return floor
+    blob = " ".join(str(t or "") for t in texts)
+    if not blob.strip():
+        return floor
+    best = floor
+    for tier, weight in (("short_term_goals", 1.0), ("long_term_goals", 0.75), ("life_goals", 0.55)):
+        for g in goals.get(tier, []):
+            if g.get("status") != "active":
+                continue
+            terms = _goal_terms(g.get("title")) + _goal_terms(g.get("recent_note"))
+            hits = sum(1 for t in terms if t and t in blob)
+            if not hits:
+                continue
+            ratio = min(1.0, hits / max(1, min(len(terms), 3)))
+            best = max(best, floor + (cap - floor) * weight * ratio)
+    return min(cap, best)

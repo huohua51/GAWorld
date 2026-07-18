@@ -607,7 +607,7 @@ git commit -m "feat(goals): LLM bootstrap with heuristic fallback and stateful r
 - Modify: `gaworld/goals.py`（末尾追加）
 - Test: `tests/test_goals_module.py`（追加）
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestFormatAndRelevance(unittest.TestCase):
@@ -646,12 +646,12 @@ class TestFormatAndRelevance(unittest.TestCase):
         self.assertEqual(score, 0.2)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_goals_module.py -k FormatAndRelevance -v`
 Expected: FAIL — `no attribute 'format_goals_context'`。
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 在 `gaworld/goals.py` 末尾追加：
 
@@ -718,12 +718,12 @@ def match_goal_relevance(goals: Any, *texts: Any, config: dict | None = None) ->
     return min(cap, best)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_module.py -v`
 Expected: 全部 PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add gaworld/goals.py tests/test_goals_module.py

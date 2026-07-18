@@ -164,5 +164,41 @@ class TestBootstrap(unittest.TestCase):
         self.assertEqual(agent["goals"]["life_goals"][0]["title"], "成为行业专家")
 
 
+class TestFormatAndRelevance(unittest.TestCase):
+    def test_format_goals_context_lists_three_tiers_with_ids(self):
+        text = goals_mod.format_goals_context(_sample_goals())
+        self.assertIn("人生方向", text)
+        self.assertIn("[ltg1]", text)
+        self.assertIn("[stg1]", text)
+        self.assertIn("40%", text)
+
+    def test_format_goals_context_empty(self):
+        self.assertEqual(goals_mod.format_goals_context({}), "无")
+        self.assertEqual(goals_mod.format_goals_context(None), "无")
+
+    def test_format_skips_inactive(self):
+        goals = _sample_goals()
+        goals["short_term_goals"][0]["status"] = "completed"
+        self.assertNotIn("[stg1]", goals_mod.format_goals_context(goals))
+
+    def test_relevance_floor_when_unrelated_or_empty(self):
+        self.assertEqual(goals_mod.match_goal_relevance({}, "跑步"), 0.2)
+        self.assertEqual(
+            goals_mod.match_goal_relevance(_sample_goals(), "下午在西湖边散步"), 0.2)
+
+    def test_relevance_high_on_short_term_match(self):
+        score = goals_mod.match_goal_relevance(
+            _sample_goals(), "上午研究基金调仓方案", "认真比较了收益")
+        self.assertGreater(score, 0.5)
+        self.assertLessEqual(score, 0.9)
+
+    def test_relevance_ignores_inactive_goals(self):
+        goals = _sample_goals()
+        goals["short_term_goals"][0]["status"] = "abandoned"
+        goals["long_term_goals"][0]["status"] = "abandoned"
+        score = goals_mod.match_goal_relevance(goals, "基金调仓 攒首付")
+        self.assertEqual(score, 0.2)
+
+
 if __name__ == "__main__":
     unittest.main()
