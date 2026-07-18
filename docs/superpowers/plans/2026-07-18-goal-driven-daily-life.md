@@ -39,7 +39,7 @@
 - Create: `gaworld/goals.py`
 - Test: `tests/test_goals_module.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 创建 `tests/test_goals_module.py`：
 
@@ -163,12 +163,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd /Users/cw/dev/GAWorld && python -m pytest tests/test_goals_module.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'gaworld.goals'`（或 import error）。
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 创建 `gaworld/goals.py`：
 
@@ -399,12 +399,12 @@ def _fallback_goals(agent: dict, *, day: int = 0, config: dict | None = None) ->
     return normalize_goals(payload, config=config, day=day)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_module.py -v`
 Expected: 全部 PASS（10 个测试）。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add gaworld/goals.py tests/test_goals_module.py
