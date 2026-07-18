@@ -6,6 +6,7 @@
   <title>GAWorld Console</title>
   <meta name="description" content="GAWorld 本地仿真控制台" />
   <link rel="stylesheet" href="/site/dashboard/styles.css?v=3" />
+  <link rel="stylesheet" href="/site/dashboard/interaction.css" />
 </head>
 <body>
   <main class="shell">
@@ -117,6 +118,68 @@
           <pre id="interviewOutput" class="codebox" data-i18n="interview.title">采访结果会显示在这里。</pre>
         </section>
 
+        <section id="collaborationPanel" class="panel collaboration-panel">
+          <div class="section-head collaboration-head">
+            <div>
+              <p class="kicker" data-i18n="collaboration.kicker">Agent Link</p>
+              <h2 data-i18n="collaboration.title">智能体互动</h2>
+            </div>
+            <span id="collaborationStatus" class="collaboration-status is-idle" data-i18n="collaboration.status_idle">待命</span>
+          </div>
+          <p class="collaboration-intro" data-i18n="collaboration.subtitle">选择两位或更多居民，建立关系并观察实时讨论。</p>
+
+          <div class="collaboration-roster-head">
+            <div>
+              <h3 id="collaborationMembersLabel" data-i18n="collaboration.members">参与成员</h3>
+              <p data-i18n="collaboration.members_hint">可使用键盘聚焦并选择成员。</p>
+            </div>
+            <span id="collaborationSelectionCount" class="collaboration-count">已选 0 位</span>
+          </div>
+          <div id="collaborationMembers" class="collaboration-members" role="group" aria-labelledby="collaborationMembersLabel"></div>
+
+          <div class="collaboration-friendship-row">
+            <button id="makeFriendsBtn" class="button" type="button" disabled data-i18n="collaboration.make_friends">建立好友关系</button>
+            <p id="collaborationFriendship" class="collaboration-friendship" data-i18n="collaboration.friendship_idle">关系操作尚未开始。</p>
+          </div>
+
+          <div class="collaboration-compose">
+            <label>
+              <span data-i18n="collaboration.topic">讨论主题（可选）</span>
+              <input id="collaborationTopic" data-i18n-placeholder="collaboration.topic_placeholder" placeholder="例如：公共空间如何改善？" />
+            </label>
+            <label class="collaboration-round-field">
+              <span data-i18n="collaboration.rounds">轮数</span>
+              <input id="collaborationRounds" type="number" min="3" max="20" value="6" />
+            </label>
+          </div>
+
+          <div class="button-row collaboration-launch">
+            <button id="startDiscussionBtn" class="button primary" type="button" disabled data-i18n="collaboration.start">开始讨论</button>
+            <button id="pauseDiscussionBtn" class="button" type="button" hidden data-i18n="collaboration.pause">暂停</button>
+            <button id="resumeDiscussionBtn" class="button" type="button" hidden data-i18n="collaboration.resume">继续</button>
+            <button id="cancelDiscussionBtn" class="button danger" type="button" hidden data-i18n="collaboration.cancel">终止</button>
+          </div>
+
+          <p id="collaborationNotice" class="collaboration-notice" role="status" aria-live="polite" data-i18n="collaboration.status_idle">待命</p>
+
+          <div class="collaboration-observatory" aria-label="discussion observatory">
+            <div>
+              <span data-i18n="collaboration.status">状态</span>
+              <strong id="collaborationRound" data-i18n="collaboration.round_idle">0 / 0 轮</strong>
+            </div>
+            <div>
+              <span data-i18n="collaboration.speaker">当前发言</span>
+              <strong id="collaborationSpeaker" data-i18n="collaboration.speaker_idle">等待成员发言</strong>
+            </div>
+          </div>
+
+          <div class="collaboration-transcript-head">
+            <h3 id="collaborationTranscriptLabel" data-i18n="collaboration.transcript">实时记录</h3>
+            <button id="fullHistoryBtn" class="button small" type="button" disabled data-i18n="collaboration.full_history">完整记录</button>
+          </div>
+          <div id="collaborationTranscript" class="collaboration-transcript" role="log" aria-live="polite" aria-relevant="additions text" aria-labelledby="collaborationTranscriptLabel"></div>
+        </section>
+
         <section class="panel">
           <div class="section-head">
             <div>
@@ -221,6 +284,8 @@
   </main>
   <div id="messageLine" class="toast" role="status"></div>
   <script src="/site/dashboard/i18n.js"></script>
+  <script src="/site/dashboard/collaboration-core.js"></script>
   <script src="/site/dashboard/app.js?v=3"></script>
+  <script src="/site/dashboard/interaction.js"></script>
 </body>
 </html>
