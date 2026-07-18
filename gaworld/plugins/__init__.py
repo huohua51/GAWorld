@@ -14,12 +14,13 @@ from __future__ import annotations
 
 def builtin_plugins():
     """Instantiate the built-in plugins (K3 migration adds one per stage)."""
+    from gaworld.behavior.plugin import DynamicBehaviorPlugin
+    from gaworld.collaboration.plugin import CollaborationPlugin
     from gaworld.economy.plugin import EconomyPlugin
     from gaworld.events.plugin import LifeEventsPlugin
     from gaworld.interests_plugin import InterestsPlugin
     from gaworld.policy.plugin import InterventionPlugin
     from gaworld.skills.plugin import SkillsPlugin
-    from gaworld.behavior.plugin import DynamicBehaviorPlugin
     from gaworld.work.plugin import RealWorkPlugin
     from gaworld.world.plugin import LocalPhysicalPlugin, SpatialPreferencesPlugin
 
@@ -33,4 +34,5 @@ def builtin_plugins():
         RealWorkPlugin(),
         DynamicBehaviorPlugin(),
         SpatialPreferencesPlugin(),
+        CollaborationPlugin(),
     ]
