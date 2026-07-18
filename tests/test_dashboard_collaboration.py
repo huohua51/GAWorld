@@ -332,6 +332,9 @@ def test_session_action_routes(api_server, action, expected_status):
 def test_artifact_links_are_confined_to_repository(api_server):
     payload = get_json(api_server, "/api/collaboration/sessions/s1")
 
+    assert payload["artifact_base_url"] == (
+        "/runtime/sessions/s1/artifacts/"
+    )
     safe, escaped, absolute = payload["artifacts"]
     assert safe["url"] == (
         "/runtime/sessions/s1/artifacts/result.md"
@@ -341,6 +344,69 @@ def test_artifact_links_are_confined_to_repository(api_server):
     assert api_server["service"].sessions["s1"]["artifacts"][1]["path"] == (
         "../../outside.txt"
     )
+
+
+def test_default_artifact_base_url_is_published_inside_repo(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(ds, "REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        ds,
+        "_effective_config",
+        lambda: {"collaboration": {}},
+    )
+
+    payload = ds._public_collaboration_session(
+        {
+            "id": "cs_20260719_abcdef",
+            "artifacts": [],
+            "artifact_base_url": "https://spoof.invalid/",
+        }
+    )
+
+    assert payload["artifact_base_url"] == (
+        "/output/collaboration/sessions/"
+        "cs_20260719_abcdef/artifacts/"
+    )
+
+
+@pytest.mark.parametrize(
+    ("sessions_dir", "session_id"),
+    [
+        ("../outside-sessions", "cs_20260719_abcdef"),
+        ("runtime/sessions", "../escape"),
+        ("runtime/sessions", "bad\u0000session"),
+    ],
+)
+def test_artifact_base_url_omitted_for_outside_or_traversal(
+    monkeypatch,
+    tmp_path,
+    sessions_dir,
+    session_id,
+):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    monkeypatch.setattr(ds, "REPO_ROOT", str(repo_root))
+    monkeypatch.setattr(
+        ds,
+        "_effective_config",
+        lambda: {
+            "collaboration": {
+                "sessions_dir": sessions_dir,
+            }
+        },
+    )
+
+    payload = ds._public_collaboration_session(
+        {
+            "id": session_id,
+            "artifacts": [],
+            "artifact_base_url": "/spoof/",
+        }
+    )
+
+    assert "artifact_base_url" not in payload
 
 
 @pytest.mark.parametrize(

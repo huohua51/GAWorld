@@ -165,9 +165,7 @@ def _reset_collaboration_service_for_tests():
 
 def _public_collaboration_session(payload):
     result = deepcopy(payload)
-    artifacts = result.get("artifacts")
-    if not isinstance(artifacts, list):
-        return result
+    result.pop("artifact_base_url", None)
 
     repo_root = Path(REPO_ROOT).resolve()
     collaboration = _collaboration_config()
@@ -177,13 +175,42 @@ def _public_collaboration_session(payload):
             "output/collaboration/sessions",
         )
     )
-    session_root = (sessions_dir / str(result.get("id") or "")).resolve()
-    try:
-        session_root.relative_to(sessions_dir)
-    except ValueError:
-        session_root_is_safe = False
-    else:
-        session_root_is_safe = True
+    session_id = str(result.get("id") or "")
+    safe_session_id = bool(
+        session_id
+        and session_id not in {".", ".."}
+        and "/" not in session_id
+        and "\\" not in session_id
+        and all(
+            ord(character) >= 32 and ord(character) != 127
+            for character in session_id
+        )
+    )
+    session_root = sessions_dir
+    session_root_is_safe = False
+    if safe_session_id:
+        session_root = (sessions_dir / session_id).resolve()
+        try:
+            session_root.relative_to(sessions_dir)
+        except ValueError:
+            pass
+        else:
+            session_root_is_safe = True
+
+    artifacts_root = (session_root / "artifacts").resolve()
+    if session_root_is_safe:
+        try:
+            public_artifacts_root = artifacts_root.relative_to(repo_root)
+        except ValueError:
+            pass
+        else:
+            result["artifact_base_url"] = (
+                "/" + public_artifacts_root.as_posix().rstrip("/") + "/"
+            )
+
+    artifacts = result.get("artifacts")
+    if not isinstance(artifacts, list):
+        return result
 
     public_artifacts = []
     for artifact in artifacts:

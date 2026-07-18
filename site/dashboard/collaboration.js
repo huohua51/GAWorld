@@ -14,17 +14,27 @@
 }(typeof window !== "undefined" ? window : globalThis, function () {
   "use strict";
 
-  function safeArtifactUrl(rawUrl, sessionId, baseHref) {
+  function safeArtifactUrl(rawUrl, sessionId, baseHref, rawScope) {
     const cleanSessionId = String(sessionId || "");
     if (
       typeof rawUrl !== "string"
       || !rawUrl.trim()
+      || typeof rawScope !== "string"
+      || !rawScope.startsWith("/")
+      || rawScope.startsWith("//")
+      || !rawUrl.startsWith(rawScope)
       || !/^cs_[A-Za-z0-9_-]+$/.test(cleanSessionId)
+      || rawScope.includes("\\")
+      || /%2e|%2f|%5c/i.test(rawScope)
+      || rawScope.split("/").some(function (segment) {
+        return segment === "." || segment === "..";
+      })
     ) {
       return null;
     }
     try {
       const base = new URL(baseHref);
+      const scope = new URL(rawScope, base);
       const parsed = new URL(rawUrl, base);
       if (
         parsed.origin !== base.origin
@@ -32,16 +42,35 @@
         || parsed.password
         || parsed.search
         || parsed.hash
+        || scope.origin !== base.origin
+        || scope.username
+        || scope.password
+        || scope.search
+        || scope.hash
       ) {
         return null;
       }
-      const scope = "/output/collaboration/sessions/"
+      const expectedSuffix = "/"
         + encodeURIComponent(cleanSessionId)
         + "/artifacts/";
-      if (!parsed.pathname.startsWith(scope)) {
+      if (
+        !scope.pathname.endsWith(expectedSuffix)
+        || /%2e|%2f|%5c/i.test(scope.pathname)
+        || !parsed.pathname.startsWith(scope.pathname)
+      ) {
         return null;
       }
-      const encodedFilename = parsed.pathname.slice(scope.length);
+      const decodedScope = decodeURIComponent(scope.pathname);
+      if (
+        decodedScope.includes("\\")
+        || decodedScope.split("/").some(function (segment) {
+          return segment === "." || segment === "..";
+        })
+        || /[\u0000-\u001f\u007f]/.test(decodedScope)
+      ) {
+        return null;
+      }
+      const encodedFilename = parsed.pathname.slice(scope.pathname.length);
       if (
         !encodedFilename
         || encodedFilename.includes("/")
@@ -526,6 +555,7 @@
           artifact && artifact.url,
           state.session.id,
           window.location.href,
+          state.session.artifact_base_url,
         );
         let label;
         if (safeUrl) {

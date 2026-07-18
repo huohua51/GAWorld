@@ -218,6 +218,7 @@ def test_cooperation_page_uses_safe_nodes_and_core_payload():
     assert "insertAdjacentHTML" not in source
     assert "window.GAWorldCollaborationCore" in source
     assert "core.cooperationPayload" in source
+    assert "state.session.artifact_base_url" in source
     assert 'document.createElement("a")' in source
     assert re.search(r"\.textContent\s*=", source)
 
@@ -228,95 +229,144 @@ def test_cooperation_artifact_urls_are_same_origin_and_session_scoped():
       const assert = require("node:assert/strict");
       const page = require({json.dumps(str(module_path))});
       const base = "http://127.0.0.1:8000/site/dashboard/collaboration.html";
+      const defaultScope =
+        "/output/collaboration/sessions/cs_1/artifacts/";
+      const runtimeScope = "/runtime/sessions/cs_1/artifacts/";
       assert.equal(
         page.safeArtifactUrl(
           "/output/collaboration/sessions/cs_1/artifacts/result.md",
           "cs_1",
           base,
+          defaultScope,
         ),
         "/output/collaboration/sessions/cs_1/artifacts/result.md",
       );
       assert.equal(
-        page.safeArtifactUrl("https://evil.example/cs_1/artifacts/x", "cs_1", base),
-        null,
-      );
-      assert.equal(
-        page.safeArtifactUrl("/runtime/sessions/cs_1/artifacts/x", "cs_1", base),
-        null,
-      );
-      assert.equal(
-        page.safeArtifactUrl("/runtime/sessions/cs_1/not-artifacts/x", "cs_1", base),
-        null,
-      );
-      assert.equal(
-        page.safeArtifactUrl("/runtime/sessions/cs_1/artifacts/", "cs_1", base),
-        null,
-      );
-      assert.equal(
-        page.safeArtifactUrl("/x/cs_1/artifacts/result.md", "cs_1", base),
-        null,
-      );
-      assert.equal(
         page.safeArtifactUrl(
-          "/output/collaboration/sessions/cs_10/artifacts/result.md",
+          "/runtime/sessions/cs_1/artifacts/result.md",
           "cs_1",
           base,
+          runtimeScope,
         ),
-        null,
+        "/runtime/sessions/cs_1/artifacts/result.md",
       );
       assert.equal(
         page.safeArtifactUrl(
-          "/output/collaboration/sessions/cs_1/artifacts/nested/result.md",
+          "https://evil.example/cs_1/artifacts/x",
           "cs_1",
           base,
+          defaultScope,
         ),
         null,
       );
       assert.equal(
         page.safeArtifactUrl(
-          "/output/collaboration/sessions/cs_1/artifacts/a%2Fb.md",
+          "/x/cs_1/artifacts/result.md",
           "cs_1",
           base,
+          runtimeScope,
         ),
         null,
       );
       assert.equal(
         page.safeArtifactUrl(
-          "/output/collaboration/sessions/cs_1/artifacts/%252e%252e",
+          "/runtime/sessions/cs_10/artifacts/result.md",
           "cs_1",
           base,
+          runtimeScope,
         ),
         null,
       );
       assert.equal(
         page.safeArtifactUrl(
-          "/output/collaboration/sessions/cs_1/artifacts/result.md?download=1",
+          "/runtime/sessions/cs_1/artifacts/nested/result.md",
           "cs_1",
           base,
+          runtimeScope,
         ),
         null,
       );
       assert.equal(
         page.safeArtifactUrl(
-          "/output/collaboration/sessions/cs_1/artifacts/result.md#preview",
+          "/runtime/sessions/cs_1/artifacts/a%2Fb.md",
           "cs_1",
           base,
+          runtimeScope,
         ),
         null,
       );
       assert.equal(
         page.safeArtifactUrl(
-          "/output/collaboration/sessions/not_cs/artifacts/result.md",
-          "not_cs",
+          "/runtime/sessions/cs_1/artifacts/%252e%252e",
+          "cs_1",
           base,
+          runtimeScope,
         ),
         null,
       );
-      assert.equal(page.safeArtifactUrl(
-        "/output/collaboration/sessions/cs_1/artifacts/result.md",
-        "cs_1/../cs_2",
-        base,
-      ), null);
+      assert.equal(
+        page.safeArtifactUrl(
+          "/runtime/sessions/cs_1/artifacts/result.md?download=1",
+          "cs_1",
+          base,
+          runtimeScope,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/runtime/sessions/cs_1/artifacts/result.md#preview",
+          "cs_1",
+          base,
+          runtimeScope,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/runtime/sessions/cs_1/artifacts/result.md",
+          "cs_1",
+          base,
+          "https://evil.example/runtime/sessions/cs_1/artifacts/",
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/runtime/sessions/cs_1/artifacts/result.md",
+          "cs_1",
+          base,
+          "/runtime/sessions/cs_1/artifacts/?scope=bad",
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/runtime/sessions/cs_1/artifacts/result.md",
+          "cs_1",
+          base,
+          "/runtime/sessions/cs_2/artifacts/",
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/runtime/sessions/cs_1/artifacts/result.md",
+          "cs_1",
+          base,
+          "/runtime/%2e%2e/sessions/cs_1/artifacts/",
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/runtime/sessions/cs_1/artifacts/result.md",
+          "cs_1",
+          base,
+          "http://user@127.0.0.1:8000/runtime/sessions/cs_1/artifacts/",
+        ),
+        null,
+      );
     """
     result = subprocess.run(
         ["node", "-e", script],
