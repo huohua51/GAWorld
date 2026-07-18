@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 
 import pytest
 
@@ -125,6 +126,43 @@ def test_discussion_discards_in_flight_summary_after_cancel(tmp_path):
     assert store.get(session.id).status is SessionStatus.CANCELLED
     assert not [event for event in events if event.type == "summary"]
     assert not [event for event in events if event.type == "completed"]
+
+
+def test_discussion_discards_summary_when_cancel_precedes_guarded_append(
+    tmp_path,
+    monkeypatch,
+):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2], max_rounds=1)
+    store.create(session)
+    original_guard = store.session_guard
+    cancel_before_next_guard = False
+
+    @contextmanager
+    def cancelling_guard(session_id):
+        nonlocal cancel_before_next_guard
+        if cancel_before_next_guard:
+            cancel_before_next_guard = False
+            active = store.get(session_id)
+            active.transition(SessionStatus.CANCELLED)
+            store.save(active)
+        with original_guard(session_id):
+            yield
+
+    monkeypatch.setattr(store, "session_guard", cancelling_guard)
+
+    def llm(prompt, task=None, agent_id=None):
+        nonlocal cancel_before_next_guard
+        if task == "collaboration_discussion_summary":
+            cancel_before_next_guard = True
+            return "不应持久化的总结"
+        return json.dumps({"content": "讨论内容", "converged": False}, ensure_ascii=False)
+
+    DiscussionRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    events = store.events(session.id)
+    assert store.get(session.id).status is SessionStatus.CANCELLED
+    assert not [event for event in events if event.type == "summary"]
 
 
 def test_discussion_reuses_in_flight_summary_after_pause_without_duplicate(tmp_path):
@@ -374,3 +412,68 @@ def test_discussion_resumes_only_missing_completion_side_effects(tmp_path, failu
     else:
         assert episode_attempts == [1, 2]
         assert interaction_attempts == [[1, 2], [1, 2]]
+
+
+def test_completed_event_append_failure_leaves_failed_without_marker(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2], max_rounds=1)
+    store.create(session)
+    append_event = store.append_event
+
+    def fail_completed_event(session_id, event_type, *args, **kwargs):
+        if event_type == "completed":
+            raise OSError("completed event failed")
+        return append_event(session_id, event_type, *args, **kwargs)
+
+    monkeypatch.setattr(store, "append_event", fail_completed_event)
+    llm = lambda prompt, task=None, agent_id=None: (
+        "总结"
+        if task == "collaboration_discussion_summary"
+        else json.dumps({"content": "发言", "converged": False}, ensure_ascii=False)
+    )
+
+    DiscussionRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    restored = store.get(session.id)
+    assert restored.status is SessionStatus.FAILED
+    assert "completed event failed" in restored.error
+    assert not [event for event in store.events(session.id) if event.type == "completed"]
+    assert not (restored.status is SessionStatus.COMPLETED and restored.error)
+
+
+def test_completed_snapshot_failure_reuses_completed_marker_on_resume(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2], max_rounds=1)
+    store.create(session)
+    save = store.save
+    failed_once = False
+
+    def fail_first_completed_save(candidate):
+        nonlocal failed_once
+        if candidate.status is SessionStatus.COMPLETED and not failed_once:
+            failed_once = True
+            raise OSError("completed snapshot failed")
+        return save(candidate)
+
+    monkeypatch.setattr(store, "save", fail_first_completed_save)
+    llm = lambda prompt, task=None, agent_id=None: (
+        "总结"
+        if task == "collaboration_discussion_summary"
+        else json.dumps({"content": "发言", "converged": False}, ensure_ascii=False)
+    )
+    runner = DiscussionRunner(store=store, agent_loader=_agent, llm=llm)
+
+    runner.run(session.id)
+
+    first = store.get(session.id)
+    assert first.status is SessionStatus.FAILED
+    assert "completed snapshot failed" in first.error
+    assert len([event for event in store.events(session.id) if event.type == "completed"]) == 1
+
+    runner.run(session.id)
+
+    restored = store.get(session.id)
+    assert restored.status is SessionStatus.COMPLETED
+    assert restored.error == ""
+    assert len([event for event in store.events(session.id) if event.type == "completed"]) == 1
+    assert not (restored.status is SessionStatus.COMPLETED and restored.error)

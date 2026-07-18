@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import os
 import threading
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -35,6 +35,12 @@ class SessionStore:
         with self._locks_guard:
             return self._locks.setdefault(session_id, threading.RLock())
 
+    @contextmanager
+    def session_guard(self, session_id: str) -> Iterator[None]:
+        self._dir(session_id)
+        with self._lock(session_id):
+            yield
+
     def _dir(self, session_id: str) -> Path:
         if not session_id or Path(session_id).name != session_id:
             raise ValueError("invalid session id")
@@ -52,7 +58,7 @@ class SessionStore:
 
     def create(self, session: CollaborationSession) -> CollaborationSession:
         directory = self._dir(session.id)
-        with self._lock(session.id):
+        with self.session_guard(session.id):
             if directory.exists():
                 raise ValueError(f"session already exists: {session.id}")
             directory.mkdir(parents=True)
@@ -60,7 +66,7 @@ class SessionStore:
         return session
 
     def save(self, session: CollaborationSession) -> CollaborationSession:
-        with self._lock(session.id):
+        with self.session_guard(session.id):
             if not self._dir(session.id).exists():
                 raise KeyError(session.id)
             session.updated_at = utc_now()
@@ -68,12 +74,13 @@ class SessionStore:
         return session
 
     def get(self, session_id: str) -> CollaborationSession:
-        path = self._dir(session_id) / "session.json"
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError as exc:
-            raise KeyError(session_id) from exc
-        return CollaborationSession.from_dict(payload)
+        with self.session_guard(session_id):
+            path = self._dir(session_id) / "session.json"
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise KeyError(session_id) from exc
+            return CollaborationSession.from_dict(payload)
 
     def list(self, *, kind: str = "", status: str = "") -> list[CollaborationSession]:
         sessions: list[CollaborationSession] = []
@@ -110,7 +117,7 @@ class SessionStore:
         agent_id: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> SessionEvent:
-        with self._lock(session_id):
+        with self.session_guard(session_id):
             path = self._dir(session_id) / "events.jsonl"
             existing = self.events(session_id)
             event = SessionEvent(
@@ -133,20 +140,21 @@ class SessionStore:
             return event
 
     def events(self, session_id: str, *, after: int = 0) -> list[SessionEvent]:
-        path = self._dir(session_id) / "events.jsonl"
-        if not (self._dir(session_id) / "session.json").exists():
-            raise KeyError(session_id)
-        if not path.exists():
-            return []
-        items: list[SessionEvent] = []
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            if not raw.strip():
-                continue
-            payload = json.loads(raw)
-            event = SessionEvent(**payload)
-            if event.seq > int(after):
-                items.append(event)
-        return items
+        with self.session_guard(session_id):
+            path = self._dir(session_id) / "events.jsonl"
+            if not (self._dir(session_id) / "session.json").exists():
+                raise KeyError(session_id)
+            if not path.exists():
+                return []
+            items: list[SessionEvent] = []
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                if not raw.strip():
+                    continue
+                payload = json.loads(raw)
+                event = SessionEvent(**payload)
+                if event.seq > int(after):
+                    items.append(event)
+            return items
 
     def write_artifact(
         self,
@@ -160,7 +168,7 @@ class SessionStore:
     ) -> dict[str, Any]:
         if not filename or Path(filename).name != filename:
             raise ValueError("unsafe artifact filename")
-        with self._lock(session_id):
+        with self.session_guard(session_id):
             directory = self._dir(session_id) / "artifacts"
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / filename

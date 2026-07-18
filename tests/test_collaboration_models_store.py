@@ -1,4 +1,5 @@
 import json
+import threading
 
 from gaworld.collaboration.models import CollaborationSession, SessionStatus
 from gaworld.collaboration.store import SessionStore
@@ -42,6 +43,45 @@ def test_store_persists_snapshot_and_incremental_events(tmp_path):
     assert first.seq == 1
     assert second.seq == 2
     assert [event.seq for event in store.events(session.id, after=1)] == [2]
+
+
+def test_session_guard_serializes_status_check_and_event_append(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2])
+    session.transition(SessionStatus.RUNNING)
+    store.create(session)
+    paused = store.get(session.id)
+    paused.transition(SessionStatus.PAUSED)
+    guard_entered = threading.Event()
+    save_started = threading.Event()
+    save_finished = threading.Event()
+
+    def guarded_append():
+        with store.session_guard(session.id):
+            assert store.get(session.id).status is SessionStatus.RUNNING
+            guard_entered.set()
+            assert save_started.wait(1)
+            assert not save_finished.wait(0.05)
+            store.append_event(session.id, "message", "guarded")
+
+    def save_pause():
+        assert guard_entered.wait(1)
+        save_started.set()
+        store.save(paused)
+        save_finished.set()
+
+    guarded_thread = threading.Thread(target=guarded_append)
+    pause_thread = threading.Thread(target=save_pause)
+    guarded_thread.start()
+    pause_thread.start()
+    guarded_thread.join(timeout=2)
+    pause_thread.join(timeout=2)
+
+    assert not guarded_thread.is_alive()
+    assert not pause_thread.is_alive()
+    assert save_finished.is_set()
+    assert [event.content for event in store.events(session.id)] == ["guarded"]
+    assert store.get(session.id).status is SessionStatus.PAUSED
 
 
 def test_recovery_marks_running_sessions_interrupted(tmp_path):
