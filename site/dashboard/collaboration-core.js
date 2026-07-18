@@ -96,6 +96,17 @@
     return isCurrentPoll(current, request) ? null : current;
   }
 
+  function isCurrentAction(current, request) {
+    return Boolean(
+      isCurrentPoll(current, request)
+      && current.actionGeneration === request.actionGeneration
+    );
+  }
+
+  function releaseCurrentAction(current, request) {
+    return isCurrentAction(current, request) ? null : current;
+  }
+
   return {
     normalizeAgentIds,
     discussionPayload,
@@ -105,5 +116,7 @@
     consumeFullHistoryRequest,
     isCurrentPoll,
     releaseCurrentPoll,
+    isCurrentAction,
+    releaseCurrentAction,
   };
 }));

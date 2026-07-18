@@ -103,3 +103,24 @@ test("releasing a stale poll preserves the newer in-flight identity", () => {
   assert.deepEqual(core.releaseCurrentPoll(current, stale), current);
   assert.equal(core.releaseCurrentPoll(current, current), null);
 });
+
+
+test("action identity serializes release by generation and session", () => {
+  const current = {
+    generation: 8,
+    sessionId: "session-b",
+    actionGeneration: 3,
+    action: "cancel",
+  };
+  const stale = {
+    generation: 8,
+    sessionId: "session-b",
+    actionGeneration: 2,
+    action: "pause",
+  };
+
+  assert.equal(core.isCurrentAction(current, current), true);
+  assert.equal(core.isCurrentAction(current, stale), false);
+  assert.deepEqual(core.releaseCurrentAction(current, stale), current);
+  assert.equal(core.releaseCurrentAction(current, current), null);
+});

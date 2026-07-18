@@ -110,6 +110,64 @@ def test_session_create_hides_old_actions_and_restores_on_failure():
     )
 
 
+def test_session_actions_exclude_polling_history_and_other_controls():
+    source = (DASHBOARD / "interaction.js").read_text(encoding="utf-8")
+    refresh_source = source[
+        source.index("async function refreshSession"):
+        source.index("async function startDiscussion")
+    ]
+    start_source = source[
+        source.index("async function startDiscussion"):
+        source.index("async function changeSession")
+    ]
+    action_source = source[
+        source.index("async function changeSession"):
+        source.index("function refreshLocale")
+    ]
+
+    assert "actionPending: null" in source
+    assert "actionGeneration" in source
+    assert refresh_source.index(
+        "state.actionPending"
+    ) < refresh_source.index(
+        "core.queueFullHistoryRequest"
+    )
+    assert "state.actionPending" in start_source
+    assert "state.actionPending" in action_source
+    assert "els.pauseBtn.disabled = controlsDisabled;" in source
+    assert "els.resumeBtn.disabled = controlsDisabled;" in source
+    assert "els.cancelBtn.disabled = controlsDisabled;" in source
+    assert "els.historyBtn.disabled = controlsDisabled;" in source
+    assert "|| Boolean(state.actionPending)" in source
+    assert re.search(
+        r"visibilitychange.*?!state\.actionPending.*?"
+        r"refreshSession\(false\);",
+        source,
+        re.DOTALL,
+    )
+
+
+def test_current_action_failure_releases_controls_and_reschedules_poll():
+    source = (DASHBOARD / "interaction.js").read_text(encoding="utf-8")
+    action_source = source[
+        source.index("async function changeSession"):
+        source.index("function refreshLocale")
+    ]
+
+    assert "core.isCurrentAction" in source
+    assert "core.releaseCurrentAction" in source
+    assert re.search(
+        r"catch \(error\).*?"
+        r"releaseAction\(identity\);.*?"
+        r"renderSession\(\);.*?"
+        r"reportError\(error\);.*?"
+        r"schedulePoll\(\);",
+        action_source,
+        re.DOTALL,
+    )
+    assert "finally" not in action_source
+
+
 def test_collaboration_locale_keys_match_in_order():
     zh = json.loads(
         (DASHBOARD / "locales" / "zh-CN.json").read_text(encoding="utf-8")

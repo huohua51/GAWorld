@@ -17,6 +17,8 @@
     pollingGeneration: null,
     pollingSessionId: null,
     pendingFullHistoryGeneration: null,
+    actionGeneration: 0,
+    actionPending: null,
     notice: null,
     friendship: null,
   };
@@ -97,7 +99,8 @@
       {count},
     );
     els.makeFriendsBtn.disabled = count < 2;
-    els.startDiscussionBtn.disabled = count < 2;
+    els.startDiscussionBtn.disabled = count < 2
+      || Boolean(state.actionPending);
   }
 
   function toggleAgent(agentId) {
@@ -332,7 +335,8 @@
   function schedulePoll() {
     clearPollTimer();
     if (
-      document.hidden
+      state.actionPending
+      || document.hidden
       || !core.shouldPoll(state.session)
     ) {
       return;
@@ -367,10 +371,20 @@
       els.pauseBtn.hidden = true;
       els.resumeBtn.hidden = true;
       els.cancelBtn.hidden = true;
+      els.pauseBtn.disabled = true;
+      els.resumeBtn.disabled = true;
+      els.cancelBtn.disabled = true;
+      els.pauseBtn.classList.remove("busy");
+      els.resumeBtn.classList.remove("busy");
+      els.cancelBtn.classList.remove("busy");
       els.historyBtn.disabled = true;
       return;
     }
     const status = String(session.status || "unknown");
+    const controlsDisabled = Boolean(state.actionPending);
+    const pendingAction = state.actionPending
+      ? state.actionPending.action
+      : null;
     els.status.textContent = translate(statusKey(status));
     els.status.className = "collaboration-status is-" + status;
     els.round.textContent = format("collaboration.round_progress", {
@@ -389,7 +403,13 @@
       "interrupted",
     ].includes(status);
     els.cancelBtn.hidden = ["completed", "cancelled"].includes(status);
-    els.historyBtn.disabled = false;
+    els.pauseBtn.disabled = controlsDisabled;
+    els.resumeBtn.disabled = controlsDisabled;
+    els.cancelBtn.disabled = controlsDisabled;
+    els.historyBtn.disabled = controlsDisabled;
+    els.pauseBtn.classList.toggle("busy", pendingAction === "pause");
+    els.resumeBtn.classList.toggle("busy", pendingAction === "resume");
+    els.cancelBtn.classList.toggle("busy", pendingAction === "cancel");
     if (!core.shouldPoll(session)) {
       clearPollTimer();
     }
@@ -466,6 +486,9 @@
   }
 
   async function refreshSession(fullHistory) {
+    if (state.actionPending) {
+      return;
+    }
     const generation = state.sessionGeneration;
     if (fullHistory) {
       state.pendingFullHistoryGeneration = (
@@ -534,6 +557,9 @@
   }
 
   async function startDiscussion() {
+    if (state.actionPending) {
+      return;
+    }
     const agentIds = selectedIds();
     if (agentIds.length < 2) {
       notify("collaboration.validation_members", {}, true);
@@ -591,14 +617,48 @@
     }
   }
 
-  async function changeSession(action, button) {
-    if (!state.session) {
+  function actionIdentity(
+    generation,
+    sessionId,
+    actionGeneration,
+    action,
+  ) {
+    return {
+      generation,
+      sessionId,
+      actionGeneration,
+      action,
+    };
+  }
+
+  function isCurrentAction(identity) {
+    return core.isCurrentAction(state.actionPending, identity)
+      && isCurrentPoll(identity);
+  }
+
+  function releaseAction(identity) {
+    state.actionPending = core.releaseCurrentAction(
+      state.actionPending,
+      identity,
+    );
+  }
+
+  async function changeSession(action) {
+    if (!state.session || state.actionPending) {
       return;
     }
     const sessionId = String(state.session.id);
     const generation = invalidatePolling();
-    const identity = pollIdentity(generation, sessionId);
-    setBusy(button, true);
+    state.actionGeneration += 1;
+    const identity = actionIdentity(
+      generation,
+      sessionId,
+      state.actionGeneration,
+      action,
+    );
+    state.actionPending = identity;
+    renderSession();
+    renderSelectionState();
     try {
       const encodedSessionId = encodeURIComponent(sessionId);
       const session = await request(
@@ -611,19 +671,24 @@
           body: "{}",
         },
       );
-      if (!isCurrentPoll(identity)) {
+      if (!isCurrentAction(identity)) {
         return;
       }
       state.session = session;
+      releaseAction(identity);
       renderSession();
+      renderSelectionState();
       notify("collaboration.action_" + action);
       schedulePoll();
     } catch (error) {
-      if (isCurrentPoll(identity)) {
-        reportError(error);
+      if (!isCurrentAction(identity)) {
+        return;
       }
-    } finally {
-      setBusy(button, false);
+      releaseAction(identity);
+      renderSession();
+      renderSelectionState();
+      reportError(error);
+      schedulePoll();
     }
   }
 
@@ -644,13 +709,13 @@
     els.makeFriendsBtn.addEventListener("click", makeFriends);
     els.startDiscussionBtn.addEventListener("click", startDiscussion);
     els.pauseBtn.addEventListener("click", function () {
-      changeSession("pause", els.pauseBtn);
+      changeSession("pause");
     });
     els.resumeBtn.addEventListener("click", function () {
-      changeSession("resume", els.resumeBtn);
+      changeSession("resume");
     });
     els.cancelBtn.addEventListener("click", function () {
-      changeSession("cancel", els.cancelBtn);
+      changeSession("cancel");
     });
     els.historyBtn.addEventListener("click", function () {
       refreshSession(true);
@@ -659,8 +724,11 @@
       if (document.hidden) {
         clearPollTimer();
       } else if (
-        state.pendingFullHistoryGeneration === state.sessionGeneration
-        || core.shouldPoll(state.session)
+        !state.actionPending
+        && (
+          state.pendingFullHistoryGeneration === state.sessionGeneration
+          || core.shouldPoll(state.session)
+        )
       ) {
         refreshSession(false);
       }
