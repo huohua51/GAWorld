@@ -1,4 +1,5 @@
 from gaworld.collaboration.models import CollaborationSession, SessionStatus
+from gaworld.collaboration.store import SessionStore
 
 
 def test_session_round_trip_preserves_public_fields():
@@ -26,3 +27,67 @@ def test_transition_table_rejects_completed_to_running():
         assert "completed" in str(exc)
     else:
         raise AssertionError("terminal session accepted an invalid transition")
+
+
+def test_store_persists_snapshot_and_incremental_events(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2])
+    store.create(session)
+    first = store.append_event(session.id, "message", "你好", agent_id=1)
+    second = store.append_event(session.id, "message", "你好呀", agent_id=2)
+
+    assert SessionStore(tmp_path).get(session.id).member_ids == [1, 2]
+    assert first.seq == 1
+    assert second.seq == 2
+    assert [event.seq for event in store.events(session.id, after=1)] == [2]
+
+
+def test_recovery_marks_running_sessions_interrupted(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2])
+    session.transition(SessionStatus.RUNNING)
+    store.create(session)
+
+    recovered = SessionStore(tmp_path).recover_interrupted()
+
+    assert recovered == [session.id]
+    assert store.get(session.id).status is SessionStatus.INTERRUPTED
+
+
+def test_artifact_path_rejects_traversal(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="cooperation", member_ids=[1, 2])
+    store.create(session)
+    try:
+        store.write_artifact(session.id, "../secret.txt", "bad", agent_id=1)
+    except ValueError as exc:
+        assert "artifact" in str(exc)
+    else:
+        raise AssertionError("unsafe artifact path was accepted")
+
+
+def test_event_sink_receives_persisted_event(tmp_path):
+    seen = []
+    store = SessionStore(tmp_path, event_sink=seen.append)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2])
+    store.create(session)
+    store.append_event(session.id, "created", "讨论")
+    assert seen == [
+        {
+            "seq": 1,
+            "type": "created",
+            "timestamp": seen[0]["timestamp"],
+            "content": "讨论",
+            "agent_id": None,
+            "metadata": {},
+        }
+    ]
+
+
+def test_malformed_session_is_skipped_and_reported(tmp_path):
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "session.json").write_text("{bad json", encoding="utf-8")
+    store = SessionStore(tmp_path)
+    assert store.list() == []
+    assert store.health()["malformed_sessions"] == ["broken"]
