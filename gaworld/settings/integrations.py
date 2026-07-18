@@ -17,6 +17,18 @@ def integration_settings() -> dict[str, Any]:
             "strict": False,
             "hooks": {},
         },
+        "collaboration": {
+            "enabled": True,
+            "sessions_dir": "output/collaboration/sessions",
+            "max_concurrent_sessions": 2,
+            "max_context_events": 24,
+            "step_retries": 2,
+            "discussion": {
+                "default_rounds": 6,
+                "min_rounds": 3,
+                "max_rounds": 20,
+            },
+        },
         # Real Work Execution (gaworld/work/*).
         # When enabled, "工作"-class activities can be dispatched to local adapters
         # that produce real artifacts under artifacts_dir, and agents can browse a

@@ -33,3 +33,11 @@ def test_deep_update_preserves_nested_sections():
 
     assert cfg["llm"]["routing"]["default"] == "b"
     assert cfg["llm"]["routing"]["tasks"] == {"schedule": "a"}
+
+
+def test_collaboration_defaults_are_bounded():
+    cfg = build_default_config()["collaboration"]
+    assert cfg["enabled"] is True
+    assert cfg["max_concurrent_sessions"] == 2
+    assert cfg["discussion"]["min_rounds"] == 3
+    assert cfg["discussion"]["max_rounds"] == 20
