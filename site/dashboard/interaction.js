@@ -13,7 +13,10 @@
     lastSeq: 0,
     lastSpeakerId: null,
     pollTimer: null,
-    polling: false,
+    sessionGeneration: 0,
+    pollingGeneration: null,
+    pollingSessionId: null,
+    pendingFullHistoryGeneration: null,
     notice: null,
     friendship: null,
   };
@@ -273,6 +276,59 @@
     }
   }
 
+  function invalidatePolling() {
+    clearPollTimer();
+    state.sessionGeneration += 1;
+    state.pollingGeneration = null;
+    state.pollingSessionId = null;
+    state.pendingFullHistoryGeneration = null;
+    return state.sessionGeneration;
+  }
+
+  function pollIdentity(generation, sessionId) {
+    return {
+      generation,
+      sessionId,
+    };
+  }
+
+  function currentPollIdentity() {
+    return pollIdentity(
+      state.sessionGeneration,
+      state.session ? state.session.id : null,
+    );
+  }
+
+  function isCurrentPoll(identity) {
+    return core.isCurrentPoll(currentPollIdentity(), identity);
+  }
+
+  function isPollInFlight(identity) {
+    return core.isCurrentPoll(
+      pollIdentity(
+        state.pollingGeneration,
+        state.pollingSessionId,
+      ),
+      identity,
+    );
+  }
+
+  function releasePoll(identity) {
+    const remaining = core.releaseCurrentPoll(
+      pollIdentity(
+        state.pollingGeneration,
+        state.pollingSessionId,
+      ),
+      identity,
+    );
+    state.pollingGeneration = remaining
+      ? remaining.generation
+      : null;
+    state.pollingSessionId = remaining
+      ? remaining.sessionId
+      : null;
+  }
+
   function schedulePoll() {
     clearPollTimer();
     if (
@@ -410,36 +466,69 @@
   }
 
   async function refreshSession(fullHistory) {
-    if (!state.session || state.polling || document.hidden) {
-      schedulePoll();
+    const generation = state.sessionGeneration;
+    if (fullHistory) {
+      state.pendingFullHistoryGeneration = (
+        core.queueFullHistoryRequest(generation)
+      );
+    }
+    if (!state.session) {
       return;
     }
-    state.polling = true;
+    const sessionId = String(state.session.id);
+    const identity = pollIdentity(generation, sessionId);
+    if (isPollInFlight(identity) || document.hidden) {
+      return;
+    }
+    const historyRequest = core.consumeFullHistoryRequest(
+      state.pendingFullHistoryGeneration,
+      generation,
+    );
+    state.pendingFullHistoryGeneration = (
+      historyRequest.pendingGeneration
+    );
+    state.pollingGeneration = generation;
+    state.pollingSessionId = sessionId;
     clearPollTimer();
-    const sessionId = encodeURIComponent(String(state.session.id));
-    const after = fullHistory ? 0 : state.lastSeq;
+    const encodedSessionId = encodeURIComponent(sessionId);
+    const after = historyRequest.fullHistory ? 0 : state.lastSeq;
     try {
       const results = await Promise.all([
-        request("/api/collaboration/sessions/" + sessionId),
+        request("/api/collaboration/sessions/" + encodedSessionId),
         request(
           "/api/collaboration/sessions/"
-          + sessionId
+          + encodedSessionId
           + "/events?after="
           + String(after),
         ),
       ]);
+      if (!isCurrentPoll(identity)) {
+        return;
+      }
       state.session = results[0];
-      if (fullHistory) {
+      if (historyRequest.fullHistory) {
         state.lastSeq = 0;
         state.lastSpeakerId = null;
         els.transcript.replaceChildren();
       }
       appendEvents(results[1].events);
     } catch (error) {
-      reportError(error);
+      if (isCurrentPoll(identity)) {
+        reportError(error);
+      }
     } finally {
-      state.polling = false;
+      if (!isCurrentPoll(identity)) {
+        return;
+      }
+      releasePoll(identity);
       renderSession();
+      if (
+        !document.hidden
+        && state.pendingFullHistoryGeneration === generation
+      ) {
+        refreshSession(false);
+        return;
+      }
       schedulePoll();
     }
   }
@@ -463,15 +552,23 @@
       notify("collaboration.validation_rounds", {}, true);
       return;
     }
+    const previousSession = state.session;
+    const generation = invalidatePolling();
+    state.session = null;
+    renderSession();
     setBusy(els.startDiscussionBtn, true);
     try {
-      state.session = await request(
+      const session = await request(
         "/api/collaboration/sessions",
         {
           method: "POST",
           body: JSON.stringify(payload),
         },
       );
+      if (generation !== state.sessionGeneration) {
+        return;
+      }
+      state.session = session;
       state.lastSeq = 0;
       state.lastSpeakerId = null;
       els.transcript.replaceChildren();
@@ -482,7 +579,12 @@
       });
       await refreshSession(false);
     } catch (error) {
-      reportError(error);
+      if (generation === state.sessionGeneration) {
+        state.session = previousSession;
+        renderSession();
+        schedulePoll();
+        reportError(error);
+      }
     } finally {
       setBusy(els.startDiscussionBtn, false);
       renderSelectionState();
@@ -493,13 +595,15 @@
     if (!state.session) {
       return;
     }
+    const sessionId = String(state.session.id);
+    const generation = invalidatePolling();
+    const identity = pollIdentity(generation, sessionId);
     setBusy(button, true);
-    clearPollTimer();
     try {
-      const sessionId = encodeURIComponent(String(state.session.id));
-      state.session = await request(
+      const encodedSessionId = encodeURIComponent(sessionId);
+      const session = await request(
         "/api/collaboration/sessions/"
-        + sessionId
+        + encodedSessionId
         + "/"
         + action,
         {
@@ -507,11 +611,17 @@
           body: "{}",
         },
       );
+      if (!isCurrentPoll(identity)) {
+        return;
+      }
+      state.session = session;
       renderSession();
       notify("collaboration.action_" + action);
       schedulePoll();
     } catch (error) {
-      reportError(error);
+      if (isCurrentPoll(identity)) {
+        reportError(error);
+      }
     } finally {
       setBusy(button, false);
     }
@@ -548,7 +658,10 @@
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) {
         clearPollTimer();
-      } else if (core.shouldPoll(state.session)) {
+      } else if (
+        state.pendingFullHistoryGeneration === state.sessionGeneration
+        || core.shouldPoll(state.session)
+      ) {
         refreshSession(false);
       }
     });

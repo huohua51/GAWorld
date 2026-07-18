@@ -61,3 +61,45 @@ test("only active sessions continue polling", () => {
   });
   assert.equal(core.shouldPoll(null), false);
 });
+
+
+test("full history requests wait for their polling generation", () => {
+  const pendingGeneration = core.queueFullHistoryRequest(7);
+
+  assert.equal(pendingGeneration, 7);
+  assert.deepEqual(
+    core.consumeFullHistoryRequest(pendingGeneration, 7),
+    {fullHistory: true, pendingGeneration: null},
+  );
+  assert.deepEqual(
+    core.consumeFullHistoryRequest(pendingGeneration, 8),
+    {fullHistory: false, pendingGeneration: 7},
+  );
+});
+
+
+test("poll responses are current only for the same generation and session", () => {
+  const current = {generation: 4, sessionId: "new-session"};
+
+  assert.equal(
+    core.isCurrentPoll(current, {generation: 4, sessionId: "new-session"}),
+    true,
+  );
+  assert.equal(
+    core.isCurrentPoll(current, {generation: 3, sessionId: "new-session"}),
+    false,
+  );
+  assert.equal(
+    core.isCurrentPoll(current, {generation: 4, sessionId: "old-session"}),
+    false,
+  );
+});
+
+
+test("releasing a stale poll preserves the newer in-flight identity", () => {
+  const current = {generation: 5, sessionId: "new-session"};
+  const stale = {generation: 4, sessionId: "old-session"};
+
+  assert.deepEqual(core.releaseCurrentPoll(current, stale), current);
+  assert.equal(core.releaseCurrentPoll(current, current), null);
+});

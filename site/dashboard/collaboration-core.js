@@ -62,10 +62,48 @@
     );
   }
 
+  function queueFullHistoryRequest(generation) {
+    return Number(generation);
+  }
+
+  function consumeFullHistoryRequest(pendingGeneration, generation) {
+    if (pendingGeneration === generation) {
+      return {
+        fullHistory: true,
+        pendingGeneration: null,
+      };
+    }
+    return {
+      fullHistory: false,
+      pendingGeneration,
+    };
+  }
+
+  function isCurrentPoll(current, request) {
+    return Boolean(
+      current
+      && request
+      && current.sessionId !== null
+      && current.sessionId !== undefined
+      && request.sessionId !== null
+      && request.sessionId !== undefined
+      && current.generation === request.generation
+      && String(current.sessionId) === String(request.sessionId)
+    );
+  }
+
+  function releaseCurrentPoll(current, request) {
+    return isCurrentPoll(current, request) ? null : current;
+  }
+
   return {
     normalizeAgentIds,
     discussionPayload,
     cooperationPayload,
     shouldPoll,
+    queueFullHistoryRequest,
+    consumeFullHistoryRequest,
+    isCurrentPoll,
+    releaseCurrentPoll,
   };
 }));

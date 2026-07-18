@@ -51,14 +51,63 @@ def test_panel_and_assets_are_mounted_in_safe_order():
     assert html.index("/site/dashboard/styles.css") < html.index(
         "/site/dashboard/interaction.css"
     )
-    expected = [
-        "/site/dashboard/i18n.js",
-        "/site/dashboard/collaboration-core.js",
-        "/site/dashboard/citymap-view.js?v=1",
-        "/site/dashboard/app.js?v=4",
-        "/site/dashboard/interaction.js",
+    i18n_index = scripts.index("/site/dashboard/i18n.js")
+    core_index = scripts.index("/site/dashboard/collaboration-core.js")
+    app_index = next(
+        index
+        for index, script in enumerate(scripts)
+        if re.fullmatch(r"/site/dashboard/app\.js(?:\?[^/]*)?", script)
+    )
+    interaction_index = scripts.index("/site/dashboard/interaction.js")
+
+    assert i18n_index < core_index < app_index < interaction_index
+
+
+def test_polling_controller_queues_history_and_rejects_stale_responses():
+    source = (DASHBOARD / "interaction.js").read_text(encoding="utf-8")
+    refresh_source = source[
+        source.index("async function refreshSession"):
+        source.index("async function startDiscussion")
     ]
-    assert [script for script in scripts if script in expected] == expected
+
+    assert "pendingFullHistoryGeneration" in source
+    assert "pollingGeneration" in source
+    assert "core.queueFullHistoryRequest" in source
+    assert "core.consumeFullHistoryRequest" in source
+    assert "core.isCurrentPoll" in source
+    assert "core.releaseCurrentPoll" in source
+    assert not re.search(r"\bpolling:\s*(?:true|false)", source)
+    assert source.count("empty.remove();") <= 1
+    assert refresh_source.index(
+        "core.queueFullHistoryRequest"
+    ) < refresh_source.index(
+        "document.hidden"
+    ) < refresh_source.index(
+        "core.consumeFullHistoryRequest"
+    )
+
+
+def test_session_create_hides_old_actions_and_restores_on_failure():
+    source = (DASHBOARD / "interaction.js").read_text(encoding="utf-8")
+    start_source = source[
+        source.index("async function startDiscussion"):
+        source.index("async function changeSession")
+    ]
+
+    assert "const previousSession = state.session;" in start_source
+    assert start_source.index(
+        "state.session = null;"
+    ) < start_source.index(
+        'request(\n        "/api/collaboration/sessions"'
+    )
+    assert re.search(
+        r"catch \(error\).*?"
+        r"state\.session = previousSession;.*?"
+        r"renderSession\(\);.*?"
+        r"schedulePoll\(\);",
+        start_source,
+        re.DOTALL,
+    )
 
 
 def test_collaboration_locale_keys_match_in_order():
