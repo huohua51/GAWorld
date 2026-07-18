@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from gaworld.collaboration.models import utc_now
-from gaworld.social.network import ensure_relationship_schema
+from gaworld.social.network import ensure_relationship_schema, role_config
 
 
 class RelationshipService:
@@ -61,16 +61,18 @@ class RelationshipService:
                     lock = self._locks.setdefault(agent_id, threading.RLock())
                 stack.enter_context(lock)
             changed: dict[int, dict[str, Any]] = {}
+            loaded: dict[int, dict[str, Any]] = {}
             stamp = utc_now()
             for left, right in combinations(ids, 2):
                 for source, target in ((left, right), (right, left)):
-                    relationships = changed.setdefault(
+                    relationships = loaded.setdefault(
                         source,
                         self._load(self._path(source)),
                     )
                     record = relationships.get(str(target))
                     if isinstance(record, dict):
                         record["last_dashboard_interaction_at"] = stamp
+                        changed[source] = relationships
             for agent_id, relationships in changed.items():
                 self._atomic_write(self._path(agent_id), relationships)
 
@@ -80,9 +82,11 @@ class RelationshipService:
             return {}
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return payload if isinstance(payload, dict) else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid relationship file: {path}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"relationship file must contain a JSON object: {path}")
+        return payload
 
     @staticmethod
     def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
@@ -104,7 +108,8 @@ class RelationshipService:
         if not isinstance(record, dict):
             return False
         return (
-            float(record.get("closeness", 0.0)) >= 0.65
+            str(record.get("role") or "") not in {"", "acquaintance"}
+            and float(record.get("closeness", 0.0)) >= 0.65
             and float(record.get("trust", 0.0)) >= 0.60
             and float(record.get("obligation", 0.0)) >= 0.40
             and float(record.get("friction", 1.0)) <= 0.10
@@ -125,6 +130,11 @@ class RelationshipService:
         ensure_relationship_schema(record, role=role, kind="agent", tie_origin="dashboard")
         record["kind"] = "agent"
         record["role"] = role
+        if existing_role in {"", "acquaintance"}:
+            defaults = role_config(role)
+            record["channels"] = list(defaults["channels"])
+            record["decay_rate"] = float(defaults["decay_rate"])
+            record["obligation_base"] = float(defaults["obligation_base"])
         record.setdefault("tie_origin", "dashboard")
         profile = record.setdefault("profile", {})
         if not isinstance(profile, dict):
@@ -172,13 +182,13 @@ class RelationshipService:
                 dict(right_record or {}), agents[left] or {}
             )
 
-        replaced: list[int] = []
+        attempted: list[int] = []
         try:
             for agent_id in ids:
+                attempted.append(agent_id)
                 self._atomic_write(paths[agent_id], relationships[agent_id])
-                replaced.append(agent_id)
         except Exception:
-            for agent_id in reversed(replaced):
+            for agent_id in reversed(attempted):
                 original = originals[agent_id]
                 if original is None:
                     paths[agent_id].unlink(missing_ok=True)
@@ -191,6 +201,9 @@ class RelationshipService:
 
 
 def merge_persisted_agent_edges(agents: list[dict[str, Any]]) -> None:
+    for agent in agents:
+        if not isinstance(agent.get("social_neighbors"), list):
+            agent["social_neighbors"] = []
     by_id = {int(agent["id"]): agent for agent in agents}
     edges: set[tuple[int, int]] = set()
     for agent in agents:
