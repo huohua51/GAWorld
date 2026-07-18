@@ -124,6 +124,20 @@ class CooperationRunner:
                 )
         if not steps:
             steps = [dict(item, status="pending") for item in fallback["steps"]]
+        used_filenames = {"final.md"}
+        for index, step in enumerate(steps, start=1):
+            filename = str(step["artifact"])
+            if filename in used_filenames:
+                path = Path(filename)
+                stem = path.stem or "artifact"
+                suffix = path.suffix
+                filename = f"{stem}_{index}{suffix}"
+                collision = 2
+                while filename in used_filenames:
+                    filename = f"{stem}_{index}_{collision}{suffix}"
+                    collision += 1
+            step["artifact"] = filename
+            used_filenames.add(filename)
         return {"leader_id": leader_id, "roles": roles, "steps": steps}
 
     @staticmethod
@@ -146,7 +160,17 @@ class CooperationRunner:
         relative = str(event.metadata.get("path") or "")
         if not relative:
             return ""
-        return (self.store.root / session_id / relative).read_text(encoding="utf-8")
+        artifacts_root = (self.store.root / session_id / "artifacts").resolve()
+        path = (self.store.root / session_id / relative).resolve()
+        try:
+            path.relative_to(artifacts_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"artifact path outside session artifacts: {relative}"
+            ) from exc
+        if path == artifacts_root:
+            raise ValueError(f"artifact path outside session artifacts: {relative}")
+        return path.read_text(encoding="utf-8")
 
     def _fail(self, session_id: str, exc: Exception) -> None:
         with self.store.session_guard(session_id):

@@ -147,6 +147,119 @@ def test_cooperation_replaces_unsafe_artifact_name(tmp_path):
     assert not (tmp_path / "escape.md").exists()
 
 
+def test_cooperation_rejects_forged_artifact_path_before_reading(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="损坏事件",
+        leader_id=1,
+        roles={"1": "作者", "2": "审阅"},
+        plan=[_step("执行", 1, "work.md")],
+    )
+    store.create(session)
+    store.append_event(
+        session.id,
+        "artifact",
+        "work.md",
+        agent_id=1,
+        metadata={"step_index": 0, "path": "../../outside.md"},
+    )
+    llm_calls = []
+
+    CooperationRunner(
+        store=store,
+        agent_loader=_agent,
+        llm=lambda *args, **kwargs: llm_calls.append((args, kwargs)) or "unused",
+    ).run(session.id)
+
+    saved = store.get(session.id)
+    assert saved.status is SessionStatus.FAILED
+    assert "outside session artifacts" in saved.error
+    assert llm_calls == []
+
+
+def test_cooperation_rejects_existing_file_outside_artifact_root(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="越界事件",
+        leader_id=1,
+        roles={"1": "作者", "2": "审阅"},
+        plan=[_step("执行", 1, "work.md")],
+    )
+    store.create(session)
+    (tmp_path / "outside.md").write_text("不应进入提示词", encoding="utf-8")
+    store.append_event(
+        session.id,
+        "artifact",
+        "work.md",
+        agent_id=1,
+        metadata={"step_index": 0, "path": "../outside.md"},
+    )
+    llm_calls = []
+
+    CooperationRunner(
+        store=store,
+        agent_loader=_agent,
+        llm=lambda *args, **kwargs: llm_calls.append((args, kwargs)) or "unused",
+    ).run(session.id)
+
+    saved = store.get(session.id)
+    assert saved.status is SessionStatus.FAILED
+    assert "outside session artifacts" in saved.error
+    assert llm_calls == []
+
+
+def test_cooperation_allocates_unique_step_artifacts_and_reserves_final(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="文件名冲突",
+    )
+    store.create(session)
+
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_plan":
+            return json.dumps(
+                {
+                    "steps": [
+                        {"title": "第一项", "agent_id": 1, "artifact": "same.md"},
+                        {"title": "第二项", "agent_id": 2, "artifact": "same.md"},
+                        {"title": "第三项", "agent_id": 1, "artifact": "same_2.md"},
+                        {"title": "第四项", "agent_id": 2, "artifact": "final.md"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        if task == "collaboration_execute":
+            return f"# {json.loads(prompt)['step']['title']}"
+        if task == "collaboration_review":
+            return json.dumps({"approved": True, "feedback": "通过"})
+        return "# 综合成果"
+
+    CooperationRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    saved = store.get(session.id)
+    expected = ["same.md", "same_2.md", "same_2_3.md", "final_4.md"]
+    step_events = [
+        event
+        for event in store.events(session.id)
+        if event.type == "artifact" and "step_index" in event.metadata
+    ]
+    assert saved.status is SessionStatus.COMPLETED
+    assert [step["artifact"] for step in saved.plan] == expected
+    assert [event.content for event in step_events] == expected
+    assert [event.metadata["step_index"] for event in step_events] == [0, 1, 2, 3]
+    assert [artifact["filename"] for artifact in saved.artifacts] == [*expected, "final.md"]
+    for index, filename in enumerate(expected, start=1):
+        path = tmp_path / session.id / "artifacts" / filename
+        assert path.read_text(encoding="utf-8") == f"# 第{'一二三四'[index - 1]}项"
+    assert (tmp_path / session.id / "artifacts" / "final.md").read_text() == "# 综合成果"
+
+
 def test_cooperation_revises_rejected_artifact_once(tmp_path):
     store = SessionStore(tmp_path)
     session = CollaborationSession.new(
