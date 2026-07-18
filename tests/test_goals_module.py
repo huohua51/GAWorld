@@ -113,5 +113,56 @@ class TestFallbackGoals(unittest.TestCase):
         self.assertIn("收入", json.dumps(goals, ensure_ascii=False))
 
 
+class TestBootstrap(unittest.TestCase):
+    def _llm_ok(self, prompt):
+        self.last_prompt = prompt
+        return json.dumps({
+            "life_goals": [{"title": "成为行业专家", "domain": "career", "description": "深耕产品"}],
+            "long_term_goals": [{"title": "一年内主导一个大项目", "parent_index": 1, "horizon_days": 365}],
+            "short_term_goals": [
+                {"title": "这两周完成竞品分析", "parent_index": 1, "target_day_offset": 14},
+                {"title": "本周约谈三位用户", "parent_index": 1, "target_day_offset": 7},
+            ],
+        }, ensure_ascii=False)
+
+    def test_derive_goals_maps_parent_index_and_offsets(self):
+        goals = goals_mod.derive_goals(_agent(), llm=self._llm_ok, day=10)
+        self.assertEqual(goals["long_term_goals"][0]["parent"], "lg1")
+        self.assertEqual(goals["short_term_goals"][0]["parent"], "ltg1")
+        self.assertEqual(goals["short_term_goals"][0]["target_day"], 24)
+        self.assertIn("产品经理", self.last_prompt)
+
+    def test_derive_goals_llm_failure_falls_back(self):
+        def boom(prompt):
+            raise RuntimeError("llm down")
+        goals = goals_mod.derive_goals(_agent(), llm=boom, day=1)
+        self.assertTrue(goals["short_term_goals"])  # heuristic fallback
+
+    def test_derive_goals_garbage_falls_back(self):
+        goals = goals_mod.derive_goals(_agent(), llm=lambda p: "不是JSON", day=1)
+        self.assertTrue(goals["life_goals"])
+
+    def test_bootstrap_skips_existing_file_when_stateful(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            goals_mod.save_agent_goals(3, _sample_goals(), tmp)
+            agent = _agent()
+            goals_mod.bootstrap_goals(
+                [agent], llm=lambda p: calls.append(p) or "{}",
+                memory_dir=tmp, stateful=True,
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(agent["goals"]["short_term_goals"][0]["id"], "stg1")
+
+    def test_bootstrap_derives_and_saves_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = _agent()
+            goals_mod.bootstrap_goals(
+                [agent], llm=self._llm_ok, memory_dir=tmp, stateful=True,
+            )
+            self.assertTrue(os.path.exists(goals_mod.agent_goals_path(3, tmp)))
+        self.assertEqual(agent["goals"]["life_goals"][0]["title"], "成为行业专家")
+
+
 if __name__ == "__main__":
     unittest.main()

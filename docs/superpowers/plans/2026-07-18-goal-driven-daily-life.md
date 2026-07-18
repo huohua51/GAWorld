@@ -419,7 +419,7 @@ git commit -m "feat(goals): add goal hierarchy data model, persistence and fallb
 - Modify: `gaworld/goals.py`（文件末尾追加）
 - Test: `tests/test_goals_module.py`（追加）
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 在 `tests/test_goals_module.py` 追加（`_agent`、`goals_mod` 已有）：
 
@@ -475,12 +475,12 @@ class TestBootstrap(unittest.TestCase):
         self.assertEqual(agent["goals"]["life_goals"][0]["title"], "成为行业专家")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_goals_module.py -k Bootstrap -v`
 Expected: FAIL — `AttributeError: ... has no attribute 'derive_goals'`。
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 在 `gaworld/goals.py` 末尾追加：
 
@@ -587,12 +587,12 @@ def bootstrap_goals(agents: list, *, llm: LlmFn, memory_dir: str,
         agent["goals"] = goals
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_module.py -v`
 Expected: 全部 PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add gaworld/goals.py tests/test_goals_module.py

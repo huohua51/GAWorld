@@ -222,3 +222,105 @@ def _fallback_goals(agent: dict, *, day: int = 0, config: dict | None = None) ->
         ],
     }
     return normalize_goals(payload, config=config, day=day)
+
+
+# ---------------------------------------------------------------------
+# Bootstrap (one LLM call per agent, once; heuristic fallback)
+# ---------------------------------------------------------------------
+
+def _build_bootstrap_prompt(agent: dict, cfg: dict) -> str:
+    profile_text = "\n".join([
+        f"姓名：{agent.get('name', '')}",
+        f"年龄：{agent.get('age', '')}",
+        f"职业：{agent.get('job', '')}",
+        f"性格与情绪特征：{agent.get('personality', '')}",
+        f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"价值观与公共事务态度：{agent.get('values', '')}",
+    ])
+    return f"""
+你是城市生活模拟器的“人生规划推导器”。请根据角色资料推导其目标体系。
+角色资料：
+{profile_text}
+当前状态：{json.dumps(agent.get('state', {}), ensure_ascii=False)}
+只输出 JSON：
+{{
+  "life_goals": [{{"title":"...","domain":"career|family|health|wealth|social|self","description":"一句话"}}],
+  "long_term_goals": [{{"title":"...","parent_index":1,"horizon_days":365}}],
+  "short_term_goals": [{{"title":"...","parent_index":1,"target_day_offset":14}}]
+}}
+要求：
+1) life_goals 1-{cfg['max_life_goals']} 个：方向性的人生追求，符合年龄、职业与价值观。
+2) long_term_goals 1-{cfg['max_long_term']} 个：数月尺度、可评估进度；parent_index 指向所属人生目标序号（从1开始）。
+3) short_term_goals 2-{cfg['max_short_term']} 个：1-2 周尺度、能直接落到日常安排；parent_index 指向所属长期目标序号。
+4) 目标要具体、贴近角色真实生活，不要空洞口号；全部中文短语。
+5) 仅输出 JSON，不要其他文字。
+"""
+
+
+def _coerce_bootstrap_payload(payload: dict, *, day: int, config: dict) -> dict[str, Any]:
+    life, long_term, short = [], [], []
+    for idx, item in enumerate(payload.get("life_goals", []) or [], start=1):
+        if isinstance(item, dict):
+            life.append({**item, "id": f"lg{idx}", "status": "active"})
+    for idx, item in enumerate(payload.get("long_term_goals", []) or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        try:
+            parent = int(item.get("parent_index", 1) or 1)
+        except (TypeError, ValueError):
+            parent = 1
+        long_term.append({**item, "id": f"ltg{idx}", "parent": f"lg{parent}",
+                          "progress": 0.0, "status": "active"})
+    for idx, item in enumerate(payload.get("short_term_goals", []) or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        try:
+            parent = int(item.get("parent_index", 1) or 1)
+        except (TypeError, ValueError):
+            parent = 1
+        try:
+            offset = int(item.get("target_day_offset", 14) or 14)
+        except (TypeError, ValueError):
+            offset = 14
+        short.append({**item, "id": f"stg{idx}", "parent": f"ltg{parent}",
+                      "progress": 0.0, "status": "active",
+                      "target_day": int(day) + max(3, offset)})
+    return normalize_goals(
+        {"life_goals": life, "long_term_goals": long_term, "short_term_goals": short},
+        config=config,
+        day=day,
+    )
+
+
+def derive_goals(agent: dict, *, llm: LlmFn, day: int = 0, config: dict | None = None) -> dict[str, Any]:
+    cfg = goals_config(config)
+    try:
+        raw = llm(_build_bootstrap_prompt(agent, cfg))
+    except Exception as exc:  # noqa: BLE001 - any LLM failure must fall back, never crash the sim
+        _LOG.warning("goals bootstrap LLM call failed for agent %s: %s", agent.get("id"), exc)
+        raw = ""
+    payload = parse_goals_json(raw)
+    goals = _coerce_bootstrap_payload(payload, day=day, config=cfg) if payload else {}
+    if not goals or not goals.get("short_term_goals"):
+        goals = _fallback_goals(agent, day=day, config=cfg)
+    return goals
+
+
+def bootstrap_goals(agents: list, *, llm: LlmFn, memory_dir: str,
+                    stateful: bool = True, config: dict | None = None, day: int = 0) -> None:
+    """Attach ``agent["goals"]`` for every agent; stored file wins over LLM."""
+    cfg = goals_config(config)
+    for agent in agents:
+        try:
+            agent_id = int(agent.get("id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if not agent_id:
+            continue
+        stored = load_agent_goals(agent_id, memory_dir) if stateful else {}
+        goals = normalize_goals(stored, config=cfg, day=day) if stored else {}
+        if not goals:
+            goals = derive_goals(agent, llm=llm, day=day, config=cfg)
+            if stateful:
+                save_agent_goals(agent_id, goals, memory_dir)
+        agent["goals"] = goals
