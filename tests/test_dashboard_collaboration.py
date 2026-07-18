@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 import gaworld.apps.dashboard_server as ds
+from gaworld.collaboration.service import CollaborationService
 
 
 class FakeCollaborationService:
@@ -528,6 +529,183 @@ def test_unknown_endpoint_is_404_and_unexpected_failure_is_500(api_server):
     assert unknown == {"error": "Unknown endpoint"}
     assert failure_status == 500
     assert failure == {"error": "unexpected service failure"}
+
+
+def test_standalone_service_persists_all_three_user_flows(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    memory_dir = tmp_path / "memory"
+    agents = {
+        1: {
+            "id": 1,
+            "identity": {"id": 1, "name": "甲"},
+            "capabilities": {"skills": ["研究"]},
+        },
+        2: {
+            "id": 2,
+            "identity": {"id": 2, "name": "乙"},
+            "capabilities": {"skills": ["分析"]},
+        },
+    }
+    episodes = []
+    llm_calls = []
+
+    def fake_llm(prompt, *, task, agent_id=None):
+        llm_calls.append((task, agent_id))
+        if task == "collaboration_discussion":
+            return json.dumps(
+                {
+                    "content": f"居民{agent_id}的独立观点",
+                    "converged": False,
+                },
+                ensure_ascii=False,
+            )
+        if task == "collaboration_discussion_summary":
+            return "双方同意先调研、再验证。"
+        if task == "collaboration_plan":
+            return json.dumps(
+                {
+                    "leader_id": 1,
+                    "roles": {"1": "研究负责人", "2": "验证负责人"},
+                    "steps": [
+                        {
+                            "title": "形成研究方案",
+                            "agent_id": 1,
+                            "artifact": "research.md",
+                        },
+                        {
+                            "title": "完成验证清单",
+                            "agent_id": 2,
+                            "artifact": "validation.md",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if task == "collaboration_execute":
+            return f"# 居民 {agent_id} 的交付\n\n已完成。"
+        if task == "collaboration_review":
+            return json.dumps(
+                {"approved": True, "feedback": "审阅通过"},
+                ensure_ascii=False,
+            )
+        if task == "collaboration_synthesis":
+            return "# 最终方案\n\n研究与验证均已完成。"
+        raise AssertionError(f"unexpected LLM task: {task}")
+
+    config = {
+        "discussion": {"min_rounds": 3, "max_rounds": 20},
+        "step_retries": 0,
+    }
+    service = CollaborationService(
+        config=config,
+        sessions_dir=sessions_dir,
+        memory_dir=memory_dir,
+        agent_loader=agents.get,
+        llm=fake_llm,
+        background=False,
+        episode_writer=lambda agent_id, episode: episodes.append(
+            (agent_id, episode)
+        ),
+    )
+
+    friendship = service.make_friends([1, 2])
+    discussion = service.create_discussion(
+        [1, 2],
+        topic="社区研究如何落地",
+        max_rounds=3,
+    )
+    service.run_session(discussion.id)
+    cooperation = service.create_cooperation(
+        [1, 2],
+        task="形成可执行的社区研究方案",
+        leader_id=1,
+    )
+    service.run_session(cooperation.id)
+
+    discussion_payload = service.get_session(discussion.id)
+    discussion_events = service.events(discussion.id)
+    cooperation_payload = service.get_session(cooperation.id)
+    cooperation_events = service.events(cooperation.id)
+    assert friendship["created_pairs"] == [[1, 2]]
+    assert discussion_payload["status"] == "completed"
+    assert len(
+        [event for event in discussion_events if event["type"] == "message"]
+    ) == 3
+    assert any(event["type"] == "summary" for event in discussion_events)
+    assert cooperation_payload["status"] == "completed"
+    assert [step["status"] for step in cooperation_payload["plan"]] == [
+        "completed",
+        "completed",
+    ]
+    assert sum(
+        event["type"] == "review" for event in cooperation_events
+    ) == 2
+    assert {
+        artifact["filename"]
+        for artifact in cooperation_payload["artifacts"]
+    } == {"research.md", "validation.md", "final.md"}
+    assert (
+        sessions_dir / cooperation.id / "artifacts" / "final.md"
+    ).read_text(encoding="utf-8") == (
+        "# 最终方案\n\n研究与验证均已完成。"
+    )
+    assert {
+        (agent_id, episode["kind"])
+        for agent_id, episode in episodes
+    } == {
+        (1, "discussion"),
+        (2, "discussion"),
+        (1, "cooperation"),
+        (2, "cooperation"),
+    }
+    assert [task for task, _agent_id in llm_calls].count(
+        "collaboration_discussion"
+    ) == 3
+    for agent_id, peer_id in ((1, 2), (2, 1)):
+        relationships = json.loads(
+            (
+                memory_dir / f"agent_{agent_id}_relationships.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert relationships[str(peer_id)]["role"] == "friend"
+        assert relationships[str(peer_id)]["tie_origin"] == "dashboard"
+
+    service.shutdown()
+    reopened = CollaborationService(
+        config=config,
+        sessions_dir=sessions_dir,
+        memory_dir=memory_dir,
+        agent_loader=agents.get,
+        llm=fake_llm,
+        background=False,
+        episode_writer=lambda agent_id, episode: episodes.append(
+            (agent_id, episode)
+        ),
+    )
+    reopened.start()
+
+    restored = {
+        session["id"]: session
+        for session in reopened.list_sessions()
+    }
+    assert restored[discussion.id]["status"] == "completed"
+    assert restored[cooperation.id]["status"] == "completed"
+    assert [
+        event["content"]
+        for event in reopened.events(discussion.id)
+        if event["type"] == "message"
+    ] == [
+        "居民1的独立观点",
+        "居民2的独立观点",
+        "居民1的独立观点",
+    ]
+    assert (
+        sessions_dir / cooperation.id / "artifacts" / "final.md"
+    ).read_text(encoding="utf-8") == (
+        "# 最终方案\n\n研究与验证均已完成。"
+    )
+    assert reopened.make_friends([1, 2])["existing_pairs"] == [[1, 2]]
+    reopened.shutdown()
 
 
 def test_lazy_service_is_thread_safe_and_reset_stops_it(monkeypatch, tmp_path):
