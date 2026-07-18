@@ -211,6 +211,72 @@ def _public_collaboration_session(payload):
     return result
 
 
+def _collaboration_agent_ids(payload):
+    values = payload.get("agent_ids")
+    if not isinstance(values, list):
+        raise ValueError("agent_ids must be an array of integers")
+    agent_ids = []
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("agent_ids must be an array of integers")
+        agent_ids.append(value)
+    return agent_ids
+
+
+def _collaboration_integer(
+    payload,
+    field,
+    *,
+    default=None,
+    allow_none=False,
+):
+    value = payload.get(field, default)
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"{field} must be an integer")
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{field} must be an integer")
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an integer") from exc
+
+
+def _collaboration_roles(payload):
+    roles = payload.get("role_overrides")
+    if roles is None:
+        return None
+    if not isinstance(roles, dict):
+        raise ValueError("role_overrides must be an object")
+    normalized = {}
+    for agent_id, role in roles.items():
+        if (
+            isinstance(agent_id, bool)
+            or not isinstance(agent_id, (int, str))
+            or not isinstance(role, str)
+        ):
+            raise ValueError(
+                "role_overrides must map agent ids to role strings"
+            )
+        try:
+            normalized[str(int(agent_id))] = role
+        except ValueError as exc:
+            raise ValueError(
+                "role_overrides must map agent ids to role strings"
+            ) from exc
+    return normalized
+
+
+def _collaboration_text(payload, field, *, default=""):
+    value = payload.get(field, default)
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    return value
+
+
 atexit.register(_reset_collaboration_service_for_tests)
 
 
@@ -1078,24 +1144,33 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path == "/api/relationships/friends":
             return self._json_response(
                 _get_collaboration_service().make_friends(
-                    payload.get("agent_ids", [])
+                    _collaboration_agent_ids(payload)
                 )
             )
         if path == "/api/collaboration/sessions":
             service = _get_collaboration_service()
-            kind = str(payload.get("kind") or "")
+            kind = _collaboration_text(payload, "kind")
+            agent_ids = _collaboration_agent_ids(payload)
             if kind == "discussion":
                 session = service.create_discussion(
-                    payload.get("agent_ids", []),
-                    topic=str(payload.get("topic") or ""),
-                    max_rounds=int(payload.get("max_rounds", 6)),
+                    agent_ids,
+                    topic=_collaboration_text(payload, "topic"),
+                    max_rounds=_collaboration_integer(
+                        payload,
+                        "max_rounds",
+                        default=6,
+                    ),
                 )
             elif kind == "cooperation":
                 session = service.create_cooperation(
-                    payload.get("agent_ids", []),
-                    task=str(payload.get("task") or ""),
-                    leader_id=payload.get("leader_id"),
-                    role_overrides=payload.get("role_overrides"),
+                    agent_ids,
+                    task=_collaboration_text(payload, "task"),
+                    leader_id=_collaboration_integer(
+                        payload,
+                        "leader_id",
+                        allow_none=True,
+                    ),
+                    role_overrides=_collaboration_roles(payload),
                 )
             else:
                 raise ValueError(

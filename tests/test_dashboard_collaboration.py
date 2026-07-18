@@ -371,6 +371,83 @@ def test_invalid_requests_return_400(
     assert response["error"]
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/api/relationships/friends", {"agent_ids": None}),
+        ("/api/relationships/friends", {"agent_ids": 1}),
+        ("/api/relationships/friends", {"agent_ids": {"one": 1}}),
+        (
+            "/api/collaboration/sessions",
+            {
+                "kind": "discussion",
+                "agent_ids": [1, {"id": 2}],
+                "max_rounds": 6,
+            },
+        ),
+        (
+            "/api/collaboration/sessions",
+            {
+                "kind": "discussion",
+                "agent_ids": [1, 2],
+                "max_rounds": [],
+            },
+        ),
+        (
+            "/api/collaboration/sessions",
+            {
+                "kind": "discussion",
+                "agent_ids": [1, 2],
+                "max_rounds": None,
+            },
+        ),
+        (
+            "/api/collaboration/sessions",
+            {
+                "kind": "cooperation",
+                "agent_ids": [1, 2],
+                "task": "报告",
+                "leader_id": {"id": 1},
+            },
+        ),
+        (
+            "/api/collaboration/sessions",
+            {
+                "kind": "cooperation",
+                "agent_ids": [1, 2],
+                "task": "报告",
+                "role_overrides": ["研究", "编辑"],
+            },
+        ),
+        (
+            "/api/collaboration/sessions",
+            {
+                "kind": "cooperation",
+                "agent_ids": [1, 2],
+                "task": "报告",
+                "role_overrides": "研究",
+            },
+        ),
+    ],
+)
+def test_nested_payload_type_errors_are_400_before_service_call(
+    api_server,
+    path,
+    payload,
+):
+    calls_before = list(api_server["service"].calls)
+
+    status, response = post_json_with_status(
+        api_server,
+        path,
+        payload,
+    )
+
+    assert status == 400
+    assert response["error"]
+    assert api_server["service"].calls == calls_before
+
+
 def test_unknown_endpoint_is_404_and_unexpected_failure_is_500(api_server):
     unknown_status, unknown = _request_json(
         api_server["url"],
