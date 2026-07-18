@@ -39,6 +39,43 @@ def test_discussion_runs_round_robin_and_writes_summary(tmp_path):
     assert calls[-1][0] == "collaboration_discussion_summary"
 
 
+def test_discussion_startup_rechecks_cancelled_status_before_overwriting(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="discussion", member_ids=[1, 2], max_rounds=1)
+    store.create(session)
+    get = store.get
+    save = store.save
+    get_calls = 0
+    llm_calls = []
+
+    def cancel_after_initial_get(session_id):
+        nonlocal get_calls
+        snapshot = get(session_id)
+        get_calls += 1
+        if get_calls == 1:
+            cancelled = get(session_id)
+            cancelled.transition(SessionStatus.CANCELLED)
+            save(cancelled)
+        return snapshot
+
+    monkeypatch.setattr(store, "get", cancel_after_initial_get)
+    runner = DiscussionRunner(
+        store=store,
+        agent_loader=_agent,
+        llm=lambda *args, **kwargs: llm_calls.append((args, kwargs)) or "unused",
+    )
+
+    runner.run(session.id)
+
+    assert get(session.id).status is SessionStatus.CANCELLED
+    assert llm_calls == []
+    assert [
+        event
+        for event in store.events(session.id)
+        if event.type in {"started", "message", "summary", "completed"}
+    ] == []
+
+
 def test_discussion_honors_pause_before_next_turn(tmp_path):
     store = SessionStore(tmp_path)
     session = CollaborationSession.new(kind="discussion", member_ids=[1, 2], max_rounds=4)
@@ -401,6 +438,7 @@ def test_discussion_resumes_only_missing_completion_side_effects(tmp_path, failu
     assert restored.error == ""
     assert len([event for event in events if event.type == "summary"]) == 1
     assert len([event for event in events if event.type == "completed"]) == 1
+    assert len([event for event in events if event.type == "started"]) == 1
     assert markers == [
         {"effect": "episode", "agent_id": 1},
         {"effect": "episode", "agent_id": 2},

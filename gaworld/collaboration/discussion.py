@@ -161,18 +161,24 @@ class DiscussionRunner:
             self.store.save(latest)
 
     def run(self, session_id: str) -> None:
-        session = self.store.get(session_id)
-        if session.status in {
-            SessionStatus.QUEUED,
-            SessionStatus.FAILED,
-            SessionStatus.INTERRUPTED,
-        }:
-            session.transition(SessionStatus.RUNNING)
-            session.error = ""
-            self.store.save(session)
-            self.store.append_event(session_id, "started", "讨论开始")
-        elif session.status is not SessionStatus.RUNNING:
-            return
+        with self.store.session_guard(session_id):
+            self.store.get(session_id)
+            session = self.store.get(session_id)
+            if session.status in {
+                SessionStatus.QUEUED,
+                SessionStatus.FAILED,
+                SessionStatus.INTERRUPTED,
+            }:
+                session.transition(SessionStatus.RUNNING)
+                session.error = ""
+                self.store.save(session)
+            elif session.status is not SessionStatus.RUNNING:
+                return
+            if not any(
+                event.type == "started"
+                for event in self.store.events(session_id)
+            ):
+                self.store.append_event(session_id, "started", "讨论开始")
 
         converged = any(
             event.type == "message" and event.metadata.get("converged") is True
