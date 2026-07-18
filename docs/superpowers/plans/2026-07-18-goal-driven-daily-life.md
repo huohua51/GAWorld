@@ -738,7 +738,7 @@ git commit -m "feat(goals): prompt context formatting and goal-relevance matchin
 - Modify: `gaworld/goals.py`（末尾追加）
 - Test: `tests/test_goals_module.py`（追加）
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class TestApplyGoalProgress(unittest.TestCase):
@@ -784,12 +784,12 @@ class TestApplyGoalProgress(unittest.TestCase):
         self.assertEqual(notes, [])
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_goals_module.py -k ApplyGoalProgress -v`
 Expected: FAIL — `no attribute 'apply_goal_progress'`。
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 在 `gaworld/goals.py` 末尾追加：
 
@@ -838,12 +838,12 @@ def apply_goal_progress(goals: Any, goal_progress: Any, day: int,
     return goals, notes
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_module.py -v`
 Expected: 全部 PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add gaworld/goals.py tests/test_goals_module.py

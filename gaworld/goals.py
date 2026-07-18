@@ -393,3 +393,47 @@ def match_goal_relevance(goals: Any, *texts: Any, config: dict | None = None) ->
             ratio = min(1.0, hits / max(1, min(len(terms), 3)))
             best = max(best, floor + (cap - floor) * weight * ratio)
     return min(cap, best)
+
+
+# ---------------------------------------------------------------------
+# Day-end light progress (piggybacks on consolidate_day's LLM call)
+# ---------------------------------------------------------------------
+
+def apply_goal_progress(goals: Any, goal_progress: Any, day: int,
+                        *, config: dict | None = None) -> tuple[Any, list[str]]:
+    """Apply consolidate_day's ``goal_progress`` items. Daily pass only moves
+    progress forward (setbacks are the weekly review's job) and clamps the
+    per-day gain to ``max_daily_progress_delta``. Returns (goals, notes)."""
+    if not isinstance(goals, dict) or not isinstance(goal_progress, list):
+        return goals, []
+    cfg = goals_config(config)
+    max_delta = float(cfg["max_daily_progress_delta"])
+    by_id: dict[str, tuple[str, dict]] = {}
+    for tier in ("long_term_goals", "short_term_goals"):
+        for g in goals.get(tier, []):
+            by_id[str(g.get("id"))] = (tier, g)
+    notes: list[str] = []
+    for item in goal_progress:
+        if not isinstance(item, dict):
+            continue
+        entry = by_id.get(str(item.get("id", "")).strip())
+        if entry is None:
+            continue
+        tier, goal = entry
+        if goal.get("status") != "active":
+            continue
+        old = _clamp(goal.get("progress", 0.0))
+        new = _clamp(item.get("progress", old))
+        new = min(new, old + max_delta)
+        new = max(new, old)
+        goal["progress"] = round(new, 3)
+        goal["updated_day"] = int(day)
+        note = str(item.get("note", "")).strip()
+        if note and tier == "short_term_goals":
+            goal["recent_note"] = note[:60]
+        if tier == "short_term_goals" and goal["progress"] >= 1.0:
+            goal["status"] = "completed"
+            notes.append(f"完成短期目标：{goal.get('title')}")
+        elif new > old:
+            notes.append(f"{goal.get('title')} 进度 {old:.0%}→{new:.0%}")
+    return goals, notes

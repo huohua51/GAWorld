@@ -200,5 +200,48 @@ class TestFormatAndRelevance(unittest.TestCase):
         self.assertEqual(score, 0.2)
 
 
+class TestApplyGoalProgress(unittest.TestCase):
+    def test_applies_progress_and_note(self):
+        goals, notes = goals_mod.apply_goal_progress(
+            _sample_goals(),
+            [{"id": "stg1", "progress": 0.6, "note": "完成了方案比较"}],
+            day=5,
+        )
+        g = goals["short_term_goals"][0]
+        self.assertEqual(g["progress"], 0.6)
+        self.assertEqual(g["recent_note"], "完成了方案比较")
+        self.assertEqual(g["updated_day"], 5)
+        self.assertTrue(notes)
+
+    def test_caps_daily_delta(self):
+        goals, _ = goals_mod.apply_goal_progress(
+            _sample_goals(), [{"id": "stg1", "progress": 1.0}], day=5,
+            config={"max_daily_progress_delta": 0.1},
+        )
+        self.assertAlmostEqual(goals["short_term_goals"][0]["progress"], 0.5)
+
+    def test_daily_pass_never_regresses(self):
+        goals, _ = goals_mod.apply_goal_progress(
+            _sample_goals(), [{"id": "stg1", "progress": 0.1}], day=5)
+        self.assertEqual(goals["short_term_goals"][0]["progress"], 0.4)
+
+    def test_full_progress_completes_short_term(self):
+        base = _sample_goals()
+        base["short_term_goals"][0]["progress"] = 0.9
+        goals, notes = goals_mod.apply_goal_progress(
+            base, [{"id": "stg1", "progress": 1.0}], day=5)
+        self.assertEqual(goals["short_term_goals"][0]["status"], "completed")
+        self.assertIn("完成", "".join(notes))
+
+    def test_unknown_id_and_bad_items_skipped(self):
+        goals, notes = goals_mod.apply_goal_progress(
+            _sample_goals(),
+            [{"id": "nope", "progress": 0.9}, "garbage", {"progress": 0.5}],
+            day=5,
+        )
+        self.assertEqual(goals["short_term_goals"][0]["progress"], 0.4)
+        self.assertEqual(notes, [])
+
+
 if __name__ == "__main__":
     unittest.main()
