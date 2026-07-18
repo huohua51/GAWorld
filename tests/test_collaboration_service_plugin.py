@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -244,6 +245,112 @@ def test_shutdown_is_idempotent_and_releases_executor(tmp_path):
     assert executor is not None
     assert service._executor is None
     assert service._started is False
+
+
+def test_shutdown_waits_for_running_work_and_cancels_queued_dispatches(tmp_path):
+    service = _service(
+        tmp_path,
+        background=True,
+        config={
+            "discussion": {"min_rounds": 3, "max_rounds": 20},
+            "max_concurrent_sessions": 1,
+        },
+    )
+    sessions = [
+        CollaborationSession.new(
+            kind="discussion",
+            member_ids=[1, 2],
+            max_rounds=3,
+        )
+        for _ in range(3)
+    ]
+    for session in sessions:
+        service.store.create(session)
+    entered = threading.Event()
+    release = threading.Event()
+    shutdown_returned = threading.Event()
+    calls = []
+
+    def blocking_run(session_id):
+        calls.append(session_id)
+        entered.set()
+        assert release.wait(timeout=5)
+
+    service.run_session = blocking_run
+    service.start()
+    service._submit(sessions[0].id)
+    service._submit(sessions[1].id)
+    assert entered.wait(timeout=5)
+    queued_future = service._futures[sessions[1].id]
+
+    shutdown_thread = threading.Thread(
+        target=lambda: (service.shutdown(), shutdown_returned.set())
+    )
+    shutdown_thread.start()
+    deadline = time.monotonic() + 5
+    while service._executor is not None and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    try:
+        assert service._executor is None
+        assert not shutdown_returned.wait(timeout=0.1)
+        with pytest.raises(RuntimeError, match="shutting down"):
+            service._submit(sessions[2].id)
+        assert queued_future.cancelled()
+    finally:
+        release.set()
+        shutdown_thread.join(timeout=5)
+
+    assert not shutdown_thread.is_alive()
+    assert shutdown_returned.is_set()
+    assert calls == [sessions[0].id]
+    assert service.store.get(sessions[1].id).status is SessionStatus.CANCELLED
+    assert service.store.events(sessions[1].id)[-1].type == "cancelled"
+
+
+def test_unsupported_persisted_kind_is_durably_failed(tmp_path):
+    service = _service(tmp_path, background=True)
+    session = CollaborationSession.new(
+        kind="unsupported",
+        member_ids=[1, 2],
+    )
+    service.store.create(session)
+
+    service.start()
+    service._submit(session.id)
+    service._futures[session.id].result(timeout=5)
+
+    persisted = service.store.get(session.id)
+    assert persisted.status is SessionStatus.FAILED
+    assert "unsupported session kind" in persisted.error
+    error = service.store.events(session.id)[-1]
+    assert error.type == "error"
+    assert "unsupported session kind" in error.content
+    service.shutdown()
+
+
+def test_unsupported_kind_preserves_an_already_failed_session(tmp_path):
+    service = _service(tmp_path)
+    session = CollaborationSession.new(
+        kind="unsupported",
+        member_ids=[1, 2],
+    )
+    session.transition(SessionStatus.RUNNING)
+    session.transition(SessionStatus.FAILED)
+    session.error = "unsupported session kind: unsupported"
+    service.store.create(session)
+    service.store.append_event(session.id, "error", session.error)
+
+    service.run_session(session.id)
+
+    persisted = service.store.get(session.id)
+    assert persisted.status is SessionStatus.FAILED
+    assert persisted.error == "unsupported session kind: unsupported"
+    assert [
+        event.type
+        for event in service.store.events(session.id)
+        if event.type == "error"
+    ] == ["error"]
 
 
 def test_plugin_starts_and_stops_runtime(tmp_path):

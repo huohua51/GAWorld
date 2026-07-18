@@ -57,9 +57,14 @@ class CollaborationService:
         self._futures: dict[str, Future[None]] = {}
         self._guard = threading.RLock()
         self._started = False
+        self._closing = False
+        self._shutdown_complete = threading.Event()
+        self._shutdown_complete.set()
 
     def start(self) -> None:
         with self._guard:
+            if self._closing:
+                raise RuntimeError("collaboration service is shutting down")
             if self._started:
                 return
             self.store.recover_interrupted()
@@ -75,11 +80,116 @@ class CollaborationService:
 
     def shutdown(self) -> None:
         with self._guard:
-            executor = self._executor
-            self._executor = None
-            self._started = False
-        if executor is not None:
-            executor.shutdown(wait=False, cancel_futures=False)
+            if self._closing:
+                shutdown_complete = self._shutdown_complete
+                owns_shutdown = False
+            else:
+                self._closing = True
+                self._shutdown_complete.clear()
+                shutdown_complete = self._shutdown_complete
+                owns_shutdown = True
+            if not owns_shutdown:
+                executor = None
+                futures: list[tuple[str, Future[None]]] = []
+            else:
+                executor = self._executor
+                futures = list(self._futures.items())
+                self._executor = None
+                self._started = False
+        if not owns_shutdown:
+            shutdown_complete.wait()
+            return
+        try:
+            cancellation_errors: list[Exception] = []
+            for session_id, future in futures:
+                if future.cancel():
+                    try:
+                        self._cancel_queued_session(session_id)
+                    except Exception as exc:
+                        cancellation_errors.append(exc)
+            if executor is not None:
+                executor.shutdown(wait=True, cancel_futures=True)
+            if cancellation_errors:
+                raise RuntimeError(
+                    "failed to persist queued session cancellation"
+                ) from cancellation_errors[0]
+        finally:
+            with self._guard:
+                self._closing = False
+                self._shutdown_complete.set()
+
+    def _cancel_queued_session(self, session_id: str) -> None:
+        with self.store.session_guard(session_id):
+            try:
+                session = self.store.get(session_id)
+            except KeyError:
+                return
+            if session.status in {
+                SessionStatus.COMPLETED,
+                SessionStatus.CANCELLED,
+            }:
+                return
+            session.transition(SessionStatus.CANCELLED)
+            self.store.save(session)
+            self.store.append_event(
+                session_id,
+                "cancelled",
+                "服务关闭，排队会话已终止",
+            )
+
+    def _fail_session(self, session_id: str, exc: Exception) -> None:
+        with self.store.session_guard(session_id):
+            session = self.store.get(session_id)
+            if session.status in {
+                SessionStatus.COMPLETED,
+                SessionStatus.CANCELLED,
+            }:
+                return
+            session.error = str(exc)[:500]
+            if session.status is SessionStatus.FAILED:
+                self.store.save(session)
+                if not any(
+                    event.type == "error"
+                    and event.content == session.error
+                    for event in self.store.events(session_id)
+                ):
+                    self.store.append_event(
+                        session_id,
+                        "error",
+                        session.error,
+                    )
+                return
+            if session.status is not SessionStatus.RUNNING:
+                session.transition(SessionStatus.RUNNING)
+            session.transition(SessionStatus.FAILED)
+            self.store.save(session)
+            self.store.append_event(session_id, "error", session.error)
+
+    def _submit(self, session_id: str) -> None:
+        with self._guard:
+            if self._closing:
+                raise RuntimeError("collaboration service is shutting down")
+            if not self.background:
+                return
+            if not self._started:
+                self.store.recover_interrupted()
+                self._executor = ThreadPoolExecutor(
+                    max_workers=max(
+                        1,
+                        int(self.config.get("max_concurrent_sessions", 2)),
+                    ),
+                    thread_name_prefix="gaworld_collaboration",
+                )
+                self._started = True
+            existing = self._futures.get(session_id)
+            if existing is not None and not existing.done():
+                return
+            if self._executor is None:
+                raise RuntimeError("collaboration executor is not running")
+            self._futures[session_id] = self._executor.submit(
+                self.run_session,
+                session_id,
+            )
 
     def _members(self, agent_ids: Iterable[int]) -> list[int]:
         members: list[int] = []
@@ -99,22 +209,6 @@ class CollaborationService:
         if missing:
             raise ValueError(f"agents not found: {missing}")
         return members
-
-    def _submit(self, session_id: str) -> None:
-        if not self.background:
-            return
-        if not self._started:
-            self.start()
-        with self._guard:
-            existing = self._futures.get(session_id)
-            if existing is not None and not existing.done():
-                return
-            if self._executor is None:
-                raise RuntimeError("collaboration executor is not running")
-            self._futures[session_id] = self._executor.submit(
-                self.run_session,
-                session_id,
-            )
 
     def make_friends(self, agent_ids: Iterable[int]) -> dict[str, Any]:
         return self.relationships.make_friends(agent_ids)
@@ -239,10 +333,15 @@ class CollaborationService:
             return session.to_dict()
 
     def run_session(self, session_id: str) -> None:
-        session = self.store.get(session_id)
-        if session.kind == "discussion":
-            self.discussion.run(session_id)
-        elif session.kind == "cooperation":
-            self.cooperation.run(session_id)
-        else:
-            raise ValueError(f"unsupported session kind: {session.kind}")
+        try:
+            session = self.store.get(session_id)
+            if session.kind == "discussion":
+                self.discussion.run(session_id)
+            elif session.kind == "cooperation":
+                self.cooperation.run(session_id)
+            else:
+                raise ValueError(
+                    f"unsupported session kind: {session.kind}"
+                )
+        except Exception as exc:
+            self._fail_session(session_id, exc)
