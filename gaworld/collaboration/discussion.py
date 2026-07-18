@@ -84,11 +84,72 @@ class DiscussionRunner:
 
     def _fail(self, session_id: str, exc: Exception) -> None:
         session = self.store.get(session_id)
+        if session.status is SessionStatus.COMPLETED:
+            return
         session.error = str(exc)[:500]
         if session.status is SessionStatus.RUNNING:
             session.transition(SessionStatus.FAILED)
         self.store.save(session)
         self.store.append_event(session_id, "error", session.error)
+
+    def _finalize(self, session_id: str, summary: str, *, converged: bool) -> None:
+        session = self.store.get(session_id)
+        events = self.store.events(session_id)
+        completed_episodes = {
+            event.metadata.get("agent_id")
+            for event in events
+            if event.type == "side_effect_completed"
+            and event.metadata.get("effect") == "episode"
+        }
+        interaction_completed = any(
+            event.type == "side_effect_completed"
+            and event.metadata.get("effect") == "interaction"
+            and event.metadata.get("member_ids") == session.member_ids
+            for event in events
+        )
+        episode = {
+            "source": "collaboration",
+            "session_id": session_id,
+            "kind": "discussion",
+            "summary": summary,
+            "salience": 0.65,
+        }
+        for agent_id in session.member_ids:
+            if agent_id in completed_episodes:
+                continue
+            self.episode_writer(agent_id, dict(episode))
+            self.store.append_event(
+                session_id,
+                "side_effect_completed",
+                "讨论经历已写入",
+                agent_id=agent_id,
+                metadata={"effect": "episode", "agent_id": agent_id},
+            )
+            if self.store.get(session_id).status is not SessionStatus.RUNNING:
+                return
+        if not interaction_completed:
+            self.interaction_writer(session.member_ids)
+            self.store.append_event(
+                session_id,
+                "side_effect_completed",
+                "互动关系已更新",
+                metadata={
+                    "effect": "interaction",
+                    "member_ids": list(session.member_ids),
+                },
+            )
+            if self.store.get(session_id).status is not SessionStatus.RUNNING:
+                return
+
+        latest = self.store.get(session_id)
+        latest.transition(SessionStatus.COMPLETED)
+        self.store.save(latest)
+        self.store.append_event(
+            session_id,
+            "completed",
+            summary,
+            metadata={"converged": converged},
+        )
 
     def run(self, session_id: str) -> None:
         session = self.store.get(session_id)
@@ -104,9 +165,12 @@ class DiscussionRunner:
         elif session.status is not SessionStatus.RUNNING:
             return
 
-        converged = False
+        converged = any(
+            event.type == "message" and event.metadata.get("converged") is True
+            for event in self.store.events(session_id)
+        )
         try:
-            while True:
+            while not converged:
                 session = self.store.get(session_id)
                 if session.status is not SessionStatus.RUNNING:
                     return
@@ -129,24 +193,25 @@ class DiscussionRunner:
                 }:
                     return
                 content, convergence_signal = self._response(raw)
+                converged = (
+                    convergence_signal
+                    and session.current_round + 1 >= len(session.member_ids)
+                )
                 self.store.append_event(
                     session_id,
                     "message",
                     content,
                     agent_id=speaker_id,
-                    metadata={"round": session.current_round + 1},
+                    metadata={
+                        "round": session.current_round + 1,
+                        "converged": converged,
+                    },
                 )
                 latest = self.store.get(session_id)
                 latest.current_round += 1
                 self.store.save(latest)
-                converged = (
-                    convergence_signal
-                    and latest.current_round >= len(latest.member_ids)
-                )
                 if latest.status is not SessionStatus.RUNNING:
                     return
-                if converged:
-                    break
 
             transcript = [
                 {
@@ -156,37 +221,39 @@ class DiscussionRunner:
                 for event in self.store.events(session_id)
                 if event.type == "message"
             ]
-            summary = self._call(
-                json.dumps(
-                    {"topic": session.topic, "transcript": transcript},
-                    ensure_ascii=False,
-                ),
-                task="collaboration_discussion_summary",
-            )
-            summary = summary or _FALLBACK_SUMMARY
-            self.store.append_event(session_id, "summary", summary)
+            summaries = [
+                event
+                for event in self.store.events(session_id)
+                if event.type == "summary"
+            ]
+            if summaries:
+                summary = summaries[-1].content
+            else:
+                summary = self._call(
+                    json.dumps(
+                        {"topic": session.topic, "transcript": transcript},
+                        ensure_ascii=False,
+                    ),
+                    task="collaboration_discussion_summary",
+                )
+                after_call = self.store.get(session_id)
+                if after_call.status is SessionStatus.CANCELLED:
+                    return
+                if after_call.status not in {
+                    SessionStatus.RUNNING,
+                    SessionStatus.PAUSED,
+                }:
+                    return
+                summary = summary or _FALLBACK_SUMMARY
+                self.store.append_event(
+                    session_id,
+                    "summary",
+                    summary,
+                    metadata={"converged": converged},
+                )
             latest = self.store.get(session_id)
             if latest.status is not SessionStatus.RUNNING:
                 return
-            latest.transition(SessionStatus.COMPLETED)
-            self.store.save(latest)
-            self.store.append_event(
-                session_id,
-                "completed",
-                summary,
-                metadata={"converged": converged},
-            )
-            for agent_id in latest.member_ids:
-                self.episode_writer(
-                    agent_id,
-                    {
-                        "source": "collaboration",
-                        "session_id": session_id,
-                        "kind": "discussion",
-                        "summary": summary,
-                        "salience": 0.65,
-                    },
-                )
-            self.interaction_writer(latest.member_ids)
+            self._finalize(session_id, summary, converged=converged)
         except Exception as exc:
             self._fail(session_id, exc)
