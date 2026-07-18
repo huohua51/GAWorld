@@ -173,7 +173,11 @@ def test_console_registers_persistent_cooperation_tab():
     html = (CONSOLE / "index.html").read_text(encoding="utf-8")
     source = (CONSOLE / "console.js").read_text(encoding="utf-8")
 
-    assert 'data-tab="collaboration"' in html
+    assert re.search(
+        r'<button[^>]*data-tab="collaboration"[^>]*>'
+        r'合作任务<span class="en">Cooperation</span></button>',
+        html,
+    )
     assert re.search(
         r'\{\s*id:\s*"collaboration",\s*'
         r'src:\s*"/site/dashboard/collaboration\.html"\s*\}',
@@ -237,7 +241,7 @@ def test_cooperation_artifact_urls_are_same_origin_and_session_scoped():
         null,
       );
       assert.equal(
-        page.safeArtifactUrl("/runtime/sessions/cs_2/artifacts/x", "cs_1", base),
+        page.safeArtifactUrl("/runtime/sessions/cs_1/artifacts/x", "cs_1", base),
         null,
       );
       assert.equal(
@@ -248,6 +252,71 @@ def test_cooperation_artifact_urls_are_same_origin_and_session_scoped():
         page.safeArtifactUrl("/runtime/sessions/cs_1/artifacts/", "cs_1", base),
         null,
       );
+      assert.equal(
+        page.safeArtifactUrl("/x/cs_1/artifacts/result.md", "cs_1", base),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/cs_10/artifacts/result.md",
+          "cs_1",
+          base,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/cs_1/artifacts/nested/result.md",
+          "cs_1",
+          base,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/cs_1/artifacts/a%2Fb.md",
+          "cs_1",
+          base,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/cs_1/artifacts/%252e%252e",
+          "cs_1",
+          base,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/cs_1/artifacts/result.md?download=1",
+          "cs_1",
+          base,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/cs_1/artifacts/result.md#preview",
+          "cs_1",
+          base,
+        ),
+        null,
+      );
+      assert.equal(
+        page.safeArtifactUrl(
+          "/output/collaboration/sessions/not_cs/artifacts/result.md",
+          "not_cs",
+          base,
+        ),
+        null,
+      );
+      assert.equal(page.safeArtifactUrl(
+        "/output/collaboration/sessions/cs_1/artifacts/result.md",
+        "cs_1/../cs_2",
+        base,
+      ), null);
     """
     result = subprocess.run(
         ["node", "-e", script],
@@ -258,6 +327,35 @@ def test_cooperation_artifact_urls_are_same_origin_and_session_scoped():
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cooperation_session_list_only_applies_latest_request():
+    module_path = DASHBOARD / "collaboration.js"
+    source = module_path.read_text(encoding="utf-8")
+    load_source = source[
+        source.index("async function loadSessions"):
+        source.index("function resetActivity")
+    ]
+    script = f"""
+      const assert = require("node:assert/strict");
+      const page = require({json.dumps(str(module_path))});
+      assert.equal(page.isLatestRequest(4, 4), true);
+      assert.equal(page.isLatestRequest(5, 4), false);
+    """
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "listGeneration" in source
+    assert "requestGeneration" in load_source
+    assert load_source.count(
+        "isLatestRequest(state.listGeneration, requestGeneration)"
+    ) >= 3
 
 
 def test_cooperation_layout_and_console_tabs_are_responsive():

@@ -15,7 +15,12 @@
   "use strict";
 
   function safeArtifactUrl(rawUrl, sessionId, baseHref) {
-    if (typeof rawUrl !== "string" || !rawUrl.trim()) {
+    const cleanSessionId = String(sessionId || "");
+    if (
+      typeof rawUrl !== "string"
+      || !rawUrl.trim()
+      || !/^cs_[A-Za-z0-9_-]+$/.test(cleanSessionId)
+    ) {
       return null;
     }
     try {
@@ -30,19 +35,29 @@
       ) {
         return null;
       }
-      const pathname = decodeURIComponent(parsed.pathname);
-      const scope = "/" + String(sessionId) + "/artifacts/";
-      const scopeIndex = pathname.indexOf(scope);
-      if (scopeIndex < 0) {
+      const scope = "/output/collaboration/sessions/"
+        + encodeURIComponent(cleanSessionId)
+        + "/artifacts/";
+      if (!parsed.pathname.startsWith(scope)) {
         return null;
       }
-      const relative = pathname.slice(scopeIndex + scope.length);
-      const segments = relative.split("/");
+      const encodedFilename = parsed.pathname.slice(scope.length);
       if (
-        !relative
-        || segments.some(function (segment) {
-          return !segment || segment === "." || segment === "..";
-        })
+        !encodedFilename
+        || encodedFilename.includes("/")
+        || /%2f|%5c/i.test(encodedFilename)
+      ) {
+        return null;
+      }
+      const filename = decodeURIComponent(encodedFilename);
+      if (
+        !filename
+        || filename === "."
+        || filename === ".."
+        || filename.includes("/")
+        || filename.includes("\\")
+        || /%2e|%2f|%5c/i.test(filename)
+        || /[\u0000-\u001f\u007f]/.test(filename)
       ) {
         return null;
       }
@@ -50,6 +65,10 @@
     } catch (_) {
       return null;
     }
+  }
+
+  function isLatestRequest(currentGeneration, requestGeneration) {
+    return currentGeneration === requestGeneration;
   }
 
   function boot() {
@@ -73,6 +92,7 @@
       actionGeneration: 0,
       actionPending: null,
       creating: false,
+      listGeneration: 0,
     };
 
     const els = {};
@@ -663,18 +683,29 @@
     }
 
     async function loadSessions() {
+      state.listGeneration += 1;
+      const requestGeneration = state.listGeneration;
       els.refreshSessionsBtn.disabled = true;
       try {
         const payload = await request(
           "/api/collaboration/sessions?kind=cooperation",
         );
+        if (!isLatestRequest(state.listGeneration, requestGeneration)) {
+          return;
+        }
         state.sessions = Array.isArray(payload.sessions)
           ? payload.sessions.slice()
           : [];
         renderSessionList();
       } catch (error) {
+        if (!isLatestRequest(state.listGeneration, requestGeneration)) {
+          return;
+        }
         setFormStatus(error.message, true);
       } finally {
+        if (!isLatestRequest(state.listGeneration, requestGeneration)) {
+          return;
+        }
         els.refreshSessionsBtn.disabled = false;
       }
     }
@@ -895,6 +926,7 @@
 
   return {
     boot,
+    isLatestRequest,
     safeArtifactUrl,
   };
 }));
