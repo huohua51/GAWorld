@@ -243,5 +243,101 @@ class TestApplyGoalProgress(unittest.TestCase):
         self.assertEqual(notes, [])
 
 
+def _review_agent():
+    agent = _agent()
+    agent["goals"] = _sample_goals()
+    agent["episodes"] = [
+        {"day": 3, "time": "10:00", "final_activity": "研究基金", "action": "比较收益",
+         "reflection": "有进展", "salience": 0.8},
+    ]
+    return agent
+
+
+class TestGoalReview(unittest.TestCase):
+    def _llm(self, payload):
+        return lambda prompt: json.dumps(payload, ensure_ascii=False)
+
+    def test_weekly_review_applies_actions_and_logs(self):
+        agent = _review_agent()
+        goals, summary = goals_mod.run_goal_review(
+            agent, day=7, trigger="weekly",
+            llm=self._llm({
+                "short_term_updates": [{"id": "stg1", "action": "complete"}],
+                "new_short_term_goals": [
+                    {"title": "下两周研究学区政策", "parent": "ltg1", "target_day_offset": 14}
+                ],
+                "long_term_updates": [{"id": "ltg1", "action": "keep", "progress": 0.2}],
+                "new_long_term_goals": [],
+                "life_goal_change": None,
+                "summary": "这周把调仓做完了",
+            }),
+        )
+        self.assertEqual(summary, "这周把调仓做完了")
+        by_id = {g["id"]: g for g in goals["short_term_goals"]}
+        self.assertEqual(by_id["stg1"]["status"], "completed")
+        titles = [g["title"] for g in goals["short_term_goals"] if g["status"] == "active"]
+        self.assertIn("下两周研究学区政策", titles)
+        self.assertEqual(goals["long_term_goals"][0]["progress"], 0.2)
+        self.assertEqual(goals["last_review_day"], 7)
+        self.assertEqual(goals["review_log"][-1]["type"], "weekly")
+
+    def test_weekly_review_cannot_touch_life_goals(self):
+        agent = _review_agent()
+        goals, _ = goals_mod.run_goal_review(
+            agent, day=7, trigger="weekly",
+            llm=self._llm({
+                "short_term_updates": [], "new_short_term_goals": [],
+                "long_term_updates": [], "new_long_term_goals": [],
+                "life_goal_change": {"id": "lg1", "title": "环游世界"},
+                "summary": "想换个活法",
+            }),
+        )
+        self.assertEqual(goals["life_goals"][0]["title"], "在杭州安家")
+
+    def test_event_review_may_change_one_life_goal(self):
+        agent = _review_agent()
+        goals, _ = goals_mod.run_goal_review(
+            agent, day=9, trigger="event",
+            trigger_event={"title": "突发失业", "severity": 0.9, "description": "被裁员"},
+            llm=self._llm({
+                "short_term_updates": [{"id": "stg1", "action": "abandon"}],
+                "new_short_term_goals": [
+                    {"title": "这两周整理简历投递", "parent": "ltg1", "target_day_offset": 10}
+                ],
+                "long_term_updates": [], "new_long_term_goals": [],
+                "life_goal_change": {"id": "lg1", "title": "先稳住生活再谈安家"},
+                "summary": "失业了，先求稳",
+            }),
+        )
+        self.assertEqual(goals["life_goals"][0]["title"], "先稳住生活再谈安家")
+        self.assertFalse(goals["needs_review"])
+        self.assertEqual(goals["review_log"][-1]["type"], "event")
+
+    def test_unparseable_review_keeps_goals_and_review_day(self):
+        agent = _review_agent()
+        goals, summary = goals_mod.run_goal_review(
+            agent, day=7, trigger="weekly", llm=lambda p: "上周还行",
+        )
+        self.assertEqual(summary, "")
+        self.assertEqual(goals["last_review_day"], 0)
+
+    def test_new_goals_respect_active_caps(self):
+        agent = _review_agent()
+        goals, _ = goals_mod.run_goal_review(
+            agent, day=7, trigger="weekly",
+            llm=self._llm({
+                "short_term_updates": [],
+                "new_short_term_goals": [
+                    {"title": f"新目标{i}", "parent": "ltg1", "target_day_offset": 14}
+                    for i in range(8)
+                ],
+                "long_term_updates": [], "new_long_term_goals": [],
+                "life_goal_change": None, "summary": "加了一堆",
+            }),
+        )
+        active = [g for g in goals["short_term_goals"] if g["status"] == "active"]
+        self.assertLessEqual(len(active), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

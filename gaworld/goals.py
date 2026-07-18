@@ -437,3 +437,197 @@ def apply_goal_progress(goals: Any, goal_progress: Any, day: int,
         elif new > old:
             notes.append(f"{goal.get('title')} 进度 {old:.0%}→{new:.0%}")
     return goals, notes
+
+
+# ---------------------------------------------------------------------
+# Weekly / event-triggered reviews (one LLM call per review)
+# ---------------------------------------------------------------------
+
+def _recent_episode_lines(agent: dict, day: int, *, since_day: int = 0,
+                          max_items: int = 8) -> list[str]:
+    eps = [
+        ep for ep in agent.get("episodes", [])
+        if isinstance(ep, dict) and since_day < int(ep.get("day", 0) or 0) <= int(day)
+    ]
+    eps.sort(key=lambda e: float(e.get("decayed_salience", e.get("salience", 0.0))), reverse=True)
+    return [
+        f"Day {e.get('day')} {e.get('time', '')} {e.get('final_activity', '')} -> "
+        f"{e.get('action', '')}（{str(e.get('reflection', ''))[:40]}）"
+        for e in eps[:max_items]
+    ]
+
+
+def _review_prompt(agent: dict, goals: dict, *, day: int, trigger: str,
+                   episode_lines: list[str], trigger_event: dict | None, cfg: dict) -> str:
+    goals_text = json.dumps({t: goals.get(t, []) for t in _TIERS}, ensure_ascii=False, indent=2)
+    event_text = ""
+    if trigger == "event" and isinstance(trigger_event, dict):
+        event_text = (
+            f"\n触发本次回顾的重大事件：{trigger_event.get('title', '')}"
+            f"（严重度 {_clamp(trigger_event.get('severity', 0.0)):.2f}）："
+            f"{str(trigger_event.get('description', ''))[:100]}\n"
+        )
+    life_rule = (
+        "5) 本次为重大事件回顾：若事件确实动摇了人生方向，最多在 life_goal_change 修改 1 条人生目标，否则给 null。"
+        if trigger == "event"
+        else "5) 不要改动人生目标，life_goal_change 恒为 null。"
+    )
+    kind = "因重大变故引发的" if trigger == "event" else "每周的"
+    return f"""
+你是{agent.get('name', '')}，正在进行一次{kind}个人目标回顾（今天是 Day {int(day)}）。
+你的角色：{agent.get('job', '')}，{agent.get('personality', '')}
+当前状态：{json.dumps(agent.get('state', {}), ensure_ascii=False)}
+{event_text}
+当前目标体系：
+{goals_text}
+自上次回顾以来的重要经历：
+{json.dumps(episode_lines, ensure_ascii=False, indent=2)}
+
+只输出 JSON：
+{{
+  "short_term_updates": [{{"id":"stg1","action":"keep|complete|adjust|abandon","title":"仅 adjust 时给新标题","progress":0.6}}],
+  "new_short_term_goals": [{{"title":"...","parent":"ltg1","target_day_offset":14}}],
+  "long_term_updates": [{{"id":"ltg1","action":"keep|complete|abandon","progress":0.3}}],
+  "new_long_term_goals": [{{"title":"...","parent":"lg1","horizon_days":365}}],
+  "life_goal_change": null,
+  "summary": "一段中文回顾小结（50字内）"
+}}
+要求：
+1) 已实际完成的短期目标标 complete；不再合适的标 abandon；方向对但内容要变的用 adjust。
+2) 保持 active 短期目标 2-{cfg['max_short_term']} 个（不够就在 new_short_term_goals 里补，须挂在 active 长期目标下）。
+3) 长期目标进度按真实经历修订，可升可降；完成或放弃后可在 new_long_term_goals 补充。
+4) 目标要具体、符合近期经历，不要空洞口号。
+{life_rule}
+6) 仅输出 JSON，不要其他文字。
+"""
+
+
+def _next_goal_id(items: list, prefix: str) -> str:
+    existing = {str(g.get("id")) for g in items}
+    n = 1
+    while f"{prefix}{n}" in existing:
+        n += 1
+    return f"{prefix}{n}"
+
+
+def _apply_review(goals: dict, payload: dict, *, day: int, trigger: str, cfg: dict) -> dict:
+    short_by_id = {str(g.get("id")): g for g in goals.get("short_term_goals", [])}
+    for upd in payload.get("short_term_updates", []) or []:
+        if not isinstance(upd, dict):
+            continue
+        g = short_by_id.get(str(upd.get("id", "")).strip())
+        if g is None or g.get("status") != "active":
+            continue
+        action = str(upd.get("action", "keep")).strip()
+        if action == "complete":
+            g["status"] = "completed"
+            g["progress"] = 1.0
+        elif action == "abandon":
+            g["status"] = "abandoned"
+        elif action == "adjust":
+            title = str(upd.get("title", "")).strip()
+            if title:
+                g["title"] = title
+            g["progress"] = _clamp(upd.get("progress", g.get("progress", 0.0)))
+        elif "progress" in upd:
+            g["progress"] = _clamp(upd.get("progress", g.get("progress", 0.0)))
+        g["updated_day"] = int(day)
+    long_by_id = {str(g.get("id")): g for g in goals.get("long_term_goals", [])}
+    for upd in payload.get("long_term_updates", []) or []:
+        if not isinstance(upd, dict):
+            continue
+        g = long_by_id.get(str(upd.get("id", "")).strip())
+        if g is None or g.get("status") != "active":
+            continue
+        action = str(upd.get("action", "keep")).strip()
+        if action == "complete":
+            g["status"] = "completed"
+            g["progress"] = 1.0
+        elif action == "abandon":
+            g["status"] = "abandoned"
+        elif "progress" in upd:
+            g["progress"] = _clamp(upd.get("progress", g.get("progress", 0.0)))
+        g["updated_day"] = int(day)
+    for item in payload.get("new_long_term_goals", []) or []:
+        if not isinstance(item, dict) or not str(item.get("title", "")).strip():
+            continue
+        active = [g for g in goals["long_term_goals"] if g.get("status") == "active"]
+        if len(active) >= int(cfg["max_long_term"]):
+            break
+        try:
+            horizon = max(30, int(item.get("horizon_days", 180) or 180))
+        except (TypeError, ValueError):
+            horizon = 180
+        goals["long_term_goals"].append({
+            "id": _next_goal_id(goals["long_term_goals"], "ltg"),
+            "parent": str(item.get("parent", "")).strip(),
+            "title": str(item["title"]).strip(),
+            "horizon_days": horizon,
+            "progress": 0.0, "status": "active",
+            "created_day": int(day), "updated_day": int(day),
+        })
+    for item in payload.get("new_short_term_goals", []) or []:
+        if not isinstance(item, dict) or not str(item.get("title", "")).strip():
+            continue
+        active = [g for g in goals["short_term_goals"] if g.get("status") == "active"]
+        if len(active) >= int(cfg["max_short_term"]):
+            break
+        try:
+            offset = max(3, int(item.get("target_day_offset", 14) or 14))
+        except (TypeError, ValueError):
+            offset = 14
+        goals["short_term_goals"].append({
+            "id": _next_goal_id(goals["short_term_goals"], "stg"),
+            "parent": str(item.get("parent", "")).strip(),
+            "title": str(item["title"]).strip(),
+            "target_day": int(day) + offset,
+            "progress": 0.0, "status": "active", "recent_note": "",
+            "created_day": int(day), "updated_day": int(day),
+        })
+    if trigger == "event":
+        change = payload.get("life_goal_change")
+        if isinstance(change, dict) and str(change.get("id", "")).strip():
+            for g in goals.get("life_goals", []):
+                if str(g.get("id")) == str(change.get("id")).strip():
+                    title = str(change.get("title", "")).strip()
+                    if title:
+                        g["title"] = title
+                    desc = str(change.get("description", "")).strip()
+                    if desc:
+                        g["description"] = desc
+                    break
+    return normalize_goals(goals, config=cfg, day=day)
+
+
+def run_goal_review(agent: dict, *, llm: LlmFn, day: int, trigger: str = "weekly",
+                    trigger_event: dict | None = None,
+                    episode_lines: list[str] | None = None,
+                    config: dict | None = None) -> tuple[Any, str]:
+    """One review pass. On any LLM/parse failure the goals are returned
+    unchanged (``last_review_day``/``needs_review`` untouched → retried later)."""
+    cfg = goals_config(config)
+    goals = agent.get("goals")
+    if not isinstance(goals, dict) or not any(goals.get(t) for t in _TIERS):
+        return goals, ""
+    lines = episode_lines if isinstance(episode_lines, list) else _recent_episode_lines(
+        agent, day, since_day=int(goals.get("last_review_day", 0) or 0))
+    prompt = _review_prompt(agent, goals, day=day, trigger=trigger,
+                            episode_lines=lines, trigger_event=trigger_event, cfg=cfg)
+    try:
+        raw = llm(prompt)
+    except Exception as exc:  # noqa: BLE001 - review failure must not stop the day-end flow
+        _LOG.warning("goals review LLM call failed for agent %s: %s", agent.get("id"), exc)
+        return goals, ""
+    payload = parse_goals_json(raw)
+    if not payload:
+        _LOG.warning("goals review unparseable for agent %s; keeping goals unchanged", agent.get("id"))
+        return goals, ""
+    goals = _apply_review(goals, payload, day=day, trigger=trigger, cfg=cfg)
+    summary = str(payload.get("summary", "")).strip()
+    goals["last_review_day"] = int(day)
+    goals["needs_review"] = False
+    goals.setdefault("review_log", []).append(
+        {"day": int(day), "type": trigger, "summary": summary[:120]})
+    goals["review_log"] = goals["review_log"][-int(cfg["review_log_keep"]):]
+    agent["goals"] = goals
+    return goals, summary
