@@ -1,9 +1,11 @@
+import atexit
 import csv
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from copy import deepcopy
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -57,6 +59,9 @@ RUN_STATE = {
     "log_path": RUN_LOG_PATH,
 }
 
+_COLLABORATION_SERVICE = None
+_COLLABORATION_LOCK = threading.Lock()
+
 
 def _deep_update(base, patch):
     if not isinstance(base, dict) or not isinstance(patch, dict):
@@ -97,6 +102,116 @@ def _effective_config():
     cfg = deepcopy(CONFIG)
     _deep_update(cfg, _dashboard_config())
     return cfg
+
+
+def _repo_path(value):
+    path = Path(str(value))
+    if path.is_absolute():
+        return path.resolve()
+    return (Path(REPO_ROOT) / path).resolve()
+
+
+def _collaboration_config():
+    config = _effective_config().get("collaboration", {})
+    return config if isinstance(config, dict) else {}
+
+
+def _get_collaboration_service():
+    global _COLLABORATION_SERVICE
+    with _COLLABORATION_LOCK:
+        if _COLLABORATION_SERVICE is not None:
+            return _COLLABORATION_SERVICE
+
+        from gaworld.collaboration.service import CollaborationService
+        from gaworld.llm.providers import call_llm
+        from gaworld.memory.experience import append_agent_episode
+
+        config = _effective_config()
+        collaboration = config.get("collaboration", {})
+        if not isinstance(collaboration, dict):
+            collaboration = {}
+        service = CollaborationService(
+            config=collaboration,
+            sessions_dir=_repo_path(
+                collaboration.get(
+                    "sessions_dir",
+                    "output/collaboration/sessions",
+                )
+            ),
+            memory_dir=_repo_path(
+                config.get("memory_dir", "output/memory")
+            ),
+            agent_loader=lambda agent_id: _agent_detail(int(agent_id)),
+            llm=call_llm,
+            episode_writer=lambda agent_id, episode: append_agent_episode(
+                agent_id,
+                episode,
+                cfg=config,
+            ),
+        )
+        service.start()
+        _COLLABORATION_SERVICE = service
+        return service
+
+
+def _reset_collaboration_service_for_tests():
+    global _COLLABORATION_SERVICE
+    with _COLLABORATION_LOCK:
+        service = _COLLABORATION_SERVICE
+        _COLLABORATION_SERVICE = None
+    if service is not None:
+        service.shutdown()
+
+
+def _public_collaboration_session(payload):
+    result = deepcopy(payload)
+    artifacts = result.get("artifacts")
+    if not isinstance(artifacts, list):
+        return result
+
+    repo_root = Path(REPO_ROOT).resolve()
+    collaboration = _collaboration_config()
+    sessions_dir = _repo_path(
+        collaboration.get(
+            "sessions_dir",
+            "output/collaboration/sessions",
+        )
+    )
+    session_root = (sessions_dir / str(result.get("id") or "")).resolve()
+    try:
+        session_root.relative_to(sessions_dir)
+    except ValueError:
+        session_root_is_safe = False
+    else:
+        session_root_is_safe = True
+
+    public_artifacts = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        public_artifacts.append(artifact)
+        artifact.pop("url", None)
+        raw_path = str(artifact.get("path") or "")
+        relative = Path(raw_path)
+        if not raw_path or relative.is_absolute() or not session_root_is_safe:
+            artifact.pop("path", None)
+            continue
+        resolved = (session_root / relative).resolve()
+        try:
+            resolved.relative_to(session_root)
+        except ValueError:
+            artifact.pop("path", None)
+            continue
+        try:
+            public_path = resolved.relative_to(repo_root)
+        except ValueError:
+            continue
+        artifact["url"] = "/" + public_path.as_posix()
+    result["artifacts"] = public_artifacts
+    return result
+
+
+atexit.register(_reset_collaboration_service_for_tests)
 
 
 def _provider_names(cfg):
@@ -860,7 +975,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if length <= 0:
             return {}
         raw = self.rfile.read(length).decode("utf-8")
-        return json.loads(raw) if raw.strip() else {}
+        payload = json.loads(raw) if raw.strip() else {}
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        return payload
 
     def _handle_api_get(self, path, query):
         if path == "/api/config":
@@ -896,6 +1014,43 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_latest_trace_meta())
         if path == "/api/life-events":
             return self._json_response(_life_events_payload())
+        if path == "/api/collaboration/sessions":
+            service = _get_collaboration_service()
+            kind = (query.get("kind") or [""])[0]
+            status = (query.get("status") or [""])[0]
+            sessions = service.list_sessions(
+                kind=kind,
+                status=status,
+            )
+            return self._json_response(
+                {
+                    "sessions": [
+                        _public_collaboration_session(item)
+                        for item in sessions
+                    ],
+                    "health": service.health(),
+                }
+            )
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "collaboration", "sessions"]
+        ):
+            session = _get_collaboration_service().get_session(parts[3])
+            return self._json_response(
+                _public_collaboration_session(session)
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "collaboration", "sessions"]
+            and parts[4] == "events"
+        ):
+            after = int((query.get("after") or [0])[0])
+            events = _get_collaboration_service().events(
+                parts[3],
+                after=after,
+            )
+            return self._json_response({"events": events})
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def _handle_api_post(self, path):
@@ -920,6 +1075,46 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_add_life_event(payload))
         if path == "/api/fos-export":
             return self._json_response(_fos_export(payload))
+        if path == "/api/relationships/friends":
+            return self._json_response(
+                _get_collaboration_service().make_friends(
+                    payload.get("agent_ids", [])
+                )
+            )
+        if path == "/api/collaboration/sessions":
+            service = _get_collaboration_service()
+            kind = str(payload.get("kind") or "")
+            if kind == "discussion":
+                session = service.create_discussion(
+                    payload.get("agent_ids", []),
+                    topic=str(payload.get("topic") or ""),
+                    max_rounds=int(payload.get("max_rounds", 6)),
+                )
+            elif kind == "cooperation":
+                session = service.create_cooperation(
+                    payload.get("agent_ids", []),
+                    task=str(payload.get("task") or ""),
+                    leader_id=payload.get("leader_id"),
+                    role_overrides=payload.get("role_overrides"),
+                )
+            else:
+                raise ValueError(
+                    "kind must be discussion or cooperation"
+                )
+            return self._json_response(
+                _public_collaboration_session(session.to_dict())
+            )
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "collaboration", "sessions"]
+            and parts[4] in {"pause", "resume", "cancel"}
+        ):
+            service = _get_collaboration_service()
+            result = getattr(service, parts[4])(parts[3])
+            return self._json_response(
+                _public_collaboration_session(result)
+            )
         return self._json_response({"error": "Unknown endpoint"}, status=404)
 
     def do_GET(self):
@@ -928,6 +1123,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/"):
             try:
                 return self._handle_api_get(path, parse_qs(parsed.query))
+            except (ValueError, KeyError) as exc:
+                return self._json_response(
+                    {"error": str(exc)},
+                    status=400,
+                )
             except Exception as exc:
                 # HTTP boundary: log the full traceback and surface a 500.
                 _LOG.exception("GET %s failed: %s", path, exc)
@@ -954,6 +1154,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response({"error": "POST is only supported under /api"}, status=404)
         try:
             return self._handle_api_post(path)
+        except (ValueError, KeyError) as exc:
+            return self._json_response(
+                {"error": str(exc)},
+                status=400,
+            )
         except Exception as exc:
             # HTTP boundary: log the full traceback and surface a 500.
             _LOG.exception("POST %s failed: %s", path, exc)
@@ -971,6 +1176,7 @@ def run_server(host="127.0.0.1", port=8766):
         pass
     finally:
         _stop_simulation()
+        _reset_collaboration_service_for_tests()
         server.server_close()
 
 
