@@ -103,6 +103,13 @@ from gaworld.social.network import (
     migrate_relationships,
 )
 from gaworld.events.life import list_life_events
+from gaworld.goals import (
+    apply_goal_progress,
+    format_goals_context,
+    load_agent_goals,
+    match_goal_relevance,
+    save_agent_goals,
+)
 
 from gaworld.policy.intervention import INTERVENTION_METRICS
 from gaworld.plugins import builtin_plugins
@@ -422,6 +429,8 @@ INTERESTS_ENABLED = bool(INTERESTS_CONFIG.get("enabled", True))
 INTERESTS_MAX_ITEMS = max(1, int(INTERESTS_CONFIG.get("max_items", 6)))
 INTERESTS_DAILY_INSERT_CHANCE = float(INTERESTS_CONFIG.get("daily_insert_chance", 0.55))
 INTERESTS_WEEKEND_BOOST = float(INTERESTS_CONFIG.get("weekend_boost", 0.25))
+GOALS_CONFIG = CONFIG.get("goals", {})
+GOALS_ENABLED = bool(GOALS_CONFIG.get("enabled", True))
 STATE_OUTPUT_DIR = CONFIG.get("state_output_dir", "output/state")
 NETWORK_OUTPUT_DIR = CONFIG.get("network_output_dir", "output/network")
 ENV_OUTPUT_DIR = CONFIG.get("environment_output_dir", "output/environment")
@@ -1510,6 +1519,13 @@ from gaworld.sim._prompt import (  # noqa: E402
 )
 
 
+def _goals_hint(agent):
+    """Goals block for prompts; '无' when the goals layer is disabled."""
+    if not GOALS_ENABLED:
+        return "无"
+    return format_goals_context(agent.get("goals"))
+
+
 def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     if not base_schedule:
         return base_schedule
@@ -1554,6 +1570,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
     memory_hint = _format_memory_hint(memory_hits)
     external_hint = _external_rag_hint(agent, f"{day_type_zh} 日程 计划")
     intent_hint = intention_text(agent.get("intentions")) if HUMAN_REALISM_ENABLED else "无"
+    goals_hint = _goals_hint(agent)
     growth_context = format_growth_context(agent.get("growth_profile"), max_items=INTERESTS_MAX_ITEMS) if INTERESTS_ENABLED else "无"
     # New: four contextual signals so the schedule reflects the agent's
     # ongoing life rather than being regenerated from scratch each day.
@@ -1577,6 +1594,8 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 可参考的近期记忆：{memory_hint}
 可参考的额外信息：{external_hint}
 今日行为意图：{intent_hint}
+当前人生与阶段目标：
+{goals_hint}
 兴趣与技能成长画像：
 {growth_context}
 日程约束：{day_rule}
@@ -1593,7 +1612,8 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 9) “近期突发事件”应优先反映在前一/两个时段（例如就医、处理纠纷、家庭责任、处理影响等），但不要凭空编造未在事件中提及的细节。
 10) “事件余波”仍在持续时，应让今日日程为其让路：影响很强时明显收缩高强度/高承诺活动并保留恢复、善后或处理时段，影响消退时逐步恢复常态；不要凭空编造事件未提及的细节。
 11) “近期社交脉动”里有强互动对象时，可在合适时段加入跟进社交（约见、电话、回信等）；如最近无社交，可适度补一次轻量联络。
-12) 仅输出 JSON，不要其他文字。
+12) 若“当前人生与阶段目标”不为“无”，日程应自然服务于当前短期目标（每天推进 0-2 个即可，不要堆砌）；疲惫、突发事件或周末休整时目标推进可让位。
+13) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="daily_routine", agent_id=agent["id"])
     schedule = _parse_schedule(response)
@@ -2309,11 +2329,13 @@ def interview_agent(agent, questions, context=None, max_questions=6):
     recall_context = evoke_memory(agent, "interview", context_text, questions)
     memory_hint = recall_context.get("hint", "暂无重要经验")
     recollection = recall_context.get("recollection", "").strip() or "无明显回忆"
+    goals_hint = _goals_hint(agent)
     prompt = f"""
 你是{agent['name']}。
 这是一次访谈，回答要真实且基于角色经历。
 背景：{context_text}
 你的近期经验：{memory_hint}
+你的目标与追求：{goals_hint}
 这些问题勾起的回忆：{recollection}
 
 请逐题回答以下问题，每题1-3句。
@@ -3511,6 +3533,17 @@ def run_simulation():
                 if p and (p in effective_activity or p in plan_text or p in refl_text):
                     goal_relevance = 0.8
                     break
+            if GOALS_ENABLED:
+                goal_relevance = max(
+                    goal_relevance,
+                    match_goal_relevance(
+                        agent.get("goals"),
+                        effective_activity,
+                        plan_text,
+                        refl_text,
+                        config=GOALS_CONFIG,
+                    ),
+                )
             salience = compute_episode_salience(
                 delta.get("stress", 0.0),
                 event_intensity,
@@ -3870,6 +3903,7 @@ def run_simulation():
                     episodes,
                     HUMAN_REALISM_CONFIG,
                     budget,
+                    goals_context=_goals_hint(agent),
                 )
                 intentions["day"] = day
                 agent["intentions"] = intentions
@@ -4172,8 +4206,22 @@ def run_simulation():
                     day_eps,
                     HUMAN_REALISM_CONFIG,
                     budget,
+                    goals_context=_goals_hint(agent),
                 )
                 agent["intentions"] = consolidated.get("intentions", agent.get("intentions", {}))
+                if GOALS_ENABLED and isinstance(agent.get("goals"), dict) and agent["goals"]:
+                    agent["goals"], goal_notes = apply_goal_progress(
+                        agent["goals"],
+                        consolidated.get("goal_progress", []),
+                        day,
+                        config=GOALS_CONFIG,
+                    )
+                    if goal_notes:
+                        print(f"🎯 {agent['name']} 的目标推进：{'；'.join(goal_notes)}")
+                    if STATEFUL:
+                        save_agent_goals(
+                            agent_id, agent["goals"], CONFIG.get("memory_dir", "output/memory")
+                        )
                 # Day-end: decay role-aware relationships, prune Dunbar
                 # overflow. Both operate in place on agent["relationships"].
                 decay_relationships(agent, current_day=day, cfg=HUMAN_REALISM_CONFIG)
@@ -4596,6 +4644,11 @@ def _cli_interview_agent(agent_id, questions, context=None):
         seed_vector_db_from_memory(agent)
     else:
         agent["memory"] = []
+    agent["goals"] = (
+        load_agent_goals(agent["id"], CONFIG.get("memory_dir", "output/memory"))
+        if (STATEFUL and GOALS_ENABLED)
+        else {}
+    )
     _bootstrap_agent_external_rag(
         agent,
         news_cache=news_cache,

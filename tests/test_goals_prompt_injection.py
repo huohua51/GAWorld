@@ -83,5 +83,68 @@ class TestConsolidationGoalProgress(unittest.TestCase):
         self.assertEqual(result["goal_progress"], [])
 
 
+class TestMainSimGoalsWiring(unittest.TestCase):
+    def _agent(self):
+        return {
+            "id": 5, "name": "测试者", "age": 30, "job": "教师",
+            "personality": "耐心", "daily_life": "规律", "values": "务实",
+            "state": {}, "growth_profile": {}, "episodes": [], "intentions": {},
+            "goals": {
+                "life_goals": [{"id": "lg1", "title": "教书育人", "domain": "career",
+                                "description": "", "status": "active"}],
+                "long_term_goals": [],
+                "short_term_goals": [{"id": "stg1", "parent": "", "title": "完成课题申报",
+                                      "target_day": 14, "progress": 0.2,
+                                      "status": "active", "recent_note": "",
+                                      "created_day": 1, "updated_day": 1}],
+                "last_review_day": 0, "needs_review": False, "review_log": [],
+            },
+        }
+
+    def test_goals_hint_formats_and_respects_disabled(self):
+        import generative_city_sim as sim
+
+        agent = self._agent()
+        with patch.object(sim, "GOALS_ENABLED", True):
+            self.assertIn("完成课题申报", sim._goals_hint(agent))
+        with patch.object(sim, "GOALS_ENABLED", False):
+            self.assertEqual(sim._goals_hint(agent), "无")
+
+    def test_daily_routine_prompt_contains_goals(self):
+        import generative_city_sim as sim
+
+        prompts = []
+
+        def fake_llm(prompt, task=None, agent_id=None):
+            prompts.append(prompt)
+            return "[]"
+
+        agent = self._agent()
+        with patch.object(sim, "call_llm", fake_llm), \
+             patch.object(sim, "GOALS_ENABLED", True), \
+             patch.object(sim, "retrieve_relevant_memories", lambda *a, **k: []):
+            sim.generate_daily_routine(agent, [("08:00", "起床")], day=2)
+        self.assertTrue(prompts)
+        self.assertIn("当前人生与阶段目标", prompts[0])
+        self.assertIn("完成课题申报", prompts[0])
+
+    def test_interview_prompt_contains_goals(self):
+        import generative_city_sim as sim
+
+        prompts = []
+
+        def fake_llm(prompt, task=None, agent_id=None):
+            prompts.append(prompt)
+            return json.dumps([{"question": "q", "answer": "a"}], ensure_ascii=False)
+
+        agent = self._agent()
+        with patch.object(sim, "call_llm", fake_llm), \
+             patch.object(sim, "GOALS_ENABLED", True), \
+             patch.object(sim, "evoke_memory",
+                          lambda *a, **k: {"hint": "无", "recollection": ""}):
+            sim.interview_agent(agent, ["你最近在忙什么？"])
+        self.assertIn("完成课题申报", prompts[0])
+
+
 if __name__ == "__main__":
     unittest.main()

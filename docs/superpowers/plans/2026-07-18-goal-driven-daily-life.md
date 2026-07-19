@@ -1749,7 +1749,7 @@ git commit -m "feat(goals): inject goals context into daily intentions and day c
 - Modify: `generative_city_sim.py`（常量区 ~425、`generate_daily_routine` 1513、`interview_agent` 2296、goal_relevance ~3508、意图调用 ~3868、日终 ~4169、`_cli_interview_agent` 4588）
 - Test: `tests/test_goals_prompt_injection.py`（追加）
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 在 `tests/test_goals_prompt_injection.py` 追加：
 
@@ -1819,12 +1819,12 @@ class TestMainSimGoalsWiring(unittest.TestCase):
 
 注：导入 `generative_city_sim` 会触发模块级初始化，属重量级导入——项目里已有同类测试（如 `tests/test_interest_daily_routine_prompt.py`）这样做，照其导入/patch 方式对齐（若它用了额外的环境准备 fixture，先照抄）。
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_goals_prompt_injection.py -k MainSimGoalsWiring -v`
 Expected: FAIL — `module 'generative_city_sim' has no attribute '_goals_hint'` / 无 `GOALS_ENABLED`。
 
-- [ ] **Step 3: Add imports and constants**
+- [x] **Step 3: Add imports and constants**
 
 `generative_city_sim.py` 在 `from gaworld.events.life import list_life_events`（约 105 行）之后加：
 
@@ -1845,7 +1845,7 @@ GOALS_CONFIG = CONFIG.get("goals", {})
 GOALS_ENABLED = bool(GOALS_CONFIG.get("enabled", True))
 ```
 
-- [ ] **Step 4: Add `_goals_hint` and inject into the routine prompt**
+- [x] **Step 4: Add `_goals_hint` and inject into the routine prompt**
 
 `generate_daily_routine`（1513 行）定义之前加：
 
@@ -1877,7 +1877,7 @@ prompt 中 `今日行为意图：{intent_hint}` 之后插入：
 13) 仅输出 JSON，不要其他文字。
 ```
 
-- [ ] **Step 5: Wire the daily-intention call**
+- [x] **Step 5: Wire the daily-intention call**
 
 约 3868 行的调用改为：
 
@@ -1891,7 +1891,7 @@ prompt 中 `今日行为意图：{intent_hint}` 之后插入：
                 )
 ```
 
-- [ ] **Step 6: Real goal_relevance**
+- [x] **Step 6: Real goal_relevance**
 
 约 3508-3513 行：
 
@@ -1920,7 +1920,7 @@ prompt 中 `今日行为意图：{intent_hint}` 之后插入：
                 )
 ```
 
-- [ ] **Step 7: Day-end progress application**
+- [x] **Step 7: Day-end progress application**
 
 约 4169-4177 行，`consolidate_day` 调用加 `goals_context` 参数：
 
@@ -1954,7 +1954,7 @@ prompt 中 `今日行为意图：{intent_hint}` 之后插入：
                         )
 ```
 
-- [ ] **Step 8: Interview injection + CLI goals loading**
+- [x] **Step 8: Interview injection + CLI goals loading**
 
 `interview_agent`（2296 行）内 `recollection = ...` 之后加：
 
@@ -1978,12 +1978,12 @@ prompt 中 `你的近期经验：{memory_hint}` 之后插入一行：
     )
 ```
 
-- [ ] **Step 9: Run tests to verify they pass**
+- [x] **Step 9: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_prompt_injection.py tests/test_interest_daily_routine_prompt.py tests/test_schedule_anchor_threshold.py -v`
 Expected: 全部 PASS。
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add generative_city_sim.py tests/test_goals_prompt_injection.py
