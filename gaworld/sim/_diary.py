@@ -33,6 +33,7 @@ from typing import Any
 import requests
 
 from gaworld.cognition.realism import intention_text
+from gaworld.goals import format_goals_context
 from gaworld.llm import providers as _llm_providers
 from gaworld.logging_setup import get_logger
 from gaworld.memory.store import save_agent_memory, vector_db_add_entry
@@ -175,6 +176,7 @@ def generate_daily_diary(
         )
     episode_lines = _top_day_episode_lines(agent, day, max_items=4)
     intent_hint = intention_text(intentions or agent.get("intentions", {}))
+    goals_hint = format_goals_context(agent.get("goals"))
     diary_date = ""
     if isinstance(day_context, dict):
         diary_date = " ".join(
@@ -196,12 +198,14 @@ def generate_daily_diary(
 今天形成的长期记忆：{day_memory}
 今天的经验整合：{consolidation_text}
 明天的行为意图：{intent_hint}
+我的目标与追求：{goals_hint}
 
 要求：
 1) 输出 markdown。
 2) 必须包含且只包含这三个二级标题：`## 今天主要发生的事情`、`## 今天的感想`、`## 明天的计划`。
 3) 语气像这个 agent 自己写的日记，聚焦今天最重要的几件事、真实感受、以及明天的打算。
-4) 不要写成流水账，也不要输出 JSON。
+4) 若“我的目标与追求”不为“无”，感想或计划中可自然流露与目标的关系（推进的踏实、落后的焦虑），但不要罗列目标本身。
+5) 不要写成流水账，也不要输出 JSON。
 """
     try:
         response = _llm_providers.call_llm(

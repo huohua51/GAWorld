@@ -1998,7 +1998,7 @@ git commit -m "feat(goals): wire goals into routine prompt, salience, day-end pr
 - Modify: `gaworld/sim/_diary.py`（`generate_daily_diary`，158-230 行）
 - Test: `tests/test_goals_prompt_injection.py`（追加）
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 class TestDiaryGoalsInjection(unittest.TestCase):
@@ -2028,12 +2028,12 @@ class TestDiaryGoalsInjection(unittest.TestCase):
         self.assertIn("完成课题申报", prompts[0])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_goals_prompt_injection.py -k Diary -v`
 Expected: FAIL — `AssertionError: '我的目标与追求' not found ...`。
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `gaworld/sim/_diary.py` 顶部 import 区加：
 
@@ -2060,12 +2060,12 @@ prompt 中 `明天的行为意图：{intent_hint}` 之后插入一行：
 5) 不要写成流水账，也不要输出 JSON。
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_prompt_injection.py -v`
 Expected: 全部 PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add gaworld/sim/_diary.py tests/test_goals_prompt_injection.py

@@ -146,5 +146,32 @@ class TestMainSimGoalsWiring(unittest.TestCase):
         self.assertIn("完成课题申报", prompts[0])
 
 
+class TestDiaryGoalsInjection(unittest.TestCase):
+    def test_diary_prompt_contains_goals(self):
+        from gaworld.sim import _diary
+
+        prompts = []
+
+        def fake_llm(prompt, task=None, agent_id=None):
+            prompts.append(prompt)
+            return ("## 今天主要发生的事情\nx\n## 今天的感想\ny\n## 明天的计划\nz")
+
+        agent = {
+            "id": 5, "name": "测试者", "episodes": [], "intentions": {},
+            "goals": {
+                "life_goals": [], "long_term_goals": [],
+                "short_term_goals": [{"id": "stg1", "parent": "", "title": "完成课题申报",
+                                      "target_day": 14, "progress": 0.2,
+                                      "status": "active", "recent_note": "",
+                                      "created_day": 1, "updated_day": 1}],
+                "last_review_day": 0, "needs_review": False, "review_log": [],
+            },
+        }
+        with patch.object(_diary._llm_providers, "call_llm", fake_llm):
+            _diary.generate_daily_diary(agent, 3, "今天的日志")
+        self.assertIn("我的目标与追求", prompts[0])
+        self.assertIn("完成课题申报", prompts[0])
+
+
 if __name__ == "__main__":
     unittest.main()
