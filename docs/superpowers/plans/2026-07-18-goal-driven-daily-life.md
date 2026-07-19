@@ -1568,7 +1568,7 @@ git commit -m "feat(goals): GoalsPlugin lifecycle + config defaults + builtin re
 - Modify: `gaworld/cognition/realism.py:328`（`build_daily_intentions`）、`gaworld/cognition/realism.py:434`（`consolidate_day`）
 - Test: `tests/test_goals_prompt_injection.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 创建 `tests/test_goals_prompt_injection.py`：
 
@@ -1662,12 +1662,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_goals_prompt_injection.py -v`
 Expected: FAIL — `build_daily_intentions() got an unexpected keyword argument 'goals_context'`（以及 `KeyError: 'goal_progress'`）。
 
-- [ ] **Step 3: Modify `build_daily_intentions`**
+- [x] **Step 3: Modify `build_daily_intentions`**
 
 `gaworld/cognition/realism.py:328` 签名改为：
 
@@ -1689,7 +1689,7 @@ prompt 中 `近期经历：\n{eps_text}` 之后、`只输出 JSON` 之前插入�
 5) 不要输出其他文字。
 ```
 
-- [ ] **Step 4: Modify `consolidate_day`**
+- [x] **Step 4: Modify `consolidate_day`**
 
 `gaworld/cognition/realism.py:434` 签名改为：
 
@@ -1729,12 +1729,12 @@ goal_progress 仅包含今天确有推进或明确受挫的目标；id 必须使
             )
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_prompt_injection.py tests/test_goals_module.py -v`
 Expected: 全部 PASS。再跑 `python -m pytest tests/ -k "realism or intention or consolidation" -v` 查回归。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add gaworld/cognition/realism.py tests/test_goals_prompt_injection.py

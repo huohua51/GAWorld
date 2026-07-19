@@ -325,7 +325,7 @@ def _fallback_intentions(agent, recent_episodes):
     }
 
 
-def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx):
+def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx, goals_context="无"):
     fallback = _fallback_intentions(agent, recent_episodes)
     if not isinstance(llm_budget_ctx, dict) or llm_budget_ctx.get("remaining", 0) <= 0:
         return fallback
@@ -358,6 +358,8 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx):
 {profile_text}
 近期经历：
 {eps_text}
+当前人生与阶段目标：
+{goals_context}
 
 只输出 JSON：
 {{
@@ -371,7 +373,8 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx):
 1) priorities 2-4项，avoidances 1-2项。
 2) 都是中文短语，可自然包含兴趣恢复、技能练习或职业转型准备。
 3) growth_focus 0-2项，只能来自兴趣与技能成长画像里的名称。
-4) 不要输出其他文字。
+4) 若“当前人生与阶段目标”不为“无”，priorities 中自然包含 0-2 项与短期目标相关的事项；状态不佳时可为恢复让位。
+5) 不要输出其他文字。
 """
     llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
     try:
@@ -431,7 +434,7 @@ def update_habits_from_episode(agent, episode, cfg):
     return habits
 
 
-def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
+def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx, goals_context="无"):
     memory_cfg = (cfg or {}).get("memory", {})
     top_k = int(memory_cfg.get("daily_consolidation_top_k", 12))
     selected = sorted(
@@ -445,6 +448,7 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
             "summary": "今天整体较平稳，按常规节奏推进。",
             "intentions": fallback_intentions,
             "top_episode_ids": [],
+            "goal_progress": [],
             "memory_text": f"[Day {day}] 今天整体较平稳，按常规节奏推进。",
         }
     summary_lines = []
@@ -468,6 +472,7 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
         "summary": base_summary,
         "intentions": fallback_intentions,
         "top_episode_ids": [str(e.get("episode_id", "")) for e in selected if e.get("episode_id")],
+        "goal_progress": [],
     }
     if isinstance(llm_budget_ctx, dict) and llm_budget_ctx.get("remaining", 0) > 0:
         prompt = f"""
@@ -476,6 +481,8 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
 角色：{agent.get('name', '')}
 经历：
 {json.dumps(summary_lines, ensure_ascii=False, indent=2)}
+当前人生与阶段目标（长期/短期目标带[编号]）：
+{goals_context}
 输出 JSON：
 {{
   "summary": "...",
@@ -483,8 +490,10 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
   "avoidances": ["..."],
   "target_social": "...",
   "target_recovery": "...",
-  "growth_focus": ["..."]
+  "growth_focus": ["..."],
+  "goal_progress": [{{"id":"stg1","progress":0.55,"note":"15字内的推进说明"}}]
 }}
+goal_progress 仅包含今天确有推进或明确受挫的目标；id 必须使用目标里的[编号]；没有则给 []。
 仅输出 JSON。
 """
         llm_budget_ctx["remaining"] = max(0, int(llm_budget_ctx.get("remaining", 0)) - 1)
@@ -509,6 +518,10 @@ def consolidate_day(agent, day, episodes, cfg, llm_budget_ctx):
                 "growth_focus": [str(x).strip() for x in parsed_growth_focus if str(x).strip()][:2]
                 or fallback_intentions.get("growth_focus", []),
             }
+            parsed_goal_progress = parsed.get("goal_progress", [])
+            result["goal_progress"] = (
+                parsed_goal_progress if isinstance(parsed_goal_progress, list) else []
+            )
     result["memory_text"] = f"[Day {day} Consolidation] {result['summary']}"
     return result
 
