@@ -869,6 +869,7 @@ def _memory_payload(agent_id):
     schedule = _read_json_file(os.path.join(base, f"agent_{agent_id}_schedule.json"), {})
     habits = _read_json_file(os.path.join(base, f"agent_{agent_id}_habits.json"), {})
     intentions = _read_json_file(os.path.join(base, f"agent_{agent_id}_intentions.json"), {})
+    goals = _read_json_file(os.path.join(base, f"agent_{agent_id}_goals.json"), {})
     episodes = _tail_text(os.path.join(base, f"agent_{agent_id}_episodes.jsonl"), max_chars=24000)
     log_text = _tail_text(os.path.join(REPO_ROOT, "output", "logs", f"agent_{agent_id}.log"), max_chars=24000)
     return {
@@ -876,9 +877,33 @@ def _memory_payload(agent_id):
         "schedule": schedule,
         "habits": habits,
         "intentions": intentions,
+        "goals": goals,
         "episodes_tail": episodes,
         "log_tail": log_text,
     }
+
+
+def _agent_goals_payload(agent_id):
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    base = os.path.join(REPO_ROOT, memory_dir)
+    return _read_json_file(os.path.join(base, f"agent_{int(agent_id)}_goals.json"), {})
+
+
+def _save_agent_goals_payload(agent_id, payload):
+    from gaworld.goals import normalize_goals
+
+    if not isinstance(payload, dict):
+        raise ValueError("goals payload must be a JSON object")
+    normalized = normalize_goals(payload, day=int(payload.get("last_review_day", 0) or 0))
+    if not normalized:
+        raise ValueError("goals payload has no valid goals")
+    memory_dir = _effective_config().get("memory_dir", "output/memory")
+    base = os.path.join(REPO_ROOT, memory_dir)
+    os.makedirs(base, exist_ok=True)
+    path = os.path.join(base, f"agent_{int(agent_id)}_goals.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
+    return normalized
 
 
 def _run_status():
@@ -1101,6 +1126,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/agents/") and path.endswith("/memory"):
             agent_id = path.split("/")[3]
             return self._json_response(_memory_payload(agent_id))
+        if path.startswith("/api/agents/") and path.endswith("/goals"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_agent_goals_payload(agent_id))
         if path == "/api/run/status":
             return self._json_response(_run_status())
         if path == "/api/trace/meta":
@@ -1158,6 +1186,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/agents/") and path.endswith("/state"):
             agent_id = path.split("/")[3]
             return self._json_response(_save_agent_state(agent_id, payload))
+        if path.startswith("/api/agents/") and path.endswith("/goals"):
+            agent_id = path.split("/")[3]
+            try:
+                saved = _save_agent_goals_payload(agent_id, payload)
+            except ValueError as exc:
+                return self._json_response({"error": str(exc)}, status=400)
+            return self._json_response(saved)
         if path == "/api/run/start":
             return self._json_response(_start_simulation(payload))
         if path == "/api/run/stop":

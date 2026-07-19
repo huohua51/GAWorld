@@ -2080,7 +2080,7 @@ git commit -m "feat(goals): diary prompt reflects goal progress feelings"
 - Modify: `gaworld/apps/dashboard_server.py`（payload 函数区 ~660、GET 路由 866-899、POST 路由 903-923）
 - Test: `tests/test_goals_dashboard.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 创建 `tests/test_goals_dashboard.py`：
 
@@ -2151,12 +2151,12 @@ if __name__ == "__main__":
 
 注：先确认 `dashboard_server.py` 里根目录常量的真实名称（本计划按 `REPO_ROOT` 与 `_effective_config` 书写，407-410 行的 growth-profile 端点即用此模式读 memory_dir）；若名称不同，按真实名称调整测试与实现。
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_goals_dashboard.py -v`
 Expected: FAIL — `module ... has no attribute '_agent_goals_payload'`。
 
-- [ ] **Step 3: Implement payload helpers**
+- [x] **Step 3: Implement payload helpers**
 
 在 `dashboard_server.py` 的 `_memory_payload`（约 660 行）附近加：
 
@@ -2192,7 +2192,7 @@ def _save_agent_goals_payload(agent_id, payload):
 
 返回 dict 中 `"intentions": intentions,` 之后加 `"goals": goals,`。
 
-- [ ] **Step 4: Add routes**
+- [x] **Step 4: Add routes**
 
 GET 分发（866-899 行），`path.endswith("/memory")` 分支之后加：
 
@@ -2214,12 +2214,12 @@ POST 分发（903-923 行），`path.endswith("/state")` 分支之后加（对�
             return self._json_response(saved)
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_dashboard.py tests/test_dashboard_studio.py -v`
 Expected: 全部 PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add gaworld/apps/dashboard_server.py tests/test_goals_dashboard.py
