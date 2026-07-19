@@ -126,6 +126,23 @@ def human_realism_settings() -> dict[str, Any]:
                 "max_new_per_day": 1,
             },
         },
+        # Goal hierarchy (life / long-term / short-term) driving daily plans.
+        # Design doc: docs/superpowers/specs/2026-07-18-long-term-goals-design.md
+        "goals": {
+            "enabled": True,
+            "review_interval_days": 7,
+            "event_review_severity": 0.7,
+            "max_life_goals": 2,
+            "max_long_term": 3,
+            "max_short_term": 4,
+            "max_daily_progress_delta": 0.34,
+            "review_log_keep": 12,
+            "relevance_floor": 0.2,
+            "relevance_cap": 0.9,
+            # Global throttle for weekly reviews per sim-day (event reviews
+            # are exempt); deferred agents retry the next day.
+            "max_reviews_per_day": 20,
+        },
         # Human realism (experience accumulation + habit/need dynamics)
         "human_realism": {
             "enabled": True,

@@ -1183,7 +1183,7 @@ git commit -m "feat(goals): weekly and event-triggered goal reviews"
 - Modify: `gaworld/plugins/__init__.py`
 - Test: `tests/test_goals_plugin.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 创建 `tests/test_goals_plugin.py`（`_make_ctx` 仿 `tests/test_interests_plugin.py` 顶部的同名 helper——先阅读该文件 1-45 行照抄其 kernel 构建方式，把 `"interests"` 换成 `"goals"` 配置键）：
 
@@ -1357,12 +1357,12 @@ if __name__ == "__main__":
 
 注意：若照抄 `tests/test_interests_plugin.py` 的 `_make_ctx` 时发现其 kernel 构建方式与上面不同（例如 `build_kernel` 参数名不同），以 interests 测试文件的真实写法为准调整本测试与插件代码。
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_goals_plugin.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'gaworld.goals_plugin'`。
 
-- [ ] **Step 3: Add config defaults**
+- [x] **Step 3: Add config defaults**
 
 `gaworld/settings/behavior.py`，`human_realism_settings()` 返回 dict 中 `"interests"` 块（约 104-128 行）之后、`"human_realism"` 之前插入：
 
@@ -1386,7 +1386,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'gaworld.goals_plugin'`
         },
 ```
 
-- [ ] **Step 4: Write the plugin**
+- [x] **Step 4: Write the plugin**
 
 创建 `gaworld/goals_plugin.py`：
 
@@ -1538,7 +1538,7 @@ class GoalsPlugin(Plugin):
 
 实现前先读 `gaworld/events/life.py` 里 `list_life_events` 的真实签名与事件字段（`include_consumed`、`triggered_day`、`agent_ids` 为推断名）：若字段不同，按真实字段调整 `_severe_event_today` 与对应测试（测试里该函数整体被 patch，不受影响；只影响真实实现的字段名）。
 
-- [ ] **Step 5: Register the plugin**
+- [x] **Step 5: Register the plugin**
 
 `gaworld/plugins/__init__.py` 的 `builtin_plugins()`：
 
@@ -1548,12 +1548,12 @@ class GoalsPlugin(Plugin):
 
 （加在 `from gaworld.interests_plugin import InterestsPlugin` 之后），返回列表中 `InterestsPlugin(),` 之后插入 `GoalsPlugin(),`。
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_goals_plugin.py tests/test_goals_module.py -v`
 Expected: 全部 PASS。再跑 `python -m pytest tests/test_interests_plugin.py tests/test_extension_hooks_resolve.py -v` 确认无回归。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add gaworld/goals_plugin.py gaworld/plugins/__init__.py gaworld/settings/behavior.py tests/test_goals_plugin.py
