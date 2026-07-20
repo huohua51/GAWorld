@@ -1,16 +1,16 @@
 {
   "llm": {
     "routing": {
-      "default": "ollama_gemma4",
+      "default": "minimax",
       "tasks": {
-        "schedule": "ollama_gemma4"
+        "schedule": "minimax"
       }
     }
   },
-  "sim_days": 1,
+  "sim_days": 2,
   "seconds_per_day": 5,
   "agent_ids": [
-    33
+    35
   ],
   "simulate_realtime": true,
   "time_step_minutes": null

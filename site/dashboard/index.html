@@ -267,6 +267,15 @@
           <article><h3 data-i18n="memory.schedule">日程/习惯/意图</h3><pre id="stateMemoryBox" class="codebox"></pre></article>
           <article><h3 data-i18n="memory.recent_episodes">近期 episode</h3><pre id="episodesBox" class="codebox"></pre></article>
           <article><h3 data-i18n="memory.agent_log">Agent 日志</h3><pre id="agentLogBox" class="codebox"></pre></article>
+          <article>
+            <h3 data-i18n="goals.title">目标</h3>
+            <div id="goalsPanel" class="goals-panel"></div>
+            <div>
+              <button id="goalsEditBtn" class="button small" data-i18n="goals.edit">编辑目标</button>
+              <button id="goalsSaveBtn" class="button small" style="display:none" data-i18n="goals.save">保存目标</button>
+            </div>
+            <textarea id="goalsEditor" class="codebox" rows="14" style="display:none;width:100%"></textarea>
+          </article>
         </div>
       </section>
 
@@ -285,7 +294,8 @@
   <div id="messageLine" class="toast" role="status"></div>
   <script src="/site/dashboard/i18n.js"></script>
   <script src="/site/dashboard/collaboration-core.js"></script>
-  <script src="/site/dashboard/app.js?v=3"></script>
+  <script src="/site/dashboard/citymap-view.js?v=1"></script>
+  <script src="/site/dashboard/app.js?v=4"></script>
   <script src="/site/dashboard/interaction.js"></script>
 </body>
 </html>

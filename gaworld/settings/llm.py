@@ -61,10 +61,15 @@ def llm_settings() -> dict[str, Any]:
                 },
                 "minimax": {
                     "type": "anthropic",
-                    "base_url": os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
+                    # Use a Minimax-specific base URL so the generic ANTHROPIC_BASE_URL
+                    # (set by Claude Code / other Anthropic tooling) cannot misroute this
+                    # provider to api.anthropic.com.
+                    "base_url": os.environ.get("MINIMAX_BASE_URL", "https://api.minimaxi.com/anthropic"),
                     "model": os.environ.get("MINIMAX_MODEL", "MiniMax-M2.7"),
                     "api_key_env": "MINIMAX_API_KEY",
-                    "api_key_envs": ["MINIMAX_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+                    # Only trust the Minimax key here; falling back to ANTHROPIC_AUTH_TOKEN /
+                    # ANTHROPIC_API_KEY would send an Anthropic token to Minimax and 401.
+                    "api_key_envs": ["MINIMAX_API_KEY"],
                     # China-region Minimax expects the raw secret key in Authorization.
                     # Set MINIMAX_AUTHORIZATION_SCHEME=bearer for endpoints that require Bearer tokens.
                     "authorization_scheme": os.environ.get("MINIMAX_AUTHORIZATION_SCHEME", "raw"),

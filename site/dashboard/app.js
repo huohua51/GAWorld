@@ -70,29 +70,20 @@ const els = {
   stateMemoryBox: document.getElementById("stateMemoryBox"),
   episodesBox: document.getElementById("episodesBox"),
   agentLogBox: document.getElementById("agentLogBox"),
+  goalsPanel: document.getElementById("goalsPanel"),
+  goalsEditor: document.getElementById("goalsEditor"),
+  goalsEditBtn: document.getElementById("goalsEditBtn"),
+  goalsSaveBtn: document.getElementById("goalsSaveBtn"),
   reloadStatusBtn: document.getElementById("reloadStatusBtn"),
   runLogBox: document.getElementById("runLogBox"),
 };
 
-const ctx = els.mapCanvas.getContext("2d");
-const tileColors = {
-  ".": "#e5ece4",
-  "#": "#7d8c82",
-  "=": "#f3cf63",
-  "~": "#7fb3be",
-  "*": "#82a661",
-  "r": "#d8d7c3",
-  "c": "#d6a81e",
-  "e": "#8db0c2",
-  "m": "#d98b8b",
-  "i": "#a3aaa1",
-  "g": "#bcc87c",
-  "l": "#72a773",
-  "t": "#9b8fc0",
-  "+": "#b28bd6",
-  "d": "#cfc9a6",
-};
-const agentColors = ["#13795b", "#b73e3e", "#385866", "#d6a81e", "#6e5f97", "#1f8a9b", "#8a5b30"];
+// Terrain-map rendering (avatars, trails, landmarks, zoom/pan) is provided by
+// the shared CityMapView module, used identically by the simviz replay tab.
+const mapView = new CityMapView(els.mapCanvas, {
+  getSelectedAgentId: () => state.selectedAgentId,
+  emptyText: "等待轨迹数据…",
+});
 
 function traceAgentMap() {
   const agents = (state.trace && Array.isArray(state.trace.agents)) ? state.trace.agents : [];
@@ -438,6 +429,71 @@ async function loadMemory() {
   els.agentLogBox.textContent = payload.log_tail || __("memory.no_agent_log");
 }
 
+function escapeGoalsHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = String(text == null ? "" : text);
+  return div.innerHTML;
+}
+
+function renderGoals(goals) {
+  if (!els.goalsPanel) return;
+  const tiers = [
+    ["life_goals", __("goals.life")],
+    ["long_term_goals", __("goals.long")],
+    ["short_term_goals", __("goals.short")],
+  ];
+  const hasAny = goals && tiers.some(([k]) => Array.isArray(goals[k]) && goals[k].length);
+  if (!hasAny) {
+    els.goalsPanel.textContent = __("goals.empty");
+    return;
+  }
+  const parts = [];
+  for (const [key, label] of tiers) {
+    const items = (goals[key] || []).filter(Boolean);
+    if (!items.length) continue;
+    const rows = items.map((g) => {
+      const progress = typeof g.progress === "number"
+        ? ` <progress max="1" value="${g.progress}"></progress> ${Math.round(g.progress * 100)}%`
+        : "";
+      const status = g.status && g.status !== "active"
+        ? ` <em>[${escapeGoalsHtml(g.status)}]</em>` : "";
+      return `<li>${escapeGoalsHtml(g.title)}${progress}${status}</li>`;
+    }).join("");
+    parts.push(`<h4>${escapeGoalsHtml(label)}</h4><ul>${rows}</ul>`);
+  }
+  const lastReview = (goals.review_log || []).slice(-1)[0];
+  if (lastReview) {
+    parts.push(`<p>Day ${Number(lastReview.day) || 0}: ${escapeGoalsHtml(lastReview.summary)}</p>`);
+  }
+  els.goalsPanel.innerHTML = parts.join("");
+}
+
+async function loadGoals() {
+  if (!state.selectedAgentId) return;
+  const goals = await api(`/api/agents/${state.selectedAgentId}/goals`);
+  renderGoals(goals || {});
+  if (els.goalsEditor) {
+    els.goalsEditor.value = JSON.stringify(goals || {}, null, 2);
+  }
+}
+
+async function saveGoals() {
+  if (!state.selectedAgentId) return;
+  let payload;
+  try {
+    payload = JSON.parse(els.goalsEditor.value);
+  } catch (e) {
+    message(__("goals.invalid_json"), "error");
+    return;
+  }
+  await api(`/api/agents/${state.selectedAgentId}/goals`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  await loadGoals();
+  message(__("goals.saved"));
+}
+
 async function runSimulation(reset = false) {
   message(reset ? "正在重置并启动仿真..." : __("sim.starting"));
   const payload = { reset, config: configPayloadFromForm() };
@@ -559,123 +615,23 @@ function renderTrace() {
 }
 
 function drawEmptyMap() {
-  ctx.clearRect(0, 0, els.mapCanvas.width, els.mapCanvas.height);
-  ctx.fillStyle = "#e5ece4";
-  ctx.fillRect(0, 0, els.mapCanvas.width, els.mapCanvas.height);
-  ctx.fillStyle = "#385866";
-  ctx.font = "24px Georgia";
-  ctx.fillText(__("trace.waiting"), 40, 56);
+  mapView.renderEmpty(__("trace.waiting"));
   els.frameTitle.textContent = __("trace.not_loaded");
   els.timelineLabel.textContent = __("trace.no_frames");
   els.latestFrameBox.textContent = __("trace.no_current_frame");
 }
 
-const TRAIL_FRAMES = 48;
-
-function agentNodePoint(agent, nodes, offsetX, offsetY, scale) {
-  const node = nodes.get(agent.target_location) || nodes.get(agent.resolved_location);
-  if (!node) return null;
-  return {
-    x: offsetX + node.tile_x * scale + scale / 2,
-    y: offsetY + node.tile_y * scale + scale / 2,
-  };
-}
-
-function drawTrails(framesUpTo, nodes, offsetX, offsetY, scale) {
-  const trail = framesUpTo.slice(-TRAIL_FRAMES);
-  const byAgent = new Map();
-  trail.forEach((frame) => {
-    (frame.agents || []).forEach((agent) => {
-      const point = agentNodePoint(agent, nodes, offsetX, offsetY, scale);
-      if (!point) return;
-      const key = Number(agent.agent_id);
-      if (!byAgent.has(key)) byAgent.set(key, []);
-      const points = byAgent.get(key);
-      const last = points[points.length - 1];
-      if (!last || last.x !== point.x || last.y !== point.y) points.push(point);
-    });
-  });
-  byAgent.forEach((points, agentId) => {
-    if (points.length < 2) return;
-    const selected = agentId === Number(state.selectedAgentId);
-    ctx.save();
-    ctx.strokeStyle = agentColors[Math.abs(agentId) % agentColors.length];
-    ctx.globalAlpha = selected ? 0.85 : 0.4;
-    ctx.lineWidth = selected ? 3.5 : 2;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.setLineDash(selected ? [] : [6, 5]);
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y);
-    ctx.stroke();
-    ctx.restore();
-  });
-}
-
+// The terrain map (baked tiles, place markers, LOD landmark labels, agent
+// trails, large avatars, zoom/pan) is rendered by the shared CityMapView
+// module (site/shared/citymap-view.js) — the same renderer the simviz replay
+// tab uses, so the two views stay identical.
 function drawMap(framesUpTo) {
-  // frame may be undefined (no agent frames yet) — the map base (terrain +
-  // nodes) still renders; only the agent/trail overlay needs a frame.
-  const frame = framesUpTo[framesUpTo.length - 1];
-  const map = (state.trace || {}).map || {};
-  const tileMap = map.tile_map || {};
-  const terrain = Array.isArray(tileMap.terrain) ? tileMap.terrain : [];
-  const width = Number(tileMap.width || 160);
-  const height = Number(tileMap.height || 112);
-  const scale = Math.max(4, Math.floor(Math.min(els.mapCanvas.width / width, els.mapCanvas.height / height)));
-  const offsetX = Math.floor((els.mapCanvas.width - width * scale) / 2);
-  const offsetY = Math.floor((els.mapCanvas.height - height * scale) / 2);
-  const nodes = new Map((map.nodes || []).map((node) => [node.id, node]));
+  mapView.setTrace(state.trace);
+  mapView.render(framesUpTo);
+}
 
-  ctx.clearRect(0, 0, els.mapCanvas.width, els.mapCanvas.height);
-  ctx.fillStyle = "#dfe8df";
-  ctx.fillRect(0, 0, els.mapCanvas.width, els.mapCanvas.height);
-  terrain.forEach((line, row) => {
-    String(line).split("").forEach((cell, col) => {
-      ctx.fillStyle = tileColors[cell] || tileColors["."];
-      ctx.fillRect(offsetX + col * scale, offsetY + row * scale, scale, scale);
-    });
-  });
-
-  (map.nodes || []).forEach((node) => {
-    const x = offsetX + node.tile_x * scale + scale / 2;
-    const y = offsetY + node.tile_y * scale + scale / 2;
-    ctx.fillStyle = node.kind === "hub" ? "#17211d" : "#385866";
-    ctx.fillRect(x - 3, y - 3, 6, 6);
-  });
-
-  if (!frame) return;   // map base drawn; no agents to overlay yet
-
-  drawTrails(framesUpTo, nodes, offsetX, offsetY, scale);
-
-  (frame.agents || []).forEach((agent) => {
-    const point = agentNodePoint(agent, nodes, offsetX, offsetY, scale);
-    if (!point) return;
-    const { x, y } = point;
-    const color = agentColors[Math.abs(Number(agent.agent_id || 0)) % agentColors.length];
-    const radius = Number(agent.agent_id) === Number(state.selectedAgentId) ? 11 : 8;
-    const avatarImage = loadAvatar(getAgentAvatarPath(agent.agent_id));
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-    if (avatarImage) {
-      ctx.drawImage(avatarImage, x - radius, y - radius, radius * 2, radius * 2);
-    } else {
-      ctx.fillStyle = color;
-      ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-    }
-    ctx.restore();
-    ctx.strokeStyle = "#fffef9";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = "#17211d";
-    ctx.font = '12px "Noto Sans SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText(agent.name || agent.agent_id, x + 12, y - 9);
-  });
+function setupMapInteractions() {
+  // Zoom (wheel / buttons) + pan (drag) are wired inside CityMapView.
 }
 
 async function fosExport() {
@@ -743,6 +699,7 @@ function bindEvents() {
     try {
       await loadProfile();
       await loadMemory();
+      await loadGoals();
     } catch (error) {
       message(error.message, "error");
     }
@@ -756,8 +713,15 @@ function bindEvents() {
   }));
   els.reloadMemoryBtn.addEventListener("click", withBusy(els.reloadMemoryBtn, async () => {
     await loadMemory();
+    await loadGoals();
     message("记忆已刷新");
   }));
+  if (els.goalsEditBtn) els.goalsEditBtn.addEventListener("click", () => {
+    const show = els.goalsEditor.style.display === "none";
+    els.goalsEditor.style.display = show ? "block" : "none";
+    els.goalsSaveBtn.style.display = show ? "inline-block" : "none";
+  });
+  if (els.goalsSaveBtn) els.goalsSaveBtn.addEventListener("click", withBusy(els.goalsSaveBtn, saveGoals));
   els.interviewBtn.addEventListener("click", withBusy(els.interviewBtn, () => interview().catch((error) => {
     els.interviewOutput.textContent = `采访失败：${error.message}`;
   })));
@@ -811,6 +775,7 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
+  setupMapInteractions();
   drawEmptyMap();
   const steps = [
     ["配置", loadConfig],
@@ -818,6 +783,7 @@ async function init() {
     ["人生事件", loadLifeEvents],
     ["Profile", loadProfile],
     ["记忆", loadMemory],
+    ["目标", loadGoals],
     ["运行状态", refreshStatus],
   ];
   for (const [label, step] of steps) {
@@ -841,6 +807,7 @@ window.addEventListener("locale-changed", function () {
   loadTrace(false).catch(() => {});
   loadLifeEvents().catch(() => {});
   loadMemory().catch(() => {});
+  loadGoals().catch(() => {});
   renderTrace();
 });
 
