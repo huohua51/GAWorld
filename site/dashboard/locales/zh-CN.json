@@ -66,6 +66,16 @@
   "memory.no_episodes": "暂无 episode。",
   "memory.no_agent_log": "暂无 agent 日志。",
 
+  "goals.title": "目标",
+  "goals.life": "人生方向",
+  "goals.long": "长期目标",
+  "goals.short": "短期目标",
+  "goals.empty": "暂无目标",
+  "goals.edit": "编辑目标",
+  "goals.save": "保存目标",
+  "goals.saved": "目标已保存",
+  "goals.invalid_json": "JSON 格式错误",
+
   "run_log.title": "运行输出",
   "run_log.no_log": "暂无运行日志。",
 

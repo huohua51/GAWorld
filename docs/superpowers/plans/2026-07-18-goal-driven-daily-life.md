@@ -2237,7 +2237,7 @@ git commit -m "feat(goals): dashboard GET/POST goals endpoints and memory payloa
 - Modify: `site/dashboard/app.js`（els 声明 ~43、loadMemory、监听器区 968-1006）
 - Modify: `site/dashboard/locales/en.json`、`site/dashboard/locales/zh-CN.json`
 
-- [ ] **Step 1: index.html 加目标卡片**
+- [x] **Step 1: index.html 加目标卡片**
 
 `memory-grid` 内（`<article><h3 data-i18n="memory.agent_log">` 之后）加：
 
@@ -2253,7 +2253,7 @@ git commit -m "feat(goals): dashboard GET/POST goals endpoints and memory payloa
           </article>
 ```
 
-- [ ] **Step 2: locales 加词条**
+- [x] **Step 2: locales 加词条**
 
 `site/dashboard/locales/zh-CN.json`（`"memory.agent_log"` 词条之后，保持字母序或原文件顺序风格）：
 
@@ -2285,7 +2285,7 @@ git commit -m "feat(goals): dashboard GET/POST goals endpoints and memory payloa
 
 注意补逗号使 JSON 合法；用 `python -m json.tool site/dashboard/locales/zh-CN.json > /dev/null` 验证两个文件。
 
-- [ ] **Step 3: app.js — els、渲染、保存**
+- [x] **Step 3: app.js — els、渲染、保存**
 
 els 对象（约 43 行区域）加：
 
@@ -2367,7 +2367,7 @@ async function saveGoals() {
 
 实施时先核对：`state.selectedAgentId` 是否为 app.js 中当前选中 agent 的真实字段名（查看 loadMemory/interview 如何取当前 agent id，用同一来源）；`api()`/`message()` 的真实签名（152/164 行）；toast 的 tone 参数值。以现有代码为准调整。
 
-- [ ] **Step 4: 挂载调用与监听器**
+- [x] **Step 4: 挂载调用与监听器**
 
 在现有 `loadMemory()` 被调用的地方（agent 切换、刷新记忆按钮回调）追加 `await loadGoals();`（跟随现有调用风格）。监听器区（968-1006 行）加：
 
@@ -2380,7 +2380,7 @@ async function saveGoals() {
   if (els.goalsSaveBtn) els.goalsSaveBtn.addEventListener("click", withBusy(els.goalsSaveBtn, saveGoals));
 ```
 
-- [ ] **Step 5: 手动验证**
+- [x] **Step 5: 手动验证**
 
 启动 dashboard（按 `docs/TUTORIAL.md` 的启动方式，通常 `python -m gaworld.apps.dashboard_server`；先查该文件 `__main__` 块确认命令），浏览器打开后：
 1. 选一个有 `output/memory/agent_N_goals.json` 的 agent（没有就手工造一个合法文件）→ 目标面板显示三层目标与进度条；
@@ -2388,7 +2388,7 @@ async function saveGoals() {
 3. 提交非法 JSON → toast 报错、文件不变；
 4. 中英文切换词条正常。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add site/dashboard/index.html site/dashboard/app.js site/dashboard/locales/en.json site/dashboard/locales/zh-CN.json

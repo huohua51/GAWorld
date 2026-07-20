@@ -66,6 +66,16 @@
   "memory.no_episodes": "No episodes yet.",
   "memory.no_agent_log": "No agent log yet.",
 
+  "goals.title": "Goals",
+  "goals.life": "Life Direction",
+  "goals.long": "Long-term Goals",
+  "goals.short": "Short-term Goals",
+  "goals.empty": "No goals yet",
+  "goals.edit": "Edit Goals",
+  "goals.save": "Save Goals",
+  "goals.saved": "Goals saved",
+  "goals.invalid_json": "Invalid JSON",
+
   "run_log.title": "Run Output",
   "run_log.no_log": "No run log yet.",
 
