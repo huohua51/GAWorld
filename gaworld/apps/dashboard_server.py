@@ -785,6 +785,7 @@ def _agent_detail(agent_id):
         "private_skills": private_skills,
         "capabilities": capabilities,
         "growth": growth,
+        "goals": memory.get("goals", {}),
         "rag": rag,
         "openclaw": openclaw,
         "cognition": _cognition_snapshot(capabilities, growth, memory_counts, rag),

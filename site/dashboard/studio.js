@@ -393,6 +393,35 @@ function stepSocial() {
     </div>`;
 }
 
+const GOAL_STATUS_LABELS = { active: "进行中", completed: "已完成", abandoned: "已放弃", paused: "已暂停" };
+
+function goalRows(goals) {
+  const tiers = ["life_goals", "long_term_goals", "short_term_goals"];
+  const hasAny = goals && tiers.some((k) => (goals[k] || []).length);
+  if (!hasAny) return `<p class="section-note">尚无目标档案——运行仿真后由 gaworld/goals.py 从 profile 引导生成，或经 dashboard 编辑写入。</p>`;
+  const life = (goals.life_goals || []).filter((g) => g.status === "active");
+  const lifeHtml = life.length ? `<p class="section-note">人生方向</p>${chips(life.map((g) => g.title))}` : "";
+  const tier = (items, label) => {
+    if (!(items || []).length) return "";
+    const rows = items.map((g) => {
+      const pct = Math.round(clamp01(g.progress || 0) * 100);
+      const status = g.status && g.status !== "active" ? ` <span class="tag">${GOAL_STATUS_LABELS[g.status] || esc(g.status)}</span>` : "";
+      const sub = [
+        g.target_day != null ? `目标 Day ${g.target_day}` : (g.horizon_days != null ? `${g.horizon_days} 天视野` : ""),
+        g.recent_note || "",
+      ].filter(Boolean).join(" · ");
+      return `<div class="bar-row"><div class="bl"><b>${esc(g.title)}${status}</b><small>${esc(sub)}</small></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div></div>`;
+    }).join("");
+    return `<p class="section-note">${label}</p>${rows}`;
+  };
+  const lastReview = (goals.review_log || []).slice(-1)[0] || null;
+  const reviewHtml = lastReview
+    ? `<p class="section-note growth-change">最近回顾 · Day ${Number(lastReview.day) || 0}：${esc(lastReview.summary || "")}</p>`
+    : "";
+  return lifeHtml + tier(goals.long_term_goals, "长期目标") + tier(goals.short_term_goals, "短期目标") + reviewHtml;
+}
+
 function stepBehavior() {
   const st = store.draft.state;
   const rows = BEHAVIOR_KEYS.map((key) => {
@@ -407,8 +436,9 @@ function stepBehavior() {
     <p class="section-note">驱动行为选择的状态维度：流动、表达、风险、平台绑定、政策敏感。</p>
     <div class="cols side">
       <div class="card"><h3>行为倾向</h3>${rows}</div>
-      <div class="card"><h3>目标与价值观</h3>
-        <p class="section-note">目标来自 profile 叙事中的“价值观与公共事务态度”段落，在身份步骤中编辑。</p>
+      <div class="card"><h3>三层目标 <span class="tag">人生 · 长期 · 短期</span></h3>
+        ${goalRows((store.detail || {}).goals)}
+        <p class="section-note">价值观取向来自 profile 叙事段落，在身份步骤中编辑；目标随仿真每日推进、每周回顾演化。</p>
       </div>
     </div>`;
 }
