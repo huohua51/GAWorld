@@ -2402,19 +2402,19 @@ git commit -m "feat(goals): dashboard goals panel with JSON editing"
 **Files:**
 - Modify: `CHANGELOG.md`
 
-- [ ] **Step 1: Full test run**
+- [x] **Step 1: Full test run**
 
 Run: `python -m pytest tests/ -x -q`
 Expected: 新增测试全部 PASS；既有失败（如有）须与主分支基线一致——先 `git stash && python -m pytest tests/ -q` 摸基线再对比，不引入新失败。
 
-- [ ] **Step 2: Smoke run（可选但推荐）**
+- [x] **Step 2: Smoke run（可选但推荐）**
 
 若 `dashboard_config.json` 配了可用 LLM，跑最小仿真（按 `docs/TUTORIAL.md` 的最短命令，1-2 天、少量 agent），确认：
 1. 启动日志出现 `[Goals] <名字>` 引导输出；
 2. `output/memory/agent_N_goals.json` 生成且结构合法；
 3. Day 7（或把 `review_interval_days` 临时调成 1）出现 `🎯 ... 目标周回顾`。
 
-- [ ] **Step 3: CHANGELOG**
+- [x] **Step 3: CHANGELOG**
 
 `CHANGELOG.md` 的 `## [Unreleased]` 节 `### Added` 下追加：
 
@@ -2422,7 +2422,7 @@ Expected: 新增测试全部 PASS；既有失败（如有）须与主分支基�
 - Goal-driven daily life: three-tier goal hierarchy (life / long-term / short-term) per agent, bootstrapped from profiles by LLM with heuristic fallback and persisted to `output/memory/agent_N_goals.json`. Goals drive daily intentions and routine prompts, real `goal_relevance` in episode salience, diary/interview context; day-end progress piggybacks on consolidation, weekly + severe-life-event reviews evolve the hierarchy (`GoalsPlugin`, `CONFIG["goals"]`). Dashboard goals panel with JSON editing (`GET/POST /api/agents/{id}/goals`). Design doc: `docs/superpowers/specs/2026-07-18-long-term-goals-design.md`.
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add CHANGELOG.md
