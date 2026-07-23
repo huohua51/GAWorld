@@ -139,6 +139,40 @@ label.field, .field-row { margin-bottom: 12px; }
 .bar-fill { height: 100%; background: var(--ink); border-radius: 999px; }
 .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 
+/* ---- Three-tier goal editor (step 6) ---- */
+.goal-tier { margin-bottom: 14px; }
+.goal-edit {
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+  margin-bottom: 8px; background: #fbfdfb;
+}
+.goal-edit-head { display: flex; align-items: center; gap: 8px; }
+.goal-title-input {
+  flex: 1 1 auto; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 7px; background: #fff; color: var(--ink); font-size: 13px;
+}
+.goal-remove {
+  flex: 0 0 auto; width: 28px; height: 28px; line-height: 1; padding: 0;
+  border: 1px solid var(--line); border-radius: 7px; background: #fff;
+  color: var(--muted); cursor: pointer; font-size: 13px;
+}
+.goal-remove:hover { color: var(--red); border-color: var(--red); }
+.goal-edit-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 8px; }
+.goal-mini { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.goal-mini select {
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+  background: #fff; color: var(--ink); font-size: 12px;
+}
+.goal-mini.goal-prog { flex: 1 1 150px; min-width: 130px; }
+.goal-mini.goal-prog .val { color: var(--green); font-variant-numeric: tabular-nums; }
+.goal-mini.goal-prog input[type=range] { width: 100%; accent-color: var(--green); }
+.goal-add {
+  display: inline-block; padding: 5px 12px; font-size: 12px; cursor: pointer;
+  border: 1px dashed var(--line); border-radius: 999px; background: #fff; color: var(--muted);
+}
+.goal-add:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
+.goal-add:disabled { opacity: .5; cursor: not-allowed; }
+.goals-save { margin-top: 12px; text-align: right; }
+
 /* ---- Stat cards ---- */
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 @media (max-width: 640px) { .stat-grid { grid-template-columns: repeat(2,1fr); } }

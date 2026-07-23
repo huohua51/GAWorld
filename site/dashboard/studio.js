@@ -25,6 +25,8 @@ const store = {
   creating: false,
   step: 1,
   draft: null, // { identity:{...}, state:{...}, profile_text, narrative:{personality, job} }
+  goalsDraft: null, // working copy of the three-tier goals, edited inline in step 6
+  goalSeq: 0, // counter for client-side ids of newly added goals
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -126,6 +128,7 @@ async function selectAgent(id) {
   const d = await api(`/api/agents/${id}/detail`);
   store.detail = d;
   store.draft = draftFromDetail(d);
+  store.goalsDraft = cloneGoals(d.goals);
   $("#saveHint").textContent = "已加载 · 自动回填";
   renderSubject();
   renderStep();
@@ -136,6 +139,7 @@ function startCreate() {
   store.currentId = null;
   store.detail = null;
   store.draft = blankDraft();
+  store.goalsDraft = null;
   store.step = 1;
   setActiveStepButton();
   $("#saveHint").textContent = "新建居民（未保存）";
@@ -394,6 +398,36 @@ function stepSocial() {
 }
 
 const GOAL_STATUS_LABELS = { active: "进行中", completed: "已完成", abandoned: "已放弃", paused: "已暂停" };
+const GOAL_DOMAIN_LABELS = { career: "事业", family: "家庭", health: "健康", wealth: "财富", social: "社交", self: "自我" };
+// Active-goal caps per tier — mirror DEFAULT_GOALS_CONFIG in gaworld/goals.py
+// (POST /goals normalizes with defaults, so these must match to avoid surprise truncation).
+const GOAL_LIMITS = { life_goals: 2, long_term_goals: 3, short_term_goals: 4 };
+const GOAL_ID_PREFIX = { life_goals: "lg", long_term_goals: "ltg", short_term_goals: "stg" };
+const GOAL_TIERS = [
+  { key: "life_goals", label: "人生方向", domain: true, progress: false },
+  { key: "long_term_goals", label: "长期目标", domain: false, progress: true },
+  { key: "short_term_goals", label: "短期目标", domain: false, progress: true },
+];
+
+function cloneGoals(goals) {
+  const src = goals && typeof goals === "object" ? goals : {};
+  const out = JSON.parse(JSON.stringify(src));
+  GOAL_TIERS.forEach(({ key }) => { if (!Array.isArray(out[key])) out[key] = []; });
+  return out;
+}
+
+function goalRef(el) {
+  const arr = store.goalsDraft && store.goalsDraft[el.dataset.tier];
+  return Array.isArray(arr) ? arr[Number(el.dataset.idx)] : null;
+}
+
+function addGoal(tier) {
+  if (!store.goalsDraft) return;
+  const goal = { id: `${GOAL_ID_PREFIX[tier]}_${++store.goalSeq}`, title: "", status: "active" };
+  if (tier === "life_goals") { goal.domain = "self"; goal.description = ""; }
+  else { goal.parent = ""; goal.progress = 0; }
+  (store.goalsDraft[tier] = store.goalsDraft[tier] || []).push(goal);
+}
 
 function goalRows(goals) {
   const tiers = ["life_goals", "long_term_goals", "short_term_goals"];
@@ -422,6 +456,46 @@ function goalRows(goals) {
   return lifeHtml + tier(goals.long_term_goals, "长期目标") + tier(goals.short_term_goals, "短期目标") + reviewHtml;
 }
 
+function goalEditorRow(tier, idx, g, meta) {
+  const attrs = `data-tier="${tier}" data-idx="${idx}"`;
+  const statusSel = `<label class="goal-mini"><span>状态</span>
+    <select data-goal-status ${attrs}>${Object.keys(GOAL_STATUS_LABELS).map((k) =>
+      `<option value="${k}"${(g.status || "active") === k ? " selected" : ""}>${GOAL_STATUS_LABELS[k]}</option>`).join("")}</select></label>`;
+  const domainSel = meta.domain
+    ? `<label class="goal-mini"><span>领域</span>
+        <select data-goal-domain ${attrs}>${Object.keys(GOAL_DOMAIN_LABELS).map((k) =>
+          `<option value="${k}"${(g.domain || "self") === k ? " selected" : ""}>${GOAL_DOMAIN_LABELS[k]}</option>`).join("")}</select></label>`
+    : "";
+  const pct = Math.round(clamp01(g.progress || 0) * 100);
+  const progress = meta.progress
+    ? `<label class="goal-mini goal-prog"><span>进度 <b class="val">${pct}%</b></span>
+        <input type="range" min="0" max="100" step="1" value="${pct}" data-goal-progress ${attrs}></label>`
+    : "";
+  return `<div class="goal-edit">
+    <div class="goal-edit-head">
+      <input class="goal-title-input" data-goal-title ${attrs} value="${esc(g.title)}" placeholder="目标标题">
+      <button type="button" class="goal-remove" data-goal-remove ${attrs} title="删除此目标" aria-label="删除">✕</button>
+    </div>
+    <div class="goal-edit-controls">${domainSel}${progress}${statusSel}</div>
+  </div>`;
+}
+
+function goalsEditorHtml(goals) {
+  const tiers = GOAL_TIERS.map((meta) => {
+    const items = goals[meta.key] || [];
+    const rows = items.map((g, idx) => goalEditorRow(meta.key, idx, g, meta)).join("");
+    const activeCount = items.filter((g) => (g.status || "active") === "active").length;
+    const atLimit = activeCount >= GOAL_LIMITS[meta.key];
+    const addBtn = `<button type="button" class="goal-add" data-goal-add data-tier="${meta.key}"${atLimit ? ` disabled title="进行中的${meta.label}最多 ${GOAL_LIMITS[meta.key]} 个"` : ""}>+ 新增${meta.label}</button>`;
+    return `<div class="goal-tier"><p class="section-note">${meta.label}</p>${rows}${addBtn}</div>`;
+  }).join("");
+  const lastReview = (goals.review_log || []).slice(-1)[0] || null;
+  const reviewHtml = lastReview
+    ? `<p class="section-note growth-change">最近回顾 · Day ${Number(lastReview.day) || 0}：${esc(lastReview.summary || "")}</p>`
+    : "";
+  return `${tiers}${reviewHtml}<div class="goals-save"><button type="button" id="saveGoalsBtn" class="button primary">保存目标</button></div>`;
+}
+
 function stepBehavior() {
   const st = store.draft.state;
   const rows = BEHAVIOR_KEYS.map((key) => {
@@ -437,8 +511,12 @@ function stepBehavior() {
     <div class="cols side">
       <div class="card"><h3>行为倾向</h3>${rows}</div>
       <div class="card"><h3>三层目标 <span class="tag">人生 · 长期 · 短期</span></h3>
-        ${goalRows((store.detail || {}).goals)}
-        <p class="section-note">价值观取向来自 profile 叙事段落，在身份步骤中编辑；目标随仿真每日推进、每周回顾演化。</p>
+        ${store.creating
+          ? goalRows((store.detail || {}).goals)
+          : goalsEditorHtml(store.goalsDraft || cloneGoals(null))}
+        <p class="section-note">${store.creating
+          ? "新建居民保存后，目标将由 gaworld/goals.py 从 profile 引导生成，可再回此编辑。"
+          : "目标可在此直接编辑，「保存目标」写入 goals.json；仿真运行时会每日推进、每周回顾。"}</p>
       </div>
     </div>`;
 }
@@ -524,6 +602,33 @@ function bindStep() {
       renderSubject();
     });
   });
+  $("#stepBody").querySelectorAll("[data-goal-title]").forEach((el) => {
+    el.addEventListener("input", () => { const g = goalRef(el); if (g) g.title = el.value; });
+  });
+  $("#stepBody").querySelectorAll("[data-goal-progress]").forEach((el) => {
+    el.addEventListener("input", () => {
+      const g = goalRef(el); if (!g) return;
+      g.progress = clamp01(Number(el.value) / 100);
+      const box = el.closest(".goal-prog"), val = box && box.querySelector(".val");
+      if (val) val.textContent = Math.round(g.progress * 100) + "%";
+    });
+  });
+  $("#stepBody").querySelectorAll("[data-goal-domain]").forEach((el) => {
+    el.addEventListener("change", () => { const g = goalRef(el); if (g) g.domain = el.value; });
+  });
+  $("#stepBody").querySelectorAll("[data-goal-status]").forEach((el) => {
+    el.addEventListener("change", () => { const g = goalRef(el); if (g) { g.status = el.value; renderStep(); } });
+  });
+  $("#stepBody").querySelectorAll("[data-goal-remove]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const arr = store.goalsDraft && store.goalsDraft[el.dataset.tier];
+      if (Array.isArray(arr)) { arr.splice(Number(el.dataset.idx), 1); renderStep(); }
+    });
+  });
+  $("#stepBody").querySelectorAll("[data-goal-add]").forEach((el) => {
+    el.addEventListener("click", () => { addGoal(el.dataset.tier); renderStep(); });
+  });
+  const sg = $("#saveGoalsBtn"); if (sg) sg.addEventListener("click", saveGoals);
   const iBtn = $("#interviewBtn"); if (iBtn) iBtn.addEventListener("click", runInterview);
   const s2 = $("#saveBtn2"); if (s2) s2.addEventListener("click", save);
   const r2 = $("#runBtn2"); if (r2) r2.addEventListener("click", runSim);
@@ -558,6 +663,23 @@ async function save() {
     $("#agentSelect").value = String(store.currentId);
   } catch (err) {
     foot("保存失败：" + err.message, "err");
+  }
+}
+
+async function saveGoals() {
+  if (store.creating || store.currentId == null || !store.goalsDraft) return;
+  try {
+    foot("保存目标…");
+    const saved = await api(`/api/agents/${store.currentId}/goals`, {
+      method: "POST", body: JSON.stringify(store.goalsDraft),
+    });
+    store.detail = store.detail || {};
+    store.detail.goals = saved || {};
+    store.goalsDraft = cloneGoals(store.detail.goals);
+    renderStep();
+    foot("目标已保存到 goals.json", "ok");
+  } catch (err) {
+    foot("目标保存失败：" + err.message, "err");
   }
 }
 

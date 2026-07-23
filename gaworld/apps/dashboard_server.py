@@ -905,6 +905,7 @@ def _save_agent_goals_payload(agent_id, payload):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(normalized, f, ensure_ascii=False, indent=2)
     return normalized
+    return normalized
 
 
 def _run_status():
