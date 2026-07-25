@@ -449,6 +449,11 @@ INTERVENTION_OUTPUT_DIR = CONFIG.get("intervention", {}).get("output_dir", "outp
 SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
+# Long-horizon fast-forward mode (see gaworld/sim/_fastforward.py). Read
+# inline here — this runs at import time, before the staged `# noqa: E402`
+# import of the fast-forward helpers further down the file.
+LONG_RUN_CONFIG = CONFIG.get("long_run", {}) if isinstance(CONFIG.get("long_run"), dict) else {}
+LONG_RUN_ENABLED = bool(LONG_RUN_CONFIG.get("enabled", False))
 ROUTINE_CHANGE_CONFIG = CONFIG.get("routine_change", {})
 ROUTINE_CHANGE_ENABLED = bool(ROUTINE_CHANGE_CONFIG.get("enabled", True))
 ROUTINE_CHANGE_BASE_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("base_chance", 0.08))
@@ -456,6 +461,7 @@ ROUTINE_CHANGE_EVENT_BOOST = float(ROUTINE_CHANGE_CONFIG.get("event_boost", 0.08
 ROUTINE_CHANGE_POLICY_BOOST = float(ROUTINE_CHANGE_CONFIG.get("policy_boost", 0.05))
 ROUTINE_CHANGE_MAX_CHANCE = float(ROUTINE_CHANGE_CONFIG.get("max_chance", 0.45))
 ROUTINE_CHANGE_SEVERITY_PIVOT = float(ROUTINE_CHANGE_CONFIG.get("severity_pivot", 0.4))
+ROUTINE_CHANGE_RANDOMNESS = float(np.clip(ROUTINE_CHANGE_CONFIG.get("randomness", 0.0), 0.0, 1.0))
 ROUTINE_CHANGE_EVENT_TRIGGER_SCALE = float(ROUTINE_CHANGE_CONFIG.get("event_trigger_scale", 1.0))
 ROUTINE_CHANGE_EVENT_TRIGGER_CAP = float(ROUTINE_CHANGE_CONFIG.get("event_trigger_cap", 0.6))
 SPONTANEITY_CONFIG = CONFIG.get("spontaneity", {})
@@ -2067,6 +2073,17 @@ def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, 
             self_control = float(agent.get("state", {}).get("self_control", 0.6))
             if self_control < 0.45:
                 resistance = max(0.0, resistance - 0.10)
+    # Global routine-randomness: the higher the knob, the less agents stick to
+    # their routine. It relaxes the current activity's commitment resistance,
+    # injects free-floating restlessness into the trigger (so an agent can go
+    # off-script even without a state/event push), and lifts the deviation
+    # probability. Sleep slots are exempt so high randomness doesn't keep
+    # agents up all night. 0 keeps the tuned defaults unchanged.
+    if ROUTINE_CHANGE_RANDOMNESS > 0.0 and not is_sleep_activity(scheduled_activity):
+        r = ROUTINE_CHANGE_RANDOMNESS
+        resistance = max(0.0, resistance * (1.0 - 0.70 * r))
+        trigger = float(np.clip(trigger + 0.45 * r, 0.0, 1.0))
+        prob = min(0.97, prob + 0.45 * r)
     if trigger <= resistance:
         return scheduled_activity, "", False
     activation = min(0.95, prob + max(0.0, trigger - resistance) * 0.9)
@@ -2505,6 +2522,14 @@ from gaworld.sim._diary import (  # noqa: E402
 from gaworld.sim._summary import (  # noqa: E402
     summarize_simulation,
     take_initial_snapshot,
+)
+from gaworld.sim._fastforward import (  # noqa: E402
+    apply_random_jitter as _ff_apply_random_jitter,
+    apply_state_changes as _ff_apply_state_changes,
+    long_run_config as _long_run_config,
+    randomness_level as _ff_randomness,
+    render_day_brief_block as _ff_render_day_brief,
+    simulate_agent_day as _ff_simulate_agent_day,
 )
 
 # =========================================================
@@ -3815,6 +3840,200 @@ def run_simulation():
     if step_pipeline.stage_names != list(DEFAULT_AGENT_STEP_ORDER):
         print(f"🧠 认知管线：{' → '.join(step_pipeline.stage_names)}")
 
+    def _run_fast_forward_day(day, day_context, day_desc, daily_logs, day_env_events, day_env_context):
+        """Long-horizon fast-forward: compress the whole day into one brief
+        per agent (one LLM call/agent/day) instead of the tick megaloop.
+
+        Day / goals / relationships still evolve, but approximately: the
+        digest's clamped deltas are applied, memory + diary are written, and
+        the day-boundary hooks (growth/interests/economy) still fire so the
+        long run keeps drifting. Reuses ``base_schedule_map`` as the作息骨架
+        context — no per-day routine LLM call is made in this mode.
+        """
+        schedule_map = base_schedule_map
+        for agent in agents:
+            agent["current_day"] = day
+        hook_bus.emit(
+            "on_day_start",
+            day=day,
+            config=CONFIG,
+            agents=agents,
+            agents_by_id=agents_by_id,
+            city_map=city_map,
+            city_map_text=city_map_text,
+            schedule_map=schedule_map,
+            actions=actions,
+            timeline=[],
+            daily_logs=daily_logs,
+            env_events=day_env_events,
+            env_context=day_env_context,
+            extension_state=extension_state,
+        )
+
+        def _compute_digest(agent):
+            digest = _ff_simulate_agent_day(
+                agent,
+                day=day,
+                day_desc=day_desc,
+                base_schedule=base_schedule_map.get(agent["id"]),
+                goals_context=_goals_hint(agent),
+                env_events=day_env_events,
+                env_context=day_env_context,
+                agents_by_id=agents_by_id,
+                config=CONFIG,
+                llm_fn=call_llm,
+            )
+            return agent["id"], digest
+
+        # Digests are one independent LLM call per agent (like routine
+        # generation), so they ride the same concurrency knob.
+        _digest_workers = resolve_max_workers(
+            CONFIG, key="day_routine_workers", default=1
+        )
+        _digest_results = dict(
+            parallel_map(
+                _compute_digest,
+                agents,
+                max_workers=_digest_workers,
+                label="fast_forward_day",
+            )
+        )
+
+        _ff_rand = _ff_randomness(CONFIG)  # full config; randomness_level unwraps long_run
+        agent_briefs = []
+        for agent in agents:
+            agent_id = agent["id"]
+            digest = _digest_results.get(agent_id) or {}
+            brief = str(digest.get("brief", "")).strip()
+            burst = bool(digest.get("burst"))
+            # Mark burst days so the brief block and log read as eventful.
+            brief_disp = ("⚡ " + brief) if (burst and brief) else brief
+            agent_briefs.append((agent.get("name", str(agent_id)), brief_disp))
+
+            # 1) approximate state deltas + randomness-driven volatility jitter
+            _ff_apply_state_changes(agent, digest.get("state_changes", {}))
+            _ff_apply_random_jitter(agent, randomness=_ff_rand, burst=burst, rng=random)
+
+            # 2) social signals → relationship nudges
+            for item in digest.get("social", []) or []:
+                try:
+                    neighbor_id = int(item.get("neighbor"))
+                except (TypeError, ValueError):
+                    continue
+                relationship_update(
+                    agent, neighbor_id, item.get("signal", "neutral"), HUMAN_REALISM_CONFIG
+                )
+
+            # 3) tomorrow's intentions (from the digest, if any)
+            intentions = digest.get("intentions") or {}
+            if isinstance(intentions, dict) and intentions:
+                intentions = dict(intentions)
+                intentions["day"] = day
+                agent["intentions"] = intentions
+
+            # 4) goal progress
+            if GOALS_ENABLED and isinstance(agent.get("goals"), dict) and agent["goals"]:
+                agent["goals"], goal_notes = apply_goal_progress(
+                    agent["goals"],
+                    digest.get("goal_progress", []),
+                    day,
+                    config=GOALS_CONFIG,
+                )
+                if goal_notes:
+                    print(f"🎯 {agent['name']} 的目标推进：{'；'.join(goal_notes)}")
+
+            # 5) memory line for the day
+            memory_line = str(digest.get("memory", "")).strip()
+            if memory_line:
+                _append_memory_record(
+                    agent, memory_line, entry_type="memory", day=day, time_str="fast_forward"
+                )
+
+            # 6) day-end relationship decay + Dunbar prune
+            if HUMAN_REALISM_ENABLED:
+                decay_relationships(agent, current_day=day, cfg=HUMAN_REALISM_CONFIG)
+                enforce_dunbar(agent)
+
+            # 7) diary (deterministic fallback — no extra LLM call in fast mode)
+            diary_text = _fallback_daily_diary(
+                agent,
+                day,
+                day_context=day_context,
+                day_memory=memory_line,
+                consolidation_text=brief,
+                intentions=agent.get("intentions", {}),
+            )
+            save_daily_diary(agent, day, diary_text)
+            vector_db_add_entry(
+                agent_id, "diary", diary_text, sim_day=day, sim_time="fast_forward_diary"
+            )
+
+            # 8) log the brief + record state history
+            brief_log = f"[FastForward Day {day}] {brief_disp or '（平稳的一天）'}\n"
+            daily_logs[agent_id] += brief_log
+            append_agent_log(agent, brief_log)
+            vector_db_add_entry(
+                agent_id,
+                "fast_forward",
+                f"[FastForward Day {day} {day_desc}] {brief}",
+                sim_day=day,
+                sim_time="fast_forward",
+            )
+            for metric in state_history.get(agent_id, {}):
+                if metric in agent["state"]:
+                    state_history[agent_id][metric].append(agent["state"][metric])
+
+            if STATEFUL:
+                save_agent_intentions(agent_id, agent.get("intentions", {}))
+                save_agent_relationships(agent_id, agent.get("relationships", {}))
+                if GOALS_ENABLED and isinstance(agent.get("goals"), dict) and agent["goals"]:
+                    save_agent_goals(
+                        agent_id, agent["goals"], CONFIG.get("memory_dir", "output/memory")
+                    )
+
+        # World-level daily brief block to the console + every agent log.
+        world_line = ""
+        if day_env_events:
+            world_line = "；".join(
+                _format_external_env_event(ev) for ev in day_env_events[:2]
+            )
+        brief_block = _ff_render_day_brief(day, day_desc, agent_briefs, world_line=world_line)
+        print(brief_block)
+
+        # Day-boundary evolution hooks (growth decay / interests / economy).
+        for agent in agents:
+            try:
+                run_daily_memory_lifecycle(
+                    agent, day=day, time_str="end_of_day", llm=call_llm, web_fetch_fn=None
+                )
+            except Exception as _lifecycle_exc:  # noqa: BLE001
+                print(f"⚠️ memory lifecycle hook failed for {agent.get('name')}: {_lifecycle_exc}")
+            hook_bus.emit("memory.consolidate", agent=agent, day=day)
+        hook_bus.emit(
+            "on_day_end",
+            day=day,
+            config=CONFIG,
+            agents=agents,
+            agents_by_id=agents_by_id,
+            city_map=city_map,
+            city_map_text=city_map_text,
+            schedule_map=schedule_map,
+            actions=actions,
+            daily_logs=daily_logs,
+            state_history=state_history,
+            extension_state=extension_state,
+        )
+        if visualizer is not None:
+            visualizer.record_frame(
+                day=day,
+                time_str="fast_forward",
+                day_context=day_context,
+                env_context=day_env_context,
+                env_events=list(day_env_events or []),
+                agent_steps=[],
+                policy={},
+            )
+
     # ----- PHASE 3: DAY LOOP — runs once per simulated day -----
     for day in range(start_day, start_day + SIM_DAYS):
         sim_ctx.clock.start_day(day)
@@ -3880,6 +4099,19 @@ def run_simulation():
                     sim_day=day,
                     sim_time="day_start",
                 )
+        # Long-horizon fast-forward: skip the per-day routine LLM pass, the
+        # intra-day tick megaloop and the normal day-end consolidation; a
+        # single per-agent digest carries the whole day (see _fastforward.py).
+        if LONG_RUN_ENABLED:
+            _run_fast_forward_day(
+                day, day_context, day_desc, daily_logs, day_env_events, day_env_context
+            )
+            if STATEFUL:
+                save_sim_state({
+                    "last_day": day,
+                    "memory_model_version": MEMORY_MODEL_VERSION,
+                })
+            continue
         llm_budget_by_agent = {}
         daily_schedules = {}
         daily_routine_texts = {}
@@ -5038,6 +5270,16 @@ def _build_arg_parser():
 
     run_cmd = subparsers.add_parser("run", help="Run the full simulation")
     run_cmd.add_argument("--sim-days", type=int, default=None, help="Override simulation days")
+    run_cmd.add_argument(
+        "--fast-forward",
+        action="store_true",
+        help=(
+            "Long-horizon fast-forward: compress each day into one per-agent "
+            "daily brief (one LLM call/agent/day) instead of the intra-day tick "
+            "loop. State/goals/relationships still evolve, approximately. Pairs "
+            "with a large --sim-days (e.g. 60, 600)."
+        ),
+    )
     subparsers.add_parser("reset", help="Reset simulation memory/logs/cache")
 
     interview = subparsers.add_parser("interview", help="Interview a specific agent by ID")
@@ -5309,6 +5551,16 @@ def _main():
         CONFIG["sim_days"] = int(args.sim_days)
         global SIM_DAYS
         SIM_DAYS = int(args.sim_days)
+
+    if getattr(args, "fast_forward", False):
+        CONFIG.setdefault("long_run", {})["enabled"] = True
+        global LONG_RUN_ENABLED, LONG_RUN_CONFIG
+        LONG_RUN_CONFIG = _long_run_config(CONFIG)
+        LONG_RUN_ENABLED = True
+        print(
+            f"⏩ 长时段快进模式已启用：{SIM_DAYS} 天，每天每个智能体生成一条日简报"
+            f"（近似推进状态/目标/关系）。"
+        )
 
     run_simulation()
 

@@ -127,6 +127,10 @@ class TestActionGate(unittest.TestCase):
         sim.HUMAN_REALISM_ENABLED = False
         sim.VISUALIZATION_ENABLED = False
         sim.LIFE_EVENTS_ENABLED = False
+        # The action gate lives in the per-tick pipeline; force off long-run
+        # fast-forward (which skips the tick loop) in case a local
+        # dashboard_config.json enabled it.
+        sim.LONG_RUN_ENABLED = False
 
     def test_nonexistent_destination_denied_and_fed_back(self) -> None:
         import generative_city_sim as sim

@@ -154,6 +154,11 @@ class TestRunSimulationSmoke(unittest.TestCase):
         sim.HUMAN_REALISM_ENABLED = False
         sim.VISUALIZATION_ENABLED = False
         sim.LIFE_EVENTS_ENABLED = False
+        # This smoke exercises the fine-grained tick loop; force off the
+        # long-run fast-forward mode in case a local dashboard_config.json
+        # enabled it (that path skips the per-tick planning/reflection tasks
+        # this test asserts on).
+        sim.LONG_RUN_ENABLED = False
 
         with install() as mock:
             try:

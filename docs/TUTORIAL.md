@@ -38,6 +38,14 @@ python generative_city_sim.py run
 
 运行后会在 `output/` 下生成日志、记忆和图表。
 
+想跑**长期模拟**（如 60/600 天）可加 `--fast-forward` 开启**长时段快进**：每天压缩成每个智能体一条日简报（每 agent 每天 1 次 LLM 调用），跳过日内时刻循环，状态/目标/关系仍近似推进。`long_run.randomness`（0–1）越高，突发事件越频繁、波动越大：
+
+```bash
+python generative_city_sim.py run --sim-days 600 --fast-forward
+```
+
+（Dashboard 工具栏也可勾选「长时段快进」并拖动「随机性」滑杆。详见 [TUTORIAL.v2 §3.1](./TUTORIAL.v2.md#31-长时段快进fast-forward跑-10--60--600-天)。）
+
 重点查看：
 
 - `output/logs/`：运行日志

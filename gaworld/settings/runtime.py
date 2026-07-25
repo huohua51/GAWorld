@@ -17,6 +17,26 @@ def simulation_settings() -> dict[str, Any]:
         # Time step for simulation timeline (minutes). None/0 uses schedule times only.
         # "time_step_minutes": "2 hours",
         "time_step_minutes": None,
+        # Long-horizon fast-forward mode. When enabled, each day is compressed
+        # into a single per-agent "daily brief" (one LLM call/agent/day) instead
+        # of the intra-day tick megaloop, so 60/600-day horizons stay tractable.
+        # State / goals / relationships still evolve, but approximately. OFF by
+        # default so the normal fine-grained loop is unchanged.
+        "long_run": {
+            "enabled": False,
+            # Use one LLM call per agent per day to author the brief + deltas.
+            # When False, the brief is produced deterministically (zero LLM).
+            "brief_llm": True,
+            # Clamp for the magnitude of any single per-day approximate state
+            # delta the digest may apply.
+            "max_state_delta": 0.15,
+            # Randomness of the long run, 0..1. Higher → more frequent sudden
+            # ("burst") events and larger day-to-day state swings. 0 = fully
+            # deterministic (no bursts, no jitter).
+            "randomness": 0.3,
+            # Soft length cap (characters) for each agent's daily brief.
+            "brief_max_chars": 240,
+        },
         # Calendar settings for weekday/weekend simulation.
         "calendar": {
             "start_date": "today",
@@ -185,6 +205,13 @@ def simulation_settings() -> dict[str, Any]:
             "event_boost": 0.08,
             "policy_boost": 0.05,
             "max_chance": 0.45,
+            # Global "how loosely agents follow their daily routine" knob, 0..1
+            # (dashboard-settable). Higher → committed activities resist less,
+            # agents feel more free-floating restlessness, and the deviation
+            # probability is lifted, so they break from the schedule more often.
+            # 0 = strictly follow the tuned defaults (behavior-preserving).
+            # Does not apply to sleep slots.
+            "randomness": 0.0,
             # Severity-weighting of env/life events on the routine-change
             # decision. Previously events were counted (each +0.10 trigger,
             # +event_boost prob) regardless of how serious they were, so a

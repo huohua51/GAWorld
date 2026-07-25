@@ -224,6 +224,18 @@ DEFAULT_RESPONSES: dict[str, str] = {
         ],
         ensure_ascii=False,
     ),
+    # Long-horizon fast-forward daily brief (one call/agent/day).
+    "fast_forward_day": json.dumps(
+        {
+            "brief": "照常上班，午休和同事聊了会儿，晚上按时回家，整体平稳，心情略好。",
+            "memory": "午休的闲聊让今天轻松了一点。",
+            "state_changes": {"emotion": 0.02, "stress": -0.01},
+            "goal_progress": [],
+            "social": [],
+            "intentions": {"priorities": ["保持节奏"], "avoidances": ["熬夜"]},
+        },
+        ensure_ascii=False,
+    ),
 }
 
 # Used when the simulator dispatches a task we haven't seen before.

@@ -154,6 +154,12 @@ Run the simulator:
 python generative_city_sim.py run
 ```
 
+Run a **long-horizon fast-forward** (compress each day into one per-agent daily brief — one LLM call/agent/day — instead of the intra-day tick loop; state/goals/relationships still evolve approximately). Pairs with a large `--sim-days`, or toggle it from the dashboard toolbar («Long-run Fast-forward»):
+
+```bash
+python generative_city_sim.py run --sim-days 600 --fast-forward
+```
+
 Reset stateful artifacts:
 
 ```bash

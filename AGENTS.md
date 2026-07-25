@@ -48,6 +48,7 @@ GAWorld/
 ## Build, Test, and Development Commands
 - Install deps: `pip install -r requirements.txt`
 - Run simulation: `python generative_city_sim.py run`
+- Long-horizon fast-forward (one daily brief per agent per day, skips the intra-day tick loop; pairs with a large `--sim-days`): `python generative_city_sim.py run --sim-days 600 --fast-forward`
 - Reset simulation (clear caches/logs and restart day count): `python generative_city_sim.py reset`
 - Interview an agent:
   - `python generative_city_sim.py interview --agent-id 31 --question "Question"`

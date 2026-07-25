@@ -159,6 +159,12 @@ pip install -r requirements.txt
 python generative_city_sim.py run
 ```
 
+**长时段快进**（把每天压缩成每个智能体一条日简报——每 agent 每天 1 次 LLM 调用——跳过日内时刻循环；状态/目标/关系仍近似推进）。配合较大的 `--sim-days`，或在 dashboard 工具栏勾选「长时段快进」：
+
+```bash
+python generative_city_sim.py run --sim-days 600 --fast-forward
+```
+
 重置状态：
 
 ```bash

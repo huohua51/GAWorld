@@ -24,6 +24,11 @@ const els = {
   defaultProviderSelect: document.getElementById("defaultProviderSelect"),
   scheduleProviderSelect: document.getElementById("scheduleProviderSelect"),
   realtimeInput: document.getElementById("realtimeInput"),
+  fastForwardInput: document.getElementById("fastForwardInput"),
+  randomnessInput: document.getElementById("randomnessInput"),
+  randomnessValue: document.getElementById("randomnessValue"),
+  routineRandomnessInput: document.getElementById("routineRandomnessInput"),
+  routineRandomnessValue: document.getElementById("routineRandomnessValue"),
   saveConfigBtn: document.getElementById("saveConfigBtn"),
   runBtn: document.getElementById("runBtn"),
   resetRunBtn: document.getElementById("resetRunBtn"),
@@ -40,7 +45,10 @@ const els = {
   latestFrameBox: document.getElementById("latestFrameBox"),
   selectedAgentAvatar: document.getElementById("selectedAgentAvatar"),
   agentSelect: document.getElementById("agentSelect"),
+  profileView: document.getElementById("profileView"),
   profileEditor: document.getElementById("profileEditor"),
+  editProfileBtn: document.getElementById("editProfileBtn"),
+  cancelProfileBtn: document.getElementById("cancelProfileBtn"),
   saveProfileBtn: document.getElementById("saveProfileBtn"),
   toggleSimBtn: document.getElementById("toggleSimBtn"),
   refreshAgentBtn: document.getElementById("refreshAgentBtn"),
@@ -70,10 +78,6 @@ const els = {
   stateMemoryBox: document.getElementById("stateMemoryBox"),
   episodesBox: document.getElementById("episodesBox"),
   agentLogBox: document.getElementById("agentLogBox"),
-  goalsPanel: document.getElementById("goalsPanel"),
-  goalsEditor: document.getElementById("goalsEditor"),
-  goalsEditBtn: document.getElementById("goalsEditBtn"),
-  goalsSaveBtn: document.getElementById("goalsSaveBtn"),
   reloadStatusBtn: document.getElementById("reloadStatusBtn"),
   runLogBox: document.getElementById("runLogBox"),
 };
@@ -178,6 +182,9 @@ function syncRunButtons() {
     els.defaultProviderSelect,
     els.scheduleProviderSelect,
     els.realtimeInput,
+    els.fastForwardInput,
+    els.randomnessInput,
+    els.routineRandomnessInput,
   ].forEach((el) => { el.disabled = running; });
   if (els.toggleSimBtn) els.toggleSimBtn.disabled = running;
   document.body.classList.toggle("is-running", running);
@@ -222,6 +229,13 @@ function configPayloadFromForm() {
     seconds_per_day: Number(els.secondsPerDayInput.value || 10),
     simulate_realtime: els.realtimeInput.checked,
     time_step_minutes: els.timeStepInput.value.trim(),
+    long_run: {
+      enabled: els.fastForwardInput.checked,
+      randomness: Number(els.randomnessInput.value),
+    },
+    routine_change: {
+      randomness: Number(els.routineRandomnessInput.value),
+    },
     llm: {
       routing: {
         default: defaultProvider,
@@ -239,6 +253,14 @@ async function loadConfig() {
   els.secondsPerDayInput.value = cfg.seconds_per_day || 10;
   els.timeStepInput.value = cfg.time_step_minutes == null ? "" : cfg.time_step_minutes;
   els.realtimeInput.checked = Boolean(cfg.simulate_realtime);
+  els.fastForwardInput.checked = Boolean(cfg.long_run && cfg.long_run.enabled);
+  const randomness = cfg.long_run && cfg.long_run.randomness != null ? cfg.long_run.randomness : 0.3;
+  els.randomnessInput.value = randomness;
+  els.randomnessValue.textContent = Number(randomness).toFixed(2);
+  const routineRandomness =
+    cfg.routine_change && cfg.routine_change.randomness != null ? cfg.routine_change.randomness : 0;
+  els.routineRandomnessInput.value = routineRandomness;
+  els.routineRandomnessValue.textContent = Number(routineRandomness).toFixed(2);
   const providers = (cfg.llm && cfg.llm.providers) || [];
   const routing = (cfg.llm && cfg.llm.routing) || {};
   fillProviderSelect(els.defaultProviderSelect, providers, routing.default);
@@ -400,10 +422,58 @@ async function addLifeEvent() {
   message(__("life_event.queued"));
 }
 
+function renderMarkdown(md) {
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (t) => esc(t)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+  const lines = String(md || "").replace(/\r\n?/g, "\n").split("\n");
+  let html = "";
+  let inList = false;
+  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  for (const ln of lines) {
+    const h = ln.match(/^(#{1,4})\s+(.*)$/);
+    const li = ln.match(/^\s*[-*]\s+(.*)$/);
+    if (h) {
+      closeList();
+      const lvl = Math.min(h[1].length + 1, 5);
+      html += `<h${lvl}>${inline(h[2])}</h${lvl}>`;
+    } else if (li) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inline(li[1])}</li>`;
+    } else if (ln.trim() === "") {
+      closeList();
+    } else {
+      closeList();
+      html += `<p>${inline(ln)}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
+
+function renderProfileView() {
+  if (!els.profileView) return;
+  els.profileView.innerHTML = renderMarkdown(els.profileEditor.value);
+}
+
+function setProfileEditing(editing) {
+  if (els.profileView) els.profileView.hidden = editing;
+  if (els.profileEditor) els.profileEditor.hidden = !editing;
+  if (els.editProfileBtn) els.editProfileBtn.hidden = editing;
+  if (els.saveProfileBtn) els.saveProfileBtn.hidden = !editing;
+  if (els.cancelProfileBtn) els.cancelProfileBtn.hidden = !editing;
+}
+
 async function loadProfile() {
   if (!state.selectedAgentId) return;
   const profile = await api(`/api/agents/${state.selectedAgentId}/profile`);
   els.profileEditor.value = profile.text || "";
+  state.profileOriginal = els.profileEditor.value;
+  renderProfileView();
+  setProfileEditing(false);
 }
 
 async function saveProfile() {
@@ -412,6 +482,9 @@ async function saveProfile() {
     method: "POST",
     body: JSON.stringify({ text: els.profileEditor.value }),
   });
+  state.profileOriginal = els.profileEditor.value;
+  renderProfileView();
+  setProfileEditing(false);
   await loadAgents();
   message(__("common.saved"));
 }
@@ -427,71 +500,6 @@ async function loadMemory() {
   }, null, 2);
   els.episodesBox.textContent = payload.episodes_tail || __("memory.no_episodes");
   els.agentLogBox.textContent = payload.log_tail || __("memory.no_agent_log");
-}
-
-function escapeGoalsHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = String(text == null ? "" : text);
-  return div.innerHTML;
-}
-
-function renderGoals(goals) {
-  if (!els.goalsPanel) return;
-  const tiers = [
-    ["life_goals", __("goals.life")],
-    ["long_term_goals", __("goals.long")],
-    ["short_term_goals", __("goals.short")],
-  ];
-  const hasAny = goals && tiers.some(([k]) => Array.isArray(goals[k]) && goals[k].length);
-  if (!hasAny) {
-    els.goalsPanel.textContent = __("goals.empty");
-    return;
-  }
-  const parts = [];
-  for (const [key, label] of tiers) {
-    const items = (goals[key] || []).filter(Boolean);
-    if (!items.length) continue;
-    const rows = items.map((g) => {
-      const progress = typeof g.progress === "number"
-        ? ` <progress max="1" value="${g.progress}"></progress> ${Math.round(g.progress * 100)}%`
-        : "";
-      const status = g.status && g.status !== "active"
-        ? ` <em>[${escapeGoalsHtml(g.status)}]</em>` : "";
-      return `<li>${escapeGoalsHtml(g.title)}${progress}${status}</li>`;
-    }).join("");
-    parts.push(`<h4>${escapeGoalsHtml(label)}</h4><ul>${rows}</ul>`);
-  }
-  const lastReview = (goals.review_log || []).slice(-1)[0];
-  if (lastReview) {
-    parts.push(`<p>Day ${Number(lastReview.day) || 0}: ${escapeGoalsHtml(lastReview.summary)}</p>`);
-  }
-  els.goalsPanel.innerHTML = parts.join("");
-}
-
-async function loadGoals() {
-  if (!state.selectedAgentId) return;
-  const goals = await api(`/api/agents/${state.selectedAgentId}/goals`);
-  renderGoals(goals || {});
-  if (els.goalsEditor) {
-    els.goalsEditor.value = JSON.stringify(goals || {}, null, 2);
-  }
-}
-
-async function saveGoals() {
-  if (!state.selectedAgentId) return;
-  let payload;
-  try {
-    payload = JSON.parse(els.goalsEditor.value);
-  } catch (e) {
-    message(__("goals.invalid_json"), "error");
-    return;
-  }
-  await api(`/api/agents/${state.selectedAgentId}/goals`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  await loadGoals();
-  message(__("goals.saved"));
 }
 
 async function runSimulation(reset = false) {
@@ -678,7 +686,43 @@ async function interview() {
   }
 }
 
+function initCollapsibles() {
+  document.querySelectorAll(".panel.collapsible").forEach((panel) => {
+    const head = panel.querySelector(".section-head");
+    if (!head || head.__collapseWired) return;
+    head.__collapseWired = true;
+    const chevron = document.createElement("button");
+    chevron.type = "button";
+    chevron.className = "collapse-toggle";
+    chevron.setAttribute("aria-label", "折叠 / 展开");
+    const host = head.querySelector(".head-actions") || head;
+    host.appendChild(chevron);
+    const sync = () => chevron.setAttribute("aria-expanded", String(!panel.classList.contains("is-collapsed")));
+    sync();
+    head.addEventListener("click", (e) => {
+      const t = e.target;
+      if (t !== chevron && t.closest && t.closest("button, a, select, input, textarea, .help-tip")) return;
+      panel.classList.toggle("is-collapsed");
+      sync();
+    });
+  });
+}
+
+function initFrameJson() {
+  const box = document.querySelector(".frame-json");
+  if (!box) return;
+  const toggle = box.querySelector(".frame-json-toggle");
+  if (!toggle || toggle.__wired) return;
+  toggle.__wired = true;
+  toggle.addEventListener("click", (e) => {
+    if (e.target.closest(".help-tip")) return;
+    box.classList.toggle("is-collapsed");
+  });
+}
+
 function bindEvents() {
+  initCollapsibles();
+  initFrameJson();
   els.saveConfigBtn.addEventListener("click", withBusy(els.saveConfigBtn, saveConfig));
   els.runBtn.addEventListener("click", withBusy(els.runBtn, () => runSimulation(false)));
   els.resetRunBtn.addEventListener("click", withBusy(els.resetRunBtn, () => runSimulation(true)));
@@ -699,13 +743,28 @@ function bindEvents() {
     try {
       await loadProfile();
       await loadMemory();
-      await loadGoals();
     } catch (error) {
       message(error.message, "error");
     }
   });
   els.agentIdsInput.addEventListener("input", refreshAgentOptionLabels);
+  els.randomnessInput.addEventListener("input", () => {
+    els.randomnessValue.textContent = Number(els.randomnessInput.value).toFixed(2);
+  });
+  els.routineRandomnessInput.addEventListener("input", () => {
+    els.routineRandomnessValue.textContent = Number(els.routineRandomnessInput.value).toFixed(2);
+  });
   if (els.toggleSimBtn) els.toggleSimBtn.addEventListener("click", toggleSelectedAgentInSim);
+  if (els.editProfileBtn) els.editProfileBtn.addEventListener("click", () => {
+    state.profileOriginal = els.profileEditor.value;
+    setProfileEditing(true);
+    els.profileEditor.focus();
+  });
+  if (els.cancelProfileBtn) els.cancelProfileBtn.addEventListener("click", () => {
+    els.profileEditor.value = state.profileOriginal || "";
+    renderProfileView();
+    setProfileEditing(false);
+  });
   els.saveProfileBtn.addEventListener("click", withBusy(els.saveProfileBtn, saveProfile));
   els.refreshAgentBtn.addEventListener("click", withBusy(els.refreshAgentBtn, async () => {
     await loadProfile();
@@ -713,15 +772,8 @@ function bindEvents() {
   }));
   els.reloadMemoryBtn.addEventListener("click", withBusy(els.reloadMemoryBtn, async () => {
     await loadMemory();
-    await loadGoals();
     message("记忆已刷新");
   }));
-  if (els.goalsEditBtn) els.goalsEditBtn.addEventListener("click", () => {
-    const show = els.goalsEditor.style.display === "none";
-    els.goalsEditor.style.display = show ? "block" : "none";
-    els.goalsSaveBtn.style.display = show ? "inline-block" : "none";
-  });
-  if (els.goalsSaveBtn) els.goalsSaveBtn.addEventListener("click", withBusy(els.goalsSaveBtn, saveGoals));
   els.interviewBtn.addEventListener("click", withBusy(els.interviewBtn, () => interview().catch((error) => {
     els.interviewOutput.textContent = `采访失败：${error.message}`;
   })));
@@ -783,7 +835,6 @@ async function init() {
     ["人生事件", loadLifeEvents],
     ["Profile", loadProfile],
     ["记忆", loadMemory],
-    ["目标", loadGoals],
     ["运行状态", refreshStatus],
   ];
   for (const [label, step] of steps) {
@@ -807,7 +858,6 @@ window.addEventListener("locale-changed", function () {
   loadTrace(false).catch(() => {});
   loadLifeEvents().catch(() => {});
   loadMemory().catch(() => {});
-  loadGoals().catch(() => {});
   renderTrace();
 });
 

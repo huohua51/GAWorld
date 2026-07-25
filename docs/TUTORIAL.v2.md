@@ -12,6 +12,7 @@
 1. [GAWorld 是什么](#1-gaworld-是什么)
 2. [安装与 LLM 配置](#2-安装与-llm-配置)
 3. [5 分钟跑通第一次仿真](#3-5-分钟跑通第一次仿真)
+    - [3.1 长时段快进（Fast-forward）：跑 10 / 60 / 600 天](#31-长时段快进fast-forward跑-10--60--600-天)
 4. [核心概念：智能体与仿真循环](#4-核心概念智能体与仿真循环)
 5. [既有特性详解](#5-既有特性详解)
 6. [新特性一：物理环境感知与反应式重规划](#6-新特性一物理环境感知与反应式重规划)
@@ -142,6 +143,42 @@ output/
 ```bash
 python generative_city_sim.py reset && python generative_city_sim.py run
 ```
+
+### 3.1 长时段快进（Fast-forward）：跑 10 / 60 / 600 天
+
+默认的精细模式每天要跑一遍**日内时刻循环**（每个 tick 每个 agent 一次认知
+LLM 调用，约每 agent 每天数十次），几十上百天就跑不动了。**长时段快进模式**
+把一整天压缩成**每个智能体一条「日简报」**（每 agent 每天仅 1 次 LLM 调用），
+跳过日内时刻循环——实现一种「快进 + 近似」的效果，适合观察**长期**演化。
+
+```bash
+# 快进跑 600 天：每天每个 agent 生成一条日简报
+python generative_city_sim.py run --sim-days 600 --fast-forward
+```
+
+- **输出不再按具体时刻**，而是每天一个 `Day N 简报` 块：每个 agent 一行 +
+  当天世界事件提示。
+- **状态仍会「近似推进」并持久化**：情绪/压力等状态按夹逼后的小幅增量更新，
+  目标进度、关系亲密度、记忆与日记都照常写入，日终的成长/兴趣/经济钩子也照跑
+  ——只是分辨率更粗。所以跑完 600 天后，智能体是被真实塑造过的。
+- 关掉 `--fast-forward` 即回到逐时刻的精细模式（默认）。
+
+调参（`config.py` / `dashboard_config.json` 的 `long_run` 段）：
+
+| 字段 | 默认 | 作用 |
+|---|---|---|
+| `long_run.enabled` | `false` | 快进总开关（等价于 `--fast-forward`） |
+| `long_run.brief_llm` | `true` | 用 LLM 写简报；置 `false` 则**零 LLM** 走确定性简报 |
+| `long_run.randomness` | `0.3` | **随机性 0–1**：越高，快进期间**突发事件**越频繁、智能体**状态波动**越大；`0` = 完全确定（无突发、无抖动） |
+| `long_run.max_state_delta` | `0.15` | 单日近似状态增量的夹逼上限 |
+| `long_run.brief_max_chars` | `240` | 每条日简报的软长度上限 |
+
+**随机性怎么起作用**：每个智能体每天按 `≈0.3×randomness` 的概率掷出一次
+**突发事件**（意外开销/机会/冲突/健康/人际变故……），命中时简报里会自然带出这件
+事、状态也随之明显波动（日志中以 `⚡` 标记）；此外每天都会给情绪/压力等状态叠加
+一层幅度随 `randomness` 增大的零均值抖动（突发日抖动更大）。设 `random_seed` 可复现。
+
+> Dashboard 上也能一键开启：工具栏勾选「长时段快进」、拖动「随机性」滑杆即可（见第 12 节）。
 
 ---
 
@@ -615,6 +652,7 @@ python generative_city_sim.py dashboard --port 8766
 | 面板 | 作用 |
 |---|---|
 | 配置编辑 | 改仿真参数（天数、LLM 路由等） |
+| 长时段快进 | 工具栏勾选「长时段快进」→ 每天一条日简报的快进模式；旁边「随机性」滑杆控制突发事件频率与状态波动幅度（配合较大的仿真天数，见 [3.1](#31-长时段快进fast-forward跑-10--60--600-天)） |
 | Profile 编辑 | 改智能体画像 |
 | 运行控制 | 启动 / 停止仿真 |
 | 轨迹回放 | 可视化查看智能体移动轨迹 |
@@ -660,6 +698,7 @@ python generative_city_sim.py dashboard --port 8766
 | 配置 | 作用 |
 |---|---|
 | `agent_ids` / `sim_days` / `seconds_per_day` | 参与 agent、仿真天数、每日现实秒数 |
+| `long_run` | **新**：长时段快进（每天一条日简报、跳过日内时刻循环；`--fast-forward` 等价；`long_run.randomness` 控制突发事件与波动，见 [3.1](#31-长时段快进fast-forward跑-10--60--600-天)） |
 | `llm.routing.default` / `llm.routing.tasks` | 默认 provider / 按任务覆盖 |
 | `economy` | 个税、社保、恩格尔消费、投资、宏观周期、冲击、部门池守恒、信贷（`credit`）、agent 间路由（`routing`）、熟人借贷（`friend_loans`） |
 | `interests` | 兴趣 / 技能成长（开关、上限、插入倾向、持久化、日终衰减 `decay`、兴趣集演化 `evolution`） |
@@ -728,6 +767,7 @@ output/
 ```bash
 # 基本
 python generative_city_sim.py run                  # 运行仿真
+python generative_city_sim.py run --sim-days 600 --fast-forward  # 长时段快进：每天一条日简报
 python generative_city_sim.py reset                # 重置（从 Day 1）
 python generative_city_sim.py --help               # 帮助
 

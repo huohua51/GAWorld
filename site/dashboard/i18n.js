@@ -96,6 +96,13 @@
         if (t !== key) el.setAttribute("content", t);
       }
     });
+    document.querySelectorAll("[data-i18n-title]").forEach(function (el) {
+      var key = el.getAttribute("data-i18n-title");
+      if (key) {
+        var t = window.__(key);
+        if (t !== key) el.title = t;
+      }
+    });
     var enBtn = document.getElementById("lang-en-btn");
     var zhBtn = document.getElementById("lang-zh-btn");
     if (enBtn && zhBtn) {

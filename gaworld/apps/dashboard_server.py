@@ -321,6 +321,8 @@ def _config_summary():
         "seconds_per_day": cfg.get("seconds_per_day"),
         "simulate_realtime": cfg.get("simulate_realtime"),
         "time_step_minutes": cfg.get("time_step_minutes"),
+        "long_run": cfg.get("long_run", {}),
+        "routine_change": cfg.get("routine_change", {}),
         "calendar": cfg.get("calendar", {}),
         "llm": {
             "providers": _provider_names(cfg),
@@ -346,6 +348,40 @@ def _sanitize_config_patch(payload):
     if "time_step_minutes" in payload:
         value = payload["time_step_minutes"]
         patch["time_step_minutes"] = None if value in ("", None, 0, "0") else value
+    if isinstance(payload.get("long_run"), dict):
+        lr = payload["long_run"]
+        clean = {}
+        if "enabled" in lr:
+            clean["enabled"] = bool(lr["enabled"])
+        if "brief_llm" in lr:
+            clean["brief_llm"] = bool(lr["brief_llm"])
+        if "max_state_delta" in lr:
+            try:
+                clean["max_state_delta"] = max(0.0, min(1.0, float(lr["max_state_delta"])))
+            except (TypeError, ValueError):
+                pass
+        if "randomness" in lr:
+            try:
+                clean["randomness"] = max(0.0, min(1.0, float(lr["randomness"])))
+            except (TypeError, ValueError):
+                pass
+        if "brief_max_chars" in lr:
+            try:
+                clean["brief_max_chars"] = max(40, int(lr["brief_max_chars"]))
+            except (TypeError, ValueError):
+                pass
+        if clean:
+            patch["long_run"] = clean
+    if isinstance(payload.get("routine_change"), dict):
+        rc = payload["routine_change"]
+        clean = {}
+        if "randomness" in rc:
+            try:
+                clean["randomness"] = max(0.0, min(1.0, float(rc["randomness"])))
+            except (TypeError, ValueError):
+                pass
+        if clean:
+            patch["routine_change"] = clean
     if isinstance(payload.get("calendar"), dict):
         patch["calendar"] = payload["calendar"]
     if isinstance(payload.get("llm"), dict):

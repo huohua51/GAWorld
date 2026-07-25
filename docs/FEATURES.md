@@ -8,6 +8,7 @@
 | 功能特性 | 作用 | 访问方法 |
 |---|---|---|
 | 运行仿真 | 让一批智能体按天循环"生活"，产出日志、记忆、状态、经济等全部产物 | `python generative_city_sim.py run` |
+| 长时段快进 | 把每天压缩成每个智能体一条日简报（每 agent 每天 1 次 LLM 调用），跳过日内时刻循环，实现"快进+近似"，适合 60/600 天长期模拟；状态/目标/关系仍近似推进 | `python generative_city_sim.py run --sim-days 600 --fast-forward`；Dashboard 工具栏勾选「长时段快进」 |
 | 重置 | 清除有状态产物，从 Day 1 重新开始（改记忆 schema 后必做） | `python generative_city_sim.py reset` |
 | 智能体采访 | 基于某 agent 当前记忆与状态向其提问 | `python generative_city_sim.py interview --agent-id 31 --question "..."` / `--questions-file q.txt` |
 | 从社交内容创建智能体 | 用社媒页面或文本生成新 agent 画像 | `python generative_city_sim.py create-agent-from-social --url "..."` / `--file ... --name "..."` |
@@ -51,6 +52,7 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 | 可复用 Skill 库 | 全局 / 私有 Markdown 技能，注入认知与工作 brief 影响行为 | `CONFIG["skills"]`；全局库 `data/skills/*.md`；`SkillRegistry().attach_to_agent(agent, "id")` |
 | 经验 → Skill 自动提炼 | agent 从最近经历自总结私有技能 | `CONFIG["memory"]["skill_consolidation"]["enabled"]`（默认 OFF）；产物 `output/memory/agent_<id>_skills/*.md` |
 | 真实工作任务系统 | agent 按职业 / 技能产出真实产物（HTML / Python / 文章 / 教案 / 研究笔记）并接单结算 | `CONFIG["real_work"]["enabled"]`；产物 `output/work/agent_<id>/<task_id>/` |
+| 长时段快进（fast-forward） | 每天压缩成每个智能体一条日简报、跳过日内时刻循环，让 60/600 天长期模拟可行；状态/目标/关系仍近似推进，输出为每天一个 `Day N 简报` | `CONFIG["long_run"]["enabled"]`（或 `run --fast-forward`）；`long_run.randomness`(0–1) 越高突发事件越频繁、波动越大；Dashboard 工具栏勾选「长时段快进」+「随机性」滑杆 |
 
 ## 四、微内核插件体系（2026-07）
 

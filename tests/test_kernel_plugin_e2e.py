@@ -147,6 +147,10 @@ class TestPluginEndToEnd(unittest.TestCase):
         sim.HUMAN_REALISM_ENABLED = False
         sim.VISUALIZATION_ENABLED = False
         sim.LIFE_EVENTS_ENABLED = False
+        # This test exercises the fine-grained tick loop; force off the
+        # long-run fast-forward mode in case a local dashboard_config.json
+        # enabled it (that would skip the tick pipeline entirely).
+        sim.LONG_RUN_ENABLED = False
 
         with install() as mock:
             sim.run_simulation()
