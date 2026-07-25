@@ -76,7 +76,12 @@ def llm_settings() -> dict[str, Any]:
                     "authorization_retry_schemes": ["bearer"],
                     "include_x_api_key": False,
                     "timeout": 120,
-                    "max_tokens": 512,
+                    # MiniMax-M2 is a reasoning model and its `thinking` block counts
+                    # against max_tokens. A 512 budget is spent entirely on reasoning,
+                    # so the response carries no text block at all and every caller
+                    # receives an empty completion. Leave enough room for reasoning
+                    # plus a full document-length answer.
+                    "max_tokens": int(os.environ.get("MINIMAX_MAX_TOKENS", "16384")),
                 },
                 "local_qwen4b": {
                     "type": "openai",

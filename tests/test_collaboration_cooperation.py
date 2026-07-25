@@ -147,6 +147,34 @@ def test_cooperation_replaces_unsafe_artifact_name(tmp_path):
     assert not (tmp_path / "escape.md").exists()
 
 
+def test_cooperation_replaces_prose_artifact_name(tmp_path):
+    """Models often answer `artifact` with a sentence, not a filename.
+
+    The value has no path separators, so a traversal-only guard accepts it
+    and the deliverable lands in a file named after a whole paragraph.
+    """
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(kind="cooperation", member_ids=[1, 2], task="散文文件名")
+    store.create(session)
+
+    prose = "已整理社区公共空间改造要点清单：功能复合、空间可达、绿化景观。"
+
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_plan":
+            return json.dumps(
+                {"steps": [{"title": "整理要点", "agent_id": 1, "artifact": prose}]},
+                ensure_ascii=False,
+            )
+        return _basic_llm(prompt, task=task, agent_id=agent_id)
+
+    CooperationRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    saved = store.get(session.id)
+    assert saved.plan[0]["artifact"] == "member_1_1.md"
+    assert (tmp_path / session.id / "artifacts" / "member_1_1.md").is_file()
+    assert not (tmp_path / session.id / "artifacts" / prose).exists()
+
+
 def test_cooperation_rejects_forged_artifact_path_before_reading(tmp_path):
     store = SessionStore(tmp_path)
     session = CollaborationSession.new(

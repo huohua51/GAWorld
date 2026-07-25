@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from gaworld.settings import CONFIG
+from gaworld.apps import analytics
 from gaworld.events.life import add_life_event, list_life_event_templates, list_life_events
 from gaworld.integrations.fos_prompt import generate_fos_prompt
 from gaworld.logging_setup import get_logger
@@ -1083,6 +1084,32 @@ def _resolve_output_dir(output_dir: str | None) -> str:
     return os.path.join(REPO_ROOT, output_dir)
 
 
+def _agent_name_map():
+    return {section["id"]: section["name"] for section in _profile_sections()[1]}
+
+
+def _analytics_payload(section):
+    """Dispatch one Analytics section against the current ``output/`` artifacts."""
+    config = _effective_config()
+    memory_dir = config.get("memory_dir", "output/memory")
+    visualization_dir = config.get("visualization", {}).get("output_dir", "output/visualization")
+    diary_dir = config.get("diary_output_dir", "output/diaries")
+    names = _agent_name_map()
+    if section == "overview":
+        return analytics.overview(REPO_ROOT, memory_dir, visualization_dir, diary_dir, names)
+    if section == "state-history":
+        return analytics.state_history(REPO_ROOT, names)
+    if section == "economy":
+        return analytics.economy(REPO_ROOT, names)
+    if section == "social":
+        return analytics.social(REPO_ROOT, memory_dir, names)
+    if section == "behavior":
+        return analytics.behavior(REPO_ROOT, memory_dir, names)
+    if section == "events":
+        return analytics.events(REPO_ROOT, visualization_dir)
+    return None
+
+
 def _fos_export(payload: dict) -> dict:
     """Handle ``POST /api/fos-export``.
 
@@ -1167,6 +1194,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/agents/") and path.endswith("/goals"):
             agent_id = path.split("/")[3]
             return self._json_response(_agent_goals_payload(agent_id))
+        if path.startswith("/api/analytics/"):
+            payload = _analytics_payload(path[len("/api/analytics/") :])
+            if payload is None:
+                return self._json_response({"error": "Unknown analytics section"}, status=404)
+            return self._json_response(payload)
         if path == "/api/run/status":
             return self._json_response(_run_status())
         if path == "/api/trace/meta":

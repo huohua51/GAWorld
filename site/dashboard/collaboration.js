@@ -100,6 +100,81 @@
     return currentGeneration === requestGeneration;
   }
 
+  function activityEntry(event, context) {
+    const scope = context || {};
+    const names = scope.names || {};
+    const roles = scope.roles || {};
+    const plan = Array.isArray(scope.plan) ? scope.plan : [];
+    const type = String(event && event.type || "event");
+    const metadata = (event && event.metadata) || {};
+    const content = String(event && event.content || "");
+    const rawAgentId = event ? event.agent_id : null;
+    const hasAgent = rawAgentId !== null && rawAgentId !== undefined;
+    const agentId = hasAgent ? Number(rawAgentId) : null;
+
+    function nameOf(candidate) {
+      const id = Number(candidate);
+      return String(names[id] || "居民 " + String(id));
+    }
+
+    const badges = [];
+    if (hasAgent) {
+      const role = String(roles[String(agentId)] || "").trim();
+      if (role) {
+        badges.push(role);
+      }
+      if (Number(scope.leaderId) === agentId) {
+        badges.push("负责人");
+      }
+    }
+
+    const stepIndex = Number(metadata.step_index);
+    const step = Number.isInteger(stepIndex) ? plan[stepIndex] : null;
+    const stepLabel = step
+      ? "步骤 " + String(stepIndex + 1) + " · " + String(step.title || "")
+      : "";
+
+    let action = content || type.toUpperCase();
+    let detail = "";
+    let speech = "";
+
+    if (type === "artifact") {
+      action = metadata.final === true ? "汇总了最终成果" : "提交了子任务产物";
+      detail = [stepLabel, content].filter(Boolean).join(" · ");
+    } else if (type === "revision") {
+      action = "按审阅意见完成修订";
+      detail = [stepLabel, content].filter(Boolean).join(" · ");
+    } else if (type === "review") {
+      action = metadata.approved === true ? "审阅通过" : "提出了修改意见";
+      detail = [stepLabel, String(metadata.artifact || "")]
+        .filter(Boolean)
+        .join(" · ");
+      speech = content;
+    } else if (type === "plan_created") {
+      const steps = Array.isArray(metadata.plan) ? metadata.plan : [];
+      detail = steps.length ? "共 " + String(steps.length) + " 个步骤" : "";
+    } else if (type === "role_assigned") {
+      detail = metadata.leader_id === null || metadata.leader_id === undefined
+        ? ""
+        : "负责人 · " + nameOf(metadata.leader_id);
+    } else if (type === "created") {
+      action = "创建了合作任务";
+      detail = content;
+    } else if (type === "error") {
+      action = "任务出错";
+      speech = content;
+    }
+
+    return {
+      type,
+      speaker: hasAgent ? nameOf(agentId) : "系统",
+      role: badges.join(" · "),
+      action,
+      detail,
+      speech,
+    };
+  }
+
   function boot() {
     const core = window.GAWorldCollaborationCore;
     if (!core) {
@@ -404,7 +479,26 @@
       els.activityFeed.appendChild(empty);
     }
 
+    function activityContext() {
+      const session = state.session;
+      const names = {};
+      state.agents.forEach(function (agent) {
+        names[Number(agent.id)] = String(agent.name || "");
+      });
+      return {
+        names,
+        roles: Object.assign(
+          {},
+          session && session.role_overrides || {},
+          session && session.roles || {},
+        ),
+        leaderId: session ? session.leader_id : null,
+        plan: session && Array.isArray(session.plan) ? session.plan : [],
+      };
+    }
+
     function appendEvents(events) {
+      const context = activityContext();
       (Array.isArray(events) ? events : []).forEach(function (event) {
         const sequence = Number(event.seq || 0);
         if (sequence <= state.lastSeq) {
@@ -417,17 +511,41 @@
         if (empty) {
           empty.remove();
         }
+        const entry = activityEntry(event, context);
         const item = document.createElement("article");
         item.className = "activity-event";
-        item.dataset.eventType = String(event.type || "");
+        item.classList.toggle("is-speech", Boolean(entry.speech));
+        item.dataset.eventType = entry.type;
         const time = document.createElement("time");
         time.textContent = "#" + String(sequence).padStart(4, "0");
         const body = document.createElement("div");
-        const type = document.createElement("strong");
-        type.textContent = String(event.type || "event").toUpperCase();
-        const content = document.createElement("p");
-        content.textContent = String(event.content || "");
-        body.append(type, content);
+        const head = document.createElement("div");
+        head.className = "activity-speaker";
+        const speaker = document.createElement("strong");
+        speaker.textContent = entry.speaker;
+        head.appendChild(speaker);
+        if (entry.role) {
+          const role = document.createElement("span");
+          role.className = "activity-role";
+          role.textContent = entry.role;
+          head.appendChild(role);
+        }
+        const action = document.createElement("p");
+        action.className = "activity-action";
+        action.textContent = entry.action;
+        body.append(head, action);
+        if (entry.detail) {
+          const detail = document.createElement("p");
+          detail.className = "activity-detail";
+          detail.textContent = entry.detail;
+          body.appendChild(detail);
+        }
+        if (entry.speech) {
+          const speech = document.createElement("p");
+          speech.className = "activity-speech";
+          speech.textContent = entry.speech;
+          body.appendChild(speech);
+        }
         item.append(time, body);
         els.activityFeed.appendChild(item);
       });
@@ -498,7 +616,10 @@
       els.taskProgress.setAttribute("aria-valuenow", String(progress));
       els.taskProgressBar.style.width = String(progress) + "%";
       els.currentStepText.textContent = currentStep < plan.length
-        ? "当前步骤 " + String(currentStep + 1)
+        ? "当前步骤 "
+          + String(currentStep + 1)
+          + " · "
+          + agentName(plan[currentStep].agent_id)
         : "计划已执行完毕";
 
       plan.forEach(function (step, index) {
@@ -956,6 +1077,7 @@
 
   return {
     boot,
+    activityEntry,
     isLatestRequest,
     safeArtifactUrl,
   };

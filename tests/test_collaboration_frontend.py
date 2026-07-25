@@ -456,3 +456,101 @@ def test_collaboration_locale_keys_match_in_order():
     assert all(key in en for key in required)
     indexes = [en_keys.index(key) for key in required]
     assert indexes == sorted(indexes)
+
+
+def test_cooperation_activity_entries_attribute_each_speaker():
+    module_path = DASHBOARD / "collaboration.js"
+    script = f"""
+      const assert = require("node:assert/strict");
+      const page = require({json.dumps(str(module_path))});
+      const context = {{
+        names: {{4: "李明", 5: "陈静"}},
+        roles: {{"4": "研究员", "5": "审阅者"}},
+        leaderId: 4,
+        plan: [{{title: "整理资料", agent_id: 4}}],
+      }};
+
+      const artifact = page.activityEntry(
+        {{
+          type: "artifact",
+          agent_id: 4,
+          content: "member_4.md",
+          metadata: {{step_index: 0}},
+        }},
+        context,
+      );
+      assert.equal(artifact.speaker, "李明");
+      assert.equal(artifact.role, "研究员 · 负责人");
+      assert.equal(artifact.action, "提交了子任务产物");
+      assert.equal(artifact.detail, "步骤 1 · 整理资料 · member_4.md");
+      assert.equal(artifact.speech, "");
+
+      const review = page.activityEntry(
+        {{
+          type: "review",
+          agent_id: 5,
+          content: "第二段需要补充数据来源。",
+          metadata: {{
+            approved: false,
+            artifact: "member_4.md",
+            step_index: 0,
+          }},
+        }},
+        context,
+      );
+      assert.equal(review.speaker, "陈静");
+      assert.equal(review.role, "审阅者");
+      assert.equal(review.action, "提出了修改意见");
+      assert.equal(review.speech, "第二段需要补充数据来源。");
+
+      const approved = page.activityEntry(
+        {{type: "review", agent_id: 5, content: "可以发布。",
+          metadata: {{approved: true}}}},
+        context,
+      );
+      assert.equal(approved.action, "审阅通过");
+
+      const final = page.activityEntry(
+        {{type: "artifact", agent_id: 4, content: "final.md",
+          metadata: {{final: true}}}},
+        context,
+      );
+      assert.equal(final.action, "汇总了最终成果");
+
+      const system = page.activityEntry(
+        {{type: "started", agent_id: null, content: "合作任务开始"}},
+        context,
+      );
+      assert.equal(system.speaker, "系统");
+      assert.equal(system.role, "");
+      assert.equal(system.action, "合作任务开始");
+
+      const unknown = page.activityEntry(
+        {{type: "revision", agent_id: 9, content: "member_9.md"}},
+        context,
+      );
+      assert.equal(unknown.speaker, "居民 9");
+      assert.equal(unknown.action, "按审阅意见完成修订");
+    """
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_cooperation_activity_feed_renders_speaker_nodes():
+    source = (DASHBOARD / "collaboration.js").read_text(encoding="utf-8")
+    css = (DASHBOARD / "collaboration.css").read_text(encoding="utf-8")
+
+    assert "innerHTML" not in source
+    assert re.search(r"speaker\.textContent\s*=\s*entry\.speaker", source)
+    assert re.search(r"role\.textContent\s*=\s*entry\.role", source)
+    assert re.search(r"speech\.textContent\s*=\s*entry\.speech", source)
+    assert "activityEntry(event, context)" in source
+    assert ".activity-speaker" in css
+    assert ".activity-speech" in css

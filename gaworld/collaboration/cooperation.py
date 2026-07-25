@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from gaworld.collaboration.models import SessionEvent, SessionStatus
 from gaworld.collaboration.store import SessionStore
+
+
+_FILENAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.[A-Za-z0-9]{1,8}")
 
 
 class CooperationRunner:
@@ -47,8 +51,16 @@ class CooperationRunner:
 
     @staticmethod
     def _safe_filename(value: Any, fallback: str) -> str:
+        # Models routinely answer the `artifact` field with a sentence
+        # describing the deliverable instead of a filename. A bare
+        # `Path(x).name == x` check accepts that prose, so also require the
+        # value to look like the fallback names this runner generates.
         filename = str(value or fallback).strip()
-        return filename if filename and Path(filename).name == filename else fallback
+        if not filename or Path(filename).name != filename:
+            return fallback
+        if not _FILENAME_RE.fullmatch(filename):
+            return fallback
+        return filename
 
     def _capabilities(self, member_ids: list[int]) -> list[dict[str, Any]]:
         table = []

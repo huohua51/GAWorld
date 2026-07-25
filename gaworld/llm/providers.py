@@ -19,6 +19,36 @@ _LOG = get_logger("gaworld.llm")
 _RETRYABLE_HTTP = {408, 425, 429, 500, 502, 503, 504}
 
 
+class EmptyCompletionError(RuntimeError):
+    """Raised when a provider answers successfully but carries no text.
+
+    A blank completion is not a usable result: callers write it straight
+    into artifacts, memories, or JSON parsers, where it silently degrades
+    into empty files and bogus defaults. Surfacing it as an error lets the
+    router try the fallback chain and lets callers fail loudly instead.
+    """
+
+
+def _empty_completion(
+    provider: str,
+    *,
+    stop_reason: Any = None,
+    block_types: Any = None,
+    max_tokens: Any = None,
+) -> EmptyCompletionError:
+    detail = (
+        f"provider={provider} stop_reason={stop_reason!r} "
+        f"blocks={block_types!r} max_tokens={max_tokens!r}"
+    )
+    if stop_reason == "max_tokens":
+        return EmptyCompletionError(
+            "LLM returned no text: the max_tokens budget ran out before any "
+            f"answer was emitted ({detail}). Reasoning models spend this budget "
+            "on their thinking block first — raise max_tokens for this provider."
+        )
+    return EmptyCompletionError(f"LLM returned an empty completion ({detail}).")
+
+
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, requests.exceptions.HTTPError):
         resp = getattr(exc, "response", None)
@@ -350,7 +380,19 @@ class AnthropicProvider:
                 for block in data.get("content", []):
                     if isinstance(block, dict) and isinstance(block.get("text"), str):
                         parts.append(block["text"])
-                return "".join(parts)
+                text = "".join(parts)
+                if not text.strip():
+                    raise _empty_completion(
+                        f"anthropic:{self.model}",
+                        stop_reason=data.get("stop_reason"),
+                        block_types=[
+                            block.get("type")
+                            for block in data.get("content", [])
+                            if isinstance(block, dict)
+                        ],
+                        max_tokens=self.max_tokens,
+                    )
+                return text
             except requests.exceptions.HTTPError as exc:
                 last_response = r
                 last_exc = exc
@@ -482,6 +524,8 @@ class LLMRouter:
             started = time.perf_counter()
             try:
                 result = self.providers[provider_name].call(prompt)
+                if not str(result or "").strip():
+                    raise _empty_completion(provider_name)
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 log.debug(
                     "llm.call ok id=%s provider=%s fallback_index=%d task=%s agent=%s "

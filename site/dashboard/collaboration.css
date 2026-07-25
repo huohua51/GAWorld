@@ -640,6 +640,35 @@ select,
   overflow-wrap: anywhere;
 }
 
+.activity-speaker {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.activity-role {
+  color: #8eabb5;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.activity-detail {
+  color: #98b7c1;
+  font-size: 11px;
+}
+
+.activity-speech {
+  padding-left: 9px;
+  border-left: 2px solid rgba(255, 255, 255, 0.24);
+}
+
+.activity-event.is-speech .activity-action {
+  color: #c8dadd;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
 .artifact-count {
   color: var(--steel);
   font-size: 10px;
