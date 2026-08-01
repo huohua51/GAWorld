@@ -121,6 +121,206 @@ class TestSocialSnapshot(unittest.TestCase):
         self.assertIsNone(ds._social_snapshot(9999))
 
 
+class TestRelationshipEditing(unittest.TestCase):
+    """Studio writes back to agent_{id}_relationships.json (step 5)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._root, self._cfg = ds.REPO_ROOT, ds._effective_config
+        ds.REPO_ROOT = self.tmp
+        ds._effective_config = lambda: {"memory_dir": "output/memory"}
+        mem = os.path.join(self.tmp, "output", "memory")
+        os.makedirs(mem, exist_ok=True)
+        self.path = os.path.join(mem, "agent_9_relationships.json")
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({
+                "g_mother": {
+                    "kind": "ghost", "role": "mother", "dunbar_tier": "inner",
+                    "closeness": 0.85, "trust": 0.86, "friction": 0.24,
+                    "channels": ["call"], "profile": {"name": "母亲", "vibe": "爱唠叨"},
+                },
+                "c_wang": {
+                    "kind": "agent", "role": "coworker", "dunbar_tier": "close",
+                    "closeness": 0.6, "trust": 0.5, "profile": {"name": "同事小王"},
+                },
+            }, f, ensure_ascii=False)
+
+    def tearDown(self):
+        ds.REPO_ROOT, ds._effective_config = self._root, self._cfg
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _raw(self):
+        with open(self.path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_edit_updates_closeness_and_keeps_simulator_fields(self):
+        ds._save_agent_relationships(9, {"relations": [
+            {"id": "g_mother", "closeness": 0.42, "trust": 0.4, "tier": "close", "name": "妈妈"},
+        ]})
+        entry = self._raw()["g_mother"]
+        self.assertAlmostEqual(entry["closeness"], 0.42)
+        self.assertEqual(entry["dunbar_tier"], "close")
+        self.assertEqual(entry["profile"]["name"], "妈妈")
+        # untouched simulator-owned fields survive the edit
+        self.assertEqual(entry["friction"], 0.24)
+        self.assertEqual(entry["profile"]["vibe"], "爱唠叨")
+
+    def test_closeness_clamped(self):
+        ds._save_agent_relationships(9, {"relations": [{"id": "c_wang", "closeness": 4, "trust": -1}]})
+        entry = self._raw()["c_wang"]
+        self.assertEqual(entry["closeness"], 1.0)
+        self.assertEqual(entry["trust"], 0.0)
+
+    def test_add_without_id_gets_generated_key(self):
+        snap = ds._save_agent_relationships(9, {"relations": [
+            {"name": "新邻居", "role": "neighbor", "tier": "acquaintance", "closeness": 0.3},
+        ]})
+        self.assertEqual(snap["count"], 3)
+        entry = self._raw()["manual_1"]
+        self.assertEqual(entry["profile"]["name"], "新邻居")
+        self.assertEqual(entry["role"], "neighbor")
+        self.assertEqual(entry["tie_origin"], "manual")
+
+    def test_removed_ids_are_deleted(self):
+        snap = ds._save_agent_relationships(9, {"removed": ["c_wang"]})
+        self.assertEqual(snap["count"], 1)
+        self.assertNotIn("c_wang", self._raw())
+
+    def test_creates_file_when_absent(self):
+        ds._save_agent_relationships(11, {"relations": [{"name": "老同学", "role": "classmate"}]})
+        with open(os.path.join(self.tmp, "output", "memory", "agent_11_relationships.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["manual_1"]["profile"]["name"], "老同学")
+
+
+class TestManualMemory(unittest.TestCase):
+    """Hand-written long-term memories and RAG snippets (step 4)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._root, self._cfg = ds.REPO_ROOT, ds._effective_config
+        self._index = ds._index_memory_entry
+        ds.REPO_ROOT = self.tmp
+        ds._effective_config = lambda: {"memory_dir": "output/memory"}
+        ds._index_memory_entry = lambda *args: None  # skip the vector-DB mirror
+        self.path = os.path.join(self.tmp, "output", "memory", "agent_9.json")
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(["原有记忆"], f, ensure_ascii=False)
+
+    def tearDown(self):
+        ds.REPO_ROOT, ds._effective_config = self._root, self._cfg
+        ds._index_memory_entry = self._index
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _raw(self):
+        with open(self.path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_append_plain_memory(self):
+        result = ds._append_agent_memory(9, {"kind": "memory", "text": " 上周   搬了家 "})
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(self._raw()[-1], "上周 搬了家")
+
+    def test_rag_gets_tagged(self):
+        ds._append_agent_memory(9, {"kind": "rag", "text": "杭州地铁19号线已开通"})
+        stored = self._raw()[-1]
+        self.assertTrue(stored.startswith(ds.MANUAL_RAG_PREFIX))
+        self.assertEqual(ds._rag_snapshot(self._raw())["count"], 1)
+
+    def test_already_tagged_rag_not_double_prefixed(self):
+        ds._append_agent_memory(9, {"kind": "rag", "text": "[额外信息 | 来源:web] 已经有前缀"})
+        self.assertEqual(self._raw()[-1].count("[额外信息"), 1)
+
+    def test_rejects_blank_and_unknown_kind(self):
+        with self.assertRaises(ValueError):
+            ds._append_agent_memory(9, {"kind": "memory", "text": "   "})
+        with self.assertRaises(ValueError):
+            ds._append_agent_memory(9, {"kind": "diary", "text": "x"})
+
+    def test_creates_file_when_absent(self):
+        ds._append_agent_memory(12, {"text": "第一条记忆"})
+        with open(os.path.join(self.tmp, "output", "memory", "agent_12.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), ["第一条记忆"])
+
+
+class TestMemoryDetail(unittest.TestCase):
+    def test_splits_rag_and_flattens_habits(self):
+        detail = ds._memory_detail({
+            "memory": ["普通记忆", "[额外信息 | 来源:web] 外部知识"],
+            "habits": {
+                "morning|public|上午工作": {"preferred_action": "推进任务", "strength": 0.23, "last_updated_day": 4},
+                "night|public|散步": {"preferred_action": "沿河走", "strength": 0.51},
+            },
+            "intentions": {"priorities": ["维持日常节奏"]},
+            "schedule": [{"time": "08:00", "activity": "吃早饭"}],
+        })
+        self.assertEqual([item["rag"] for item in detail["long_term"]], [False, True])
+        # habits sorted by strength desc, key split into phase / activity
+        self.assertEqual(detail["habits"][0]["activity"], "散步")
+        self.assertEqual(detail["habits"][1]["phase"], "morning")
+        self.assertEqual(detail["intentions"]["priorities"], ["维持日常节奏"])
+        self.assertEqual(detail["schedule"], [{"time": "08:00", "activity": "吃早饭"}])
+
+    def test_tolerates_missing_and_malformed(self):
+        detail = ds._memory_detail({"memory": None, "habits": ["bad"], "intentions": [], "schedule": {}})
+        self.assertEqual(detail["long_term"], [])
+        self.assertEqual(detail["habits"], [])
+        self.assertEqual(detail["intentions"], {})
+        self.assertEqual(detail["schedule"], [])
+
+
+class TestFinanceEditing(unittest.TestCase):
+    """Studio writes back to the live economy state (step 7)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._root, self._cfg, self._snap = ds.REPO_ROOT, ds._effective_config, ds.ECONOMY_SNAPSHOT_PATH
+        ds.REPO_ROOT = self.tmp
+        ds._effective_config = lambda: {"memory_dir": "output/memory"}
+        ds.ECONOMY_SNAPSHOT_PATH = os.path.join(self.tmp, "missing.csv")
+        self.path = os.path.join(self.tmp, "output", "memory", "agent_9_economy.json")
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({
+                "currency": "CNY", "balance": 10256.18, "debt": 0.0,
+                "accounts": {"checking": 2484.57, "savings": 5521.93,
+                             "investment": 2249.68, "housing_fund": 79614.86},
+                "net_monthly_salary": 2971.84, "engel_coefficient": 0.48,
+                "savings_rate": 0.05, "monthly_budget": {"food": 1355.16},
+            }, f, ensure_ascii=False)
+
+    def tearDown(self):
+        ds.REPO_ROOT, ds._effective_config = self._root, self._cfg
+        ds.ECONOMY_SNAPSHOT_PATH = self._snap
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_reads_live_state_as_editable(self):
+        fin = ds._agent_finance(9)
+        self.assertTrue(fin["editable"])
+        self.assertEqual(fin["source"], "state")
+        self.assertEqual(fin["accounts"]["savings"], 5521.93)
+
+    def test_deposit_edit_recomputes_liquid_balance(self):
+        fin = ds._save_agent_finance(9, {"accounts": {"savings": 100000}})
+        self.assertEqual(fin["accounts"]["savings"], 100000.0)
+        # housing fund is excluded from the liquid balance
+        self.assertEqual(fin["balance"], round(2484.57 + 100000 + 2249.68, 2))
+        with open(self.path, encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual(saved["monthly_budget"], {"food": 1355.16})  # untouched keys survive
+
+    def test_rates_clamped_and_amounts_floored(self):
+        fin = ds._save_agent_finance(9, {"savings_rate": 3, "engel_coefficient": -1, "debt": -50})
+        self.assertEqual(fin["savings_rate"], 1.0)
+        self.assertEqual(fin["engel_coefficient"], 0.0)
+        self.assertEqual(fin["debt"], 0.0)
+
+    def test_refuses_when_no_live_state(self):
+        self.assertIsNone(ds._agent_finance(77))
+        with self.assertRaises(ValueError):
+            ds._save_agent_finance(77, {"accounts": {"savings": 10}})
+
+
 class TestRagSnapshot(unittest.TestCase):
     def test_filters_tagged_items(self):
         memory = ["普通记忆", "[额外信息 | 来源:web] 杭州地铁19号线已开通", {"text": "dict item"}]

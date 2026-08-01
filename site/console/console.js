@@ -10,7 +10,9 @@
     { id: "simviz", src: "/site/simviz/index.html" },
     { id: "analytics", src: "/site/dashboard/analytics.html" },
     { id: "studio", src: "/site/dashboard/studio.html" },
+    { id: "population", src: "/site/dashboard/population.html" },
     { id: "collaboration", src: "/site/dashboard/collaboration.html" },
+    { id: "external", src: "/site/dashboard/external.html" },
   ];
 
   var framesEl = document.getElementById("frames");

@@ -16,7 +16,7 @@ import json
 import os
 import re
 import shutil
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -126,6 +126,54 @@ def _minutes_to_time_str(minutes: int) -> str:
 def _build_time_grid(step_minutes: int) -> list[str]:
     step = max(1, int(step_minutes))
     return [_minutes_to_time_str(m) for m in range(0, 24 * 60, step)]
+
+
+def _snap_time_to_grid(time_str: str, step_minutes: int) -> str | None:
+    """Round a ``"HH:MM"`` string to the nearest point of a ``step_minutes`` grid.
+
+    Returns ``None`` for unparseable input so callers can drop the slot.
+    Rounding is clamped to the last grid point of the day, so a late time such
+    as ``23:50`` on a 30-minute grid snaps back to ``23:30`` rather than
+    wrapping around to ``00:00`` and breaking the day's ordering.
+
+    Exact midpoints round up (``08:15`` → ``08:30`` on a 30-minute grid).
+    ``round()`` is deliberately avoided here: its banker's rounding would send
+    ``08:15`` down and ``08:45`` up on the same grid, which is hard to reason
+    about when comparing schedules.
+    """
+    minutes = _time_str_to_minutes(time_str)
+    if minutes is None:
+        return None
+    step = max(1, int(step_minutes))
+    last_index = (24 * 60 - 1) // step
+    index = min((minutes + step // 2) // step, last_index)
+    return _minutes_to_time_str(index * step)
+
+
+def snap_schedule_to_grid(
+    schedule: Sequence[tuple[str, str]], step_minutes: int
+) -> list[tuple[str, str]]:
+    """Align a ``[(time, activity), …]`` schedule onto a fixed time grid.
+
+    Every retained slot lands on a point of ``_build_time_grid(step_minutes)``,
+    which is what keeps the master timeline O(1) in agent count instead of
+    growing with the union of every agent's LLM-authored times.
+
+    When two activities collapse onto the same grid slot the later one wins,
+    matching the "last write at this time" semantics of
+    ``apply_schedule_override`` and ``get_activity_for_time``. Slots with an
+    unparseable time are dropped.
+    """
+    if not schedule or not step_minutes:
+        return [tuple(slot) for slot in schedule]  # type: ignore[misc]
+    snapped: dict[str, str] = {}
+    for slot in schedule:
+        time_str, activity = slot[0], slot[1]
+        grid_time = _snap_time_to_grid(time_str, step_minutes)
+        if grid_time is None:
+            continue
+        snapped[grid_time] = activity
+    return sorted(snapped.items(), key=lambda item: _time_str_to_minutes(item[0]) or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +357,9 @@ __all__ = [
     "_parse_step_minutes",
     "_resolve_day_context",
     "_sanitize_extra_text",
+    "_snap_time_to_grid",
     "_stable_json_marker",
     "_time_str_to_minutes",
     "_weekday_to_index",
+    "snap_schedule_to_grid",
 ]

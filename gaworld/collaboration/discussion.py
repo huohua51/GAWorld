@@ -4,6 +4,8 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from gaworld.collaboration._parsing import extract_json
+from gaworld.collaboration._persona import persona
 from gaworld.collaboration.models import SessionStatus
 from gaworld.collaboration.store import SessionStore
 
@@ -44,17 +46,14 @@ class DiscussionRunner:
 
     @staticmethod
     def _response(raw: str) -> tuple[str, bool]:
-        try:
-            payload = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            text = raw.strip()
-            return (text or _FALLBACK_MESSAGE), False
-        if isinstance(payload, dict):
+        payload = extract_json(raw)
+        if payload:
             content = str(payload.get("content") or "").strip()
-            converged = bool(payload.get("converged", False))
             if content:
-                return content, converged
-        return _FALLBACK_MESSAGE, False
+                return content, bool(payload.get("converged", False))
+            return _FALLBACK_MESSAGE, False
+        text = str(raw or "").strip()
+        return (text or _FALLBACK_MESSAGE), False
 
     def _prompt(self, session_id: str, speaker_id: int) -> str:
         session = self.store.get(session_id)
@@ -68,15 +67,12 @@ class DiscussionRunner:
             if event.type == "message"
         ][-self.max_context_events :]
         context = {
-            "speaker": {
-                "identity": detail.get("identity", detail),
-                "profile_text": detail.get("profile_text", ""),
-                "capabilities": detail.get("capabilities", {}),
-            },
+            "speaker": persona(detail),
             "topic": session.topic or "自由选择一个成员们自然感兴趣的话题",
             "recent_messages": recent,
             "instruction": (
-                "以该居民自身视角自然回应。输出 JSON，字段 content 为本轮发言，"
+                "以该居民自身视角自然回应，让职业背景与专长成为你切入话题的角度，"
+                "说自己真正懂的部分。输出 JSON，字段 content 为本轮发言，"
                 "converged 表示讨论是否已形成足够明确的结论。"
             ),
         }

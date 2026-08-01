@@ -4,6 +4,394 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-08-01 — External Systems: watch the world itself, and edit it
+
+### Added
+
+- **A console tab for the systems that are not agents.** `site/dashboard/external.html` — three
+  panels, each pairing observation with editing: **货币系统** (cycle phase, inflation, unemployment,
+  the firms/government/bank pools, the daily conservation audit, wealth distribution and Gini),
+  **外部环境** (the generated natural/economic/political/technology timeline with severity and impact
+  tags), and **对外服务** (the environment service, the distributed relay, the news source and LLM
+  routing, with a live health probe). Until now each was readable only by opening a CSV under
+  `output/` and editable only by hand-patching `dashboard_config.json`.
+- **Config forms generated from the config itself.** The `economy` subtree alone has ~120 leaves; a
+  hand-written form for each would be longer than the module and would rot the day a knob is added.
+  The panel renders controls from the JSON shape and `external_systems_api._coerce_like` casts an
+  incoming patch against the type already in the effective config, dropping unknown keys and
+  reporting them. ~150 knobs are editable with no per-field backend code.
+- **`gaworld/apps/external_systems_api.py`** — `GET /api/external-systems/{overview,health,
+  interventions}` and `POST /api/external-systems/{config,interventions,interventions/cancel}`,
+  delegated from `dashboard_server` in six lines, following the `population_api` precedent.
+- **Mid-run monetary intervention that actually lands.** `output/economy/macro_state.json` is an
+  *output* — the simulator rebuilds macro state from config at `on_simulation_start` and never reads
+  it back, so editing it would look like it worked and change nothing. Instead the panel queues into
+  `output/economy/interventions.json` and `gaworld.economy.finance` consumes it at each day boundary,
+  applied *after* the cycle advance so an operator-set figure is the one that day uses. Sector
+  injections move `initial_system_total` by the same amount, so the daily conservation audit reports
+  a deliberate injection as an injection rather than as money leaking.
+- **`site/dashboard/external.test.js`** (28 checks, driven from `tests/test_dashboard_external_systems.py`)
+  — the Python tests cover the endpoints but cannot see the panel; a typo'd id or a crashed renderer
+  would leave every backend test green and the page blank. It also pins that LLM-authored event text
+  is escaped before it reaches `innerHTML`.
+
+### Fixed
+
+- **One non-finite float no longer blanks the whole panel.** The top tax bracket is `float("inf")`;
+  `json.dumps` emits a bare `Infinity` token and the browser's `JSON.parse` rejects the *entire*
+  body, so a healthy backend rendered "无法加载". The API now sends it as the string `"Infinity"`,
+  which stays visible, stays editable, and round-trips losslessly.
+
+---
+
+## [Unreleased] — 2026-07-31 — Replay any recorded run, not just the latest
+
+### Added
+
+- **The replay page lists every run on disk.** `/site/simviz/index.html` used to read one hard-coded
+  path, so it could only ever show the run that happened to be writing at that moment. A run picker
+  now groups the live trace, the per-run archives and the traces that `compare-event` scenarios leave
+  in their own output trees; picking one loads it and the URL carries `?run=<id>` so a run is
+  shareable. Only the live run polls and opens on its newest frame — a recorded run is fetched once
+  and opens at frame 1, ready to play.
+- **`site/simviz/replay.test.js`** (`node --test`, driven from `tests/test_replay_runs.py`) — the
+  Python tests can only prove the run list is *served*. Loading the right trace, not polling a
+  recorded one, opening at its first frame and handing the renderer a bounded window all live in the
+  page and are invisible to every backend test.
+- **Each run keeps its own trace.** `SimulationVisualizer` copies every flush into
+  `<visualization>/runs/<run_id>/simulation_trace.json` (at most once every 15s, plus on finalize),
+  so the next run no longer buries the previous one and a long run killed halfway is still replayable
+  up to its last flush. The live `simulation_trace.json` path is unchanged, so the dashboard, the
+  analytics readers and the existing tooling keep reading what they always read.
+- **`GET /api/replay/runs`** — served by the dashboard and, so the standalone `serve-viz` page is not
+  crippled, by that server too. Listing reads only the head of each trace: `meta` is the first key
+  written, and parsing a hundred multi-megabyte traces in full would stall the endpoint (104 runs
+  list in ~0.08s here).
+
+### Fixed
+
+- **Long runs no longer re-slice their whole trace on every rendered frame.** The map renderer only
+  draws trails for its last 96 frames, so the replay page now passes that window instead of
+  `frames[0..current]` — replaying a run with tens of thousands of frames is O(1) per frame again.
+
+---
+
+## [Unreleased] — 2026-07-31 — Population Studio: readable output (Phase 4c)
+
+All of this is panel-side. The gate, the synthesiser and the cohort kernel are unchanged.
+
+### Added
+
+- **Written files are openable from the page.** `POST /generate` now returns, per file, a label, a
+  one-line description of what it is, its size, a repo-relative URL and an inline preview instead of
+  a bare absolute path. The dashboard already serves `REPO_ROOT` statically, so the URL is directly
+  clickable; files written outside the repo are still listed but carry no link, because a link that
+  404s is worse than none. The absolute path stays visible — that is what gets pasted into
+  `CONFIG["csv_path"]`, and it must not depend on the working directory.
+- **A verdict a non-specialist can act on.** Step 5 now leads with a one-line conclusion and a
+  can-use / cannot-use checklist derived from which layers passed, because the question a reader has
+  is "what may I conclude from this run?", not "what is the z-score". Each layer states the question
+  it answers, quotes its numbers in context (including where the tolerance came from), and L2
+  additionally says *which side* it missed on — under- and over-propagation are opposite defects
+  that look identical in a z-score. The full CLI-style output stays behind a disclosure.
+- **Bilingual metric labels.** All metrics render as `压力 stress`, with the labels served from
+  `GET /api/population/schema`. The panel previously kept its own Chinese map alongside raw English
+  identifiers, so the same quantity appeared under two different names in different cards.
+- **`site/dashboard/population-verdict.test.js`** — drives the step-5 renderer with a verbatim
+  validator payload. The plain-language copy reads a dozen nested fields (`by_key`,
+  `heterogeneity_retained_ratio`, `discriminating_keys`, …); renaming one in Python would leave every
+  Python test green while the panel throws and the card renders blank.
+
+### Fixed
+
+- **A `NaN` in the verdict made the browser discard the entire response.** L2 reports a ratio of two
+  Moran's I values that is `NaN` whenever the reference signal sits under the noise floor. Python's
+  `json.dumps` writes a bare `NaN` token, which is not valid JSON — `JSON.parse` rejects the whole
+  document, so one field blanked the whole result. `job_status()` now maps non-finite floats to
+  `null` via `parse_constant`.
+
+## [Unreleased] — 2026-07-29 — Population Studio dashboard panel (Phase 4b)
+
+Group mode is now drivable from the dashboard. Follows the delegate-module plan from
+`docs/GROUP_AGENT_DESIGN.md` §6.3: `dashboard_server.py` gains **12 lines** of prefix forwarding and
+nothing else.
+
+### Added
+
+- **`gaworld/apps/population_api.py`** — the panel's backend. Endpoints under `/api/population/*`:
+  `GET /schema`, `POST /preview`, `POST /generate`, `GET /jobs/{id}`, `POST /group-run`,
+  `POST /validate`. Generation and simulation are async jobs (worker + poll), matching the existing
+  `RUN_STATE` precedent rather than inventing a third convention — 500 residents takes seconds and
+  an inline handler would hang the browser.
+  - The **schema is served, not duplicated in JavaScript**. The nine state variables are already
+    declared twice in this repo (`dashboard_server.py` and `studio.js`) and hand-synced; tests
+    assert the endpoint stays equal to `population/schema.py` and `group/cohort.py` so the
+    population knobs never become a third copy.
+  - Path constants are read from `dashboard_server` at *call* time, because the existing dashboard
+    tests monkeypatch `ds.STATE_CSV_PATH` and a module-level `from … import` would capture the real
+    path first and write into the user's `data/` during a test run.
+- **`site/dashboard/population.{html,js,css}`** — five steps: 群体定义 → 人口结构 → 状态分布 →
+  群体模拟 → 验证与复核. Charts are hand-written SVG (age pyramid, Lorenz curve, degree histogram,
+  and a state radar with a P25–P75 envelope — a bare mean polygon would misreport a cohort in
+  exactly the way the tier is designed to avoid). No build step, no CDN dependency, so the dashboard
+  stays usable offline.
+  - The **validation verdict is in the panel**, not just the CLI. Seeing "25× cheaper" without
+    seeing whether L2 passed invites treating group mode as a free lunch.
+  - Coupling at 0 renders an explicit warning that the run only supports distribution- and
+    policy-level questions.
+- **`site/dashboard/population.test.js`** — node headless render smoke test (10 checks), following
+  the existing `collaboration-core.test.js` convention. The Python tests cover the endpoints but
+  cannot see the panel; a typo'd element id would leave them all green and the UI blank.
+- **`tests/test_dashboard_population.py`** — 28 tests, including ones that start the real
+  `ThreadingHTTPServer` and drive `DashboardHandler`. The existing dashboard tests call helpers
+  directly and never route, so a broken if/elif branch would otherwise go unnoticed.
+- Console tab registration in `site/console/console.js` + `index.html`, with a test asserting both
+  were updated — adding one without the other yields a dead tab.
+
+### Fixed
+
+- `out_dir` was validated *inside* the background job, so an out-of-repo path returned 202 and only
+  failed on poll. Now resolved and checked during the request (400 on rejection). The dashboard
+  serves `REPO_ROOT` statically and takes this value from the browser, so an unchecked path is an
+  arbitrary-write hole.
+
+### Not verified
+
+The panel has not been clicked through in a real browser — the dashboard server runs in the sandbox
+while the browser tooling runs on the host, with no route between them. Rendering, element wiring
+and schema-driven UI are covered headlessly; the interactive paths (generate → progress → validate)
+need a local `python -m gaworld.apps.dashboard_server` and a human.
+
+## [Unreleased] — 2026-07-29 — Cohort network coupling (Phase 4a) — **gate now passes all four layers**
+
+Fixes the Phase 3 L2 failure at its root: the cohort tier now has a real network mechanism instead
+of a uniform within-cohort shift.
+
+### Added
+
+- **`gaworld.group.cohort.NetworkCoupling`** — on top of the uniform cohort shift, each member gets
+  a graph term equal to `weight × (mean of their neighbours' moves yesterday − the cohort's own mean
+  of that quantity)`. Subtracting the cohort mean is the load-bearing part: the term is **mean-zero
+  within the cohort**, so ownership splits cleanly — the cohort layer keeps the aggregate it
+  predicted, the social graph gets the within-cohort structure. Adding a raw neighbour term instead
+  would let the graph silently override the cohort's prediction, i.e. gamble the already-passing L1
+  and L4 to fix L2. Costs **zero extra LLM calls**.
+- `GroupRunConfig.network_coupling` (default **0.0**, reproducing the previous behaviour bit for
+  bit) and `run_group_simulation(..., neighbours=...)`. A positive coupling with no graph raises
+  rather than silently degrading — it would otherwise look configured while doing nothing.
+- `--network-coupling` on `python -m gaworld.group.validate`.
+
+### Measured
+
+N=100, 14 days, budget 20, 3 seeds. Worst L2 z-score by coupling strength:
+0.0 → 3.87 (fail), 0.5 → 2.26 (fail), **0.7 → 0.88 (pass)**, 0.9 → 4.14 (fail, over-propagating).
+
+At 0.7 **all four layers pass**, stable across three independent seed sets (z = 0.88 / 1.61 / 1.60),
+and the previously-passing layers were not traded away — L4's ATE relative error *improved* from
+3.8% to 2.0% and subgroup heterogeneity retention from 0.77 to 1.13.
+
+0.7 is calibrated against this reference process (contagion weight 0.6) and is **not a universal
+constant**; it needs re-calibrating against a real LLM-driven individual tier.
+
+### Fixed — two methodology bugs in the gate itself
+
+These matter more than the coupling term:
+
+- **Single-seed verdicts were noise.** For one fixed configuration the L2 ratio ranged from 0.32 to
+  2.66 across seeds, and `coupling=0.8` passed 1 of 5 seed sets. The first reading of "0.8 fixes L2"
+  was a lucky draw. All four layers now aggregate across seeds (default 3). With averaging the
+  coupling sweep becomes monotonic in |deviation| — the dose-response relationship was real all
+  along and single-seed noise was hiding it.
+- **L2's ratio band `[0.5, 2.0]` was exactly the arbitrary constant this module's own docstring
+  criticises**, and at N=100 the ratio estimator's noise is comparable to the band width, so the
+  verdict flipped with the seed set. L2 now uses the same baseline-relative logic as L1:
+  `|group_I − reference_I| ≤ 2 × the reference tier's own cross-seed SD`. The tolerance widens
+  exactly when the quantity is hard to measure. The ratio is still reported, as a readable
+  diagnostic rather than the decision rule.
+
+## [Unreleased] — 2026-07-29 — Group mode validation gate (Phase 3) — **L2 not passed (fixed in Phase 4a, above)**
+
+The go/no-go gate from `docs/GROUP_AGENT_DESIGN.md` §5, and its verdict. Group mode is validated
+for distribution-level and policy-effect questions and **structurally unusable for anything
+network-mediated**. The `CONFIG["simulation_mode"]` switch stays unwired.
+
+### Added
+
+- **`gaworld/group/metrics.py`** — hand-rolled comparison metrics (no scipy): Wasserstein-1, KS,
+  Moran's I, tail shares, first-passage timing, paired ATE, subgroup effect heterogeneity and sign
+  agreement. Each is chosen for what its layer actually claims: L1 uses distributional distance
+  because comparing means would pass an approximation that collapsed the distribution to a point at
+  the right centre; L2 uses Moran's I rather than degree/clustering because those are properties of
+  the *static* graph and identical in both tiers by construction.
+- **`gaworld/group/validate.py`** — the L1–L4 gate. Thresholds are relative to a measured baseline
+  (the reference tier run against *itself* across seeds) rather than absolute constants, because an
+  absolute threshold on a quantity whose natural scale has not been measured is a guess wearing a
+  number. The cohort delta is an **oracle** (the true within-cohort mean of what the reference
+  process would do), so a failing layer indicts aggregation itself rather than prompt quality.
+  `python -m gaworld.group.validate` exits 1 when a dividing line fails, so it can gate CI.
+- **`tests/test_group_validate.py`** — 40 tests, mostly negative controls: each constructs a
+  candidate broken in a known way and asserts the matching layer catches it. A gate that only ever
+  passes is indistinguishable from no gate.
+
+### Measured — the verdict
+
+N=100, 14 days, materialisation budget 20:
+
+| layer | verdict | key numbers |
+|---|---|---|
+| L1 distributional | pass | W1 = 0.021–0.030 across four variables, all inside 2× the reference's own cross-seed noise |
+| **L2 network** | **fail** | reference Moran's I = +0.054…+0.104, group = **−0.017…−0.027**, ratio −0.26…−0.31 |
+| L3 tails | pass | interdecile spread ratio 0.80–1.02; tail-share deviation < 0.10 |
+| L4 causal response | pass | ATE −0.392 vs −0.407, same sign, 3.8% magnitude error; heterogeneity 77% retained, subgroup sign agreement 100% |
+
+L2's failure is structural, not a tuning problem. Sweeping the materialisation budget:
+0 → −0.56, 20 → −0.31, 50 → 0.41, 80 → 0.92, 100 → 0.84. L2 only passes once **>80% of the
+population is materialised**, which is essentially full individual mode with the cohort layer's cost
+advantage gone. The cause is direct: a cohort delta is a *uniform shift within the cohort*, and the
+cohort partition is not the social graph, so neighbour-mediated co-movement is inexpressible at the
+group tier — the group tier even produces slight negative graph autocorrelation.
+
+### Fixed
+
+- The gate's reference process used mean-reversion toward the neighbourhood level
+  (`peer_mean − own_value`) as its "social influence". That makes neighbouring *changes*
+  anti-correlated, pinning Moran's I near zero, so L2 was dividing two near-zero numbers and
+  reporting ratios like −75.91 — a confident-looking figure made entirely of noise. Replaced with
+  contagion on changes (today's move is partly the mean of neighbours' moves yesterday), which is
+  what real social influence does and gives L2 a signal to detect.
+- Added an `inconclusive` layer status plus a Moran's I noise floor. An inconclusive dividing-line
+  layer does **not** count as a pass: "the approximation broke this" and "this experiment cannot
+  tell" are different findings, and collapsing them is how a validation suite starts producing
+  confident nonsense.
+
+## [Unreleased] — 2026-07-29 — Group agent cohort tier (Phase 2)
+
+The coarse simulation tier. **`generative_city_sim.py` is untouched**: group mode is a parallel
+driver, not a modification of the tick loop, so individual runs are bit-identical by construction.
+The `CONFIG["simulation_mode"]` switch is deliberately *not* wired yet — putting an unvalidated
+approximation on the default path before the Phase 3 L0/L2/L4 gate would be backwards. Suite
+failure set identical to `HEAD`.
+
+### Added
+
+- **`gaworld/group/`** — cohort ("group agent") simulation. 58 tests, all LLM calls mocked.
+  - `cohort.py` — a cohort carries both `centroid` **and** `dispersion`. Keeping only the mean is
+    the representative-agent error Kirman (1992) describes, so cohort prompts report spread
+    ("约34%低于0.4") rather than a bare average, and a cohort delta is applied as a *common shift*
+    to every member — which moves the group mean while leaving within-group spread intact.
+    Partition defaults to `(age band × industry × hukou)`, giving ~38 cohorts for 500 residents;
+    sub-minimum cells are merged into their nearest neighbour rather than dropped.
+  - `cohort_day.py` — one LLM call per cohort per day, structurally the same shape as
+    `simulate_agent_day`. Prompt explicitly frames the group as heterogeneous and asks for a
+    `divergence` field naming the sub-group whose day differed; `share_affected` scales the
+    per-person effect down to a group-mean shift. Uses all nine state variables, unlike the
+    individual fast-forward's seven — freezing `voice_propensity` would leave the tier unable to
+    represent the polarisation it exists to study.
+  - `materialize.py` — per-day selection of individuals to run at full fidelity: focal (named by
+    the researcher, never dropped), event, tail (diagonal-Mahalanobis distance in the cohort's own
+    dispersion metric, so "far from the mean" is measured relative to how spread out the group
+    already is), and a stratified **audit** sample held out to measure error rather than reduce it.
+  - `driver.py` — the day loop, plus a cost accounting that reports measured group calls against
+    the full-individual counterfactual.
+  - `plugin.py` — `GroupPlugin`, observational: publishes cohort structure and daily drift to the
+    recorder without altering agent behaviour, so it is safe to enable inside an individual run.
+  - `__main__.py` — `python -m gaworld.group --size 500 --days 7 --no-llm`.
+
+### Measured
+
+500 residents × 30 days, mock LLM, calls counted (full-individual baseline 500 × 30 × 198 =
+2,970,000):
+
+| materialisation budget | cohort calls | individual calls | total | vs full-individual |
+|---|---|---|---|---|
+| 0 | 1,140 | 0 | 1,140 | 2605× cheaper |
+| 10 | 1,140 | 59,400 | 60,540 | 49× |
+| 20 | 1,140 | 118,800 | 119,940 | 25× |
+| 50 | 1,140 | 297,000 | 298,140 | 10× |
+
+The design doc predicted ~25× at a budget of 20; measured 25×. The more useful finding is the
+shape: the cohort tier is nearly free, so **total cost is set almost entirely by the
+materialisation budget**, not by cohort granularity. This answers design-doc open question 4 and
+redirects Phase 3 to measure "how much materialisation is needed to pass L2/L4" rather than "how
+fine should cohorts be".
+
+### Fixed
+
+- The audit residual was reporting 0.9–1.3 on a run in which *nothing changed*. It compared the
+  audit sample's state *level* against the cohort centroid, so it measured the sampling gap
+  between a few members and their group mean — large, non-zero even for a null run, and unrelated
+  to approximation quality. Redefined on changes (`mean(after − before) − predicted delta`), which
+  is exactly zero for a null run and invariant to which members were sampled. Both properties are
+  now tested.
+
+## [Unreleased] — 2026-07-29 — Group agent design + parameterised population synthesis (Phase 0 & 1)
+
+Groundwork for group-level simulation ("a 500-person town"). Design doc and phased plan:
+`docs/GROUP_AGENT_DESIGN.md`. This lands Phase 0 (timeline cost fix) and Phase 1 (population
+generator); the cohort kernel and the dashboard panel are still to come.
+
+No regressions, verified the reliable way: an otherwise-identical copy of the working tree with
+only these changes reverted produces a **byte-identical failure set** (12 pre-existing failures —
+2 in `test_daily_routine_context.py`, 10 across memory/pipeline/routine/skills). Comparing against
+a `git archive HEAD` copy is *not* reliable here: it omits uncommitted modules such as
+`gaworld/env`, so the suite fails collection and silently reports zero failures. Test outcomes here
+also depend on `.env` and on whether a simulation is running concurrently, so both sides of any
+comparison must share them.
+
+### Added
+
+- **`gaworld/population/`** — parameterised synthetic-population generator. Turns panel-level
+  knobs (size, age pyramid, employment rate, income Gini, household structure, social-graph
+  shape) into a state CSV and profile Markdown in exactly the formats `build_agent` already
+  reads, so **no simulator code changes are needed to run a generated town**. Verified
+  end-to-end: 500/500 generated agents load through `build_agent` with valid map locations.
+  - `schema.py` — the single definition of the population contract (`PopulationSpec`,
+    `normalize_spec`, 5 presets). `check_feasibility` is a pure-maths precheck the panel can run
+    on every keystroke: it catches contradictory knob combinations *before* generating anyone
+    (unreachable median age, two-sided household-size bounds, labour force over 100%, multigen
+    households exceeding the elder supply) and reports which knob to move.
+  - `synth.py` — IPF fit of an `age × sex × education × employment × industry` table onto the
+    requested marginals, with structural zeros for impossible cells. Uses a joint
+    `(age, employment)` marginal so the working-age employment rate cannot be satisfied by
+    employing pensioners, largest-remainder integerisation so marginals land exactly rather than
+    within ±√N, and a rank-transform for income so the requested median and Gini hold while
+    income still correlates with education, industry and age. Every draw comes from a named
+    seed sub-stream, so nudging the network sliders does not re-roll everyone's age.
+  - `network.py` — households (child-first, so the age pyramid cannot starve family formation),
+    power-law workplaces, and a homophily × geography social graph with Watts–Strogatz rewiring.
+    Ties are emitted in the existing `ensure_relationship_schema` shape and passed through
+    `enforce_dunbar`. Small-worldness is reported relative to a matched random graph rather than
+    as absolute thresholds.
+  - `report.py` — hard validation gate (underage workers, out-of-range states, unparseable
+    residences, household coverage) plus a target-vs-achieved report for every knob and the
+    review charts (age pyramid, Lorenz curve, degree distribution, state distributions).
+  - `writer.py` / `generate.py` / `__main__.py` — serialisation (BOM-carrying CSV,
+    `parse_profile`-compatible Markdown, reproducibility manifest) and a CLI:
+    `python -m gaworld.population --size 500 --preset cn_county_town --out data/town`.
+    `--check` previews a spec without writing.
+- **`CONFIG["time_grid_snap"]`** (default **off**) — aligns every agent's daily schedule onto the
+  `time_step_minutes` grid via `snap_schedule_to_grid` (`gaworld/sim/_utils.py`). Setting
+  `time_step_minutes` alone does **not** bound the tick count: `build_master_timeline` unions the
+  grid with every agent's LLM-authored `HH:MM` times, which have no alignment logic, so tick count
+  — and therefore total LLM cost — grows super-linearly with the agent count. Snapping pins it at
+  `1440 / step` regardless of population size. Off by default because it changes intra-day timing;
+  existing runs stay bit-comparable until opted in.
+- **`tests/test_time_grid_snap.py`** (20 tests) — helper semantics (midpoint rounding, late-time
+  clamping instead of midnight wraparound, idempotence) plus the acceptance property: with
+  snapping, tick count is constant at N=5/20/50/100; without it, it grows with the population.
+- **`tests/test_population.py`** (52 tests) — marginal accuracy against every knob, reproducibility
+  (byte-identical output for the same seed; network knobs do not perturb demographics), structural
+  validity, social-graph properties, and a round-trip test proving generated job titles classify
+  correctly through the economy module's `JOB_INDUSTRY_MAP`.
+
+### Fixed
+
+- Generated job titles are now a checked contract with `gaworld/economy/finance.py`. The economy
+  matches job text by substring in a fixed industry order, so plausible titles could land in the
+  wrong industry — "跨境电商运营" matched `运营` under *service* before `电商` under *trade*, and
+  "菜市场摊主" matched nothing at all. Nothing crashed; the agents just silently got the wrong macro
+  conditions and wage band. Titles were reworded and a test now pins the round trip.
+
 ## [Unreleased] — 2026-07-11 — Microkernel plugin architecture (K1 + K2-lite)
 
 Society-centric microkernel inspired by Agent-Kernel (arXiv:2512.01610). Design doc: `docs/proposals/2026-07-11-microkernel-plugin-architecture.md`; author guide: `docs/PLUGIN_AUTHORING.md`. Behavior-preserving: full suite 551 passed / 6 pre-existing failures, identical to baseline.

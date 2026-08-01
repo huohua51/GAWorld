@@ -22,9 +22,9 @@ replacing the field definitions; the public surface stays the same.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
-
+from typing import Any
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -128,6 +128,7 @@ class SimulationConfig:
     seconds_per_day: int
     simulate_realtime: bool
     time_step_minutes: int | None
+    time_grid_snap: bool
     stateful: bool
     print_agent_profile: bool
     background: str
@@ -218,6 +219,7 @@ def from_legacy(raw: Mapping[str, Any]) -> SimulationConfig:
         seconds_per_day=_safe_int(raw.get("seconds_per_day", 10), 10),
         simulate_realtime=_safe_bool(raw.get("simulate_realtime", False)),
         time_step_minutes=_parse_step_minutes(raw.get("time_step_minutes")),
+        time_grid_snap=_safe_bool(raw.get("time_grid_snap", False)),
         stateful=_safe_bool(raw.get("stateful", True), True),
         print_agent_profile=_safe_bool(raw.get("print_agent_profile", False)),
         background=str(raw.get("background", "")),

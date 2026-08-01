@@ -12,6 +12,53 @@ def _agent(agent_id):
     return {"identity": {"id": agent_id}}
 
 
+def test_discussion_reads_fenced_reply_content_and_convergence(tmp_path):
+    """A ```json-fenced turn must yield its content, not the raw fence.
+
+    Otherwise the fence text becomes the resident's spoken line and the
+    `converged` signal is lost, so the discussion runs to max_rounds.
+    """
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_discussion_summary":
+            return "已达成一致。"
+        return (
+            '```json\n{"content": "居民' + str(agent_id) + '的观点", '
+            '"converged": true}\n```'
+        )
+
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="discussion",
+        member_ids=[2, 1],
+        topic="公共空间",
+        max_rounds=6,
+    )
+    store.create(session)
+    DiscussionRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    messages = [event for event in store.events(session.id) if event.type == "message"]
+    assert [event.content for event in messages] == ["居民2的观点", "居民1的观点"]
+    assert messages[-1].metadata["converged"] is True
+    assert store.get(session.id).status is SessionStatus.COMPLETED
+
+
+def test_discussion_keeps_plain_prose_reply_as_the_spoken_line(tmp_path):
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_discussion_summary":
+            return "讨论结束。"
+        return "我觉得广场需要更多遮阴。"
+
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="discussion", member_ids=[1, 2], topic="广场", max_rounds=3
+    )
+    store.create(session)
+    DiscussionRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    messages = [event for event in store.events(session.id) if event.type == "message"]
+    assert messages[0].content == "我觉得广场需要更多遮阴。"
+
+
 def test_discussion_runs_round_robin_and_writes_summary(tmp_path):
     calls = []
 
@@ -515,3 +562,41 @@ def test_completed_snapshot_failure_reuses_completed_marker_on_resume(tmp_path, 
     assert restored.error == ""
     assert len([event for event in store.events(session.id) if event.type == "completed"]) == 1
     assert not (restored.status is SessionStatus.COMPLETED and restored.error)
+
+
+def test_discussion_speaker_block_carries_private_skills_and_expertise(tmp_path):
+    """The speaker block shipped capabilities but not what the resident trained.
+
+    Private skills and growth levels are where an economics teacher's edge
+    actually lives, so leaving them out flattens every speaker.
+    """
+    def loader(agent_id):
+        return {
+            "identity": {"id": agent_id, "name": f"居民{agent_id}"},
+            "capabilities": {"job_label": "teacher", "skills": ["经济学分析"]},
+            "private_skills": [{"file": "a.md", "title": "课堂案例设计"}],
+            "growth": {"items": [{"name": "计量经济学", "level": 0.8}]},
+        }
+
+    prompts = []
+
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_discussion_summary":
+            return "已达成一致。"
+        prompts.append(json.loads(prompt))
+        return json.dumps({"content": "观点", "converged": True}, ensure_ascii=False)
+
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="discussion",
+        member_ids=[1, 2],
+        topic="租金压力",
+        max_rounds=4,
+    )
+    store.create(session)
+    DiscussionRunner(store=store, agent_loader=loader, llm=llm).run(session.id)
+
+    speaker = prompts[0]["speaker"]
+    assert speaker["job_label"] == "teacher"
+    assert speaker["skills"] == ["经济学分析", "课堂案例设计"]
+    assert speaker["expertise"] == [{"name": "计量经济学", "level": 0.8}]

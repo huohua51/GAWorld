@@ -9,6 +9,7 @@ dashboard renders before a simulation has ever been run.
 import json
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -304,6 +305,31 @@ class AnalyticsFrontendTest(unittest.TestCase):
         self.assertIn("function esc(text)", script)
         for label in ("item.label", "node.label", "event.name", "habit.activity"):
             self.assertIn("esc(" + label, script)
+
+    def test_export_menu_offers_every_format(self):
+        html = (DASHBOARD / "analytics.html").read_text(encoding="utf-8")
+        script = (DASHBOARD / "analytics.js").read_text(encoding="utf-8")
+        self.assertIn("analytics-export.js", html)
+        # The loader has to run before analytics.js reads the global off window.
+        self.assertLess(
+            html.index("analytics-export.js"), html.index('src="/site/dashboard/analytics.js')
+        )
+        for kind in ("html", "json", "csv", "md"):
+            self.assertIn(f'data-export="{kind}"', html)
+        self.assertIn("window.GAWorldAnalyticsExport", script)
+        # The report snapshots the live DOM, so the interactive chrome has to
+        # be stripped or the exported file ships dead buttons.
+        self.assertIn(".hero-status, .an-pickers, .help-tip, .an-export", script)
+
+    def test_export_builders_node_suite(self):
+        result = subprocess.run(
+            ["node", "--test", str(DASHBOARD / "analytics-export.test.js")],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_console_registers_the_analytics_tab(self):
         console_js = (CONSOLE / "console.js").read_text(encoding="utf-8")

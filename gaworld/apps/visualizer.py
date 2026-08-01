@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from datetime import UTC, datetime
 
@@ -15,8 +16,26 @@ from gaworld.io.avatar import ensure_agent_avatar
 from gaworld.world.city_map import TERRAIN_LEGEND, project_to_tile
 
 
+# Every run keeps its own copy of the trace under ``<output_dir>/runs/<run_id>``
+# so the replay page can still open runs that later runs have overwritten. The
+# copy lags the live trace by at most this many seconds — long enough that the
+# extra I/O stays negligible next to the trace flush itself, short enough that a
+# killed long run is still replayable.
+ARCHIVE_INTERVAL_SECONDS = 15.0
+
+
 def _utc_timestamp():
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _new_run_id(runs_dir):
+    """A sortable, collision-free directory name for this run."""
+    base = datetime.now().strftime("%Y%m%d-%H%M%S")
+    candidate, suffix = base, 2
+    while os.path.exists(os.path.join(runs_dir, candidate)):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
 
 
 def _atomic_write_json(path, payload):
@@ -85,6 +104,10 @@ class SimulationVisualizer:
         self.latest_frame_path = os.path.join(output_dir, "latest_frame.json")
         self.avatar_dir = os.path.join(output_dir, "avatars")
         self.flush_every_frames = max(0, int(flush_every_frames or 0))
+        self.runs_dir = os.path.join(output_dir, "runs")
+        self.run_id = _new_run_id(self.runs_dir)
+        self.archive_path = os.path.join(self.runs_dir, self.run_id, "simulation_trace.json")
+        self._last_archive = 0.0
         layout = build_map_layout(city_map)
         trace_agents = []
         self.agent_avatar_map = {}
@@ -109,6 +132,7 @@ class SimulationVisualizer:
                 "last_updated": _utc_timestamp(),
                 "finished": False,
                 "frame_count": 0,
+                "run_id": self.run_id,
                 "sim_meta": sim_meta or {},
             },
             "map": layout,
@@ -116,6 +140,7 @@ class SimulationVisualizer:
             "frames": [],
         }
         self._write_trace()
+        self._archive_trace(force=True)   # list the run before it has any frames
         self._write_latest_frame()
 
     def _refresh_meta(self):
@@ -126,6 +151,22 @@ class SimulationVisualizer:
         self._refresh_meta()
         _atomic_write_json(self.trace_path, self.trace)
         self._last_trace_flush = time.monotonic()
+        self._archive_trace()
+
+    def _archive_trace(self, force=False):
+        """Copy the flushed trace into this run's archive directory."""
+        now = time.monotonic()
+        if not force and now - self._last_archive < ARCHIVE_INTERVAL_SECONDS:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.archive_path), exist_ok=True)
+            tmp_path = self.archive_path + ".tmp"
+            shutil.copyfile(self.trace_path, tmp_path)
+            os.replace(tmp_path, self.archive_path)
+            self._last_archive = now
+        except OSError:
+            # Archiving is best-effort: a full disk must not kill the run.
+            pass
 
     def _write_latest_frame(self):
         self._refresh_meta()
@@ -163,6 +204,7 @@ class SimulationVisualizer:
     def finalize(self):
         self.trace["meta"]["finished"] = True
         self._write_trace()
+        self._archive_trace(force=True)
         self._write_latest_frame()
 
 

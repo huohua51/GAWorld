@@ -6,6 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from gaworld.collaboration._parsing import extract_json
+from gaworld.collaboration._persona import expertise_terms, match_score, persona
 from gaworld.collaboration.models import SessionEvent, SessionStatus
 from gaworld.collaboration.store import SessionStore
 
@@ -43,11 +45,7 @@ class CooperationRunner:
 
     @staticmethod
     def _json(raw: str) -> dict[str, Any]:
-        try:
-            payload = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return {}
-        return payload if isinstance(payload, dict) else {}
+        return extract_json(raw)
 
     @staticmethod
     def _safe_filename(value: Any, fallback: str) -> str:
@@ -61,6 +59,9 @@ class CooperationRunner:
         if not _FILENAME_RE.fullmatch(filename):
             return fallback
         return filename
+
+    def _persona(self, agent_id: int) -> dict[str, Any]:
+        return persona(self.agent_loader(agent_id))
 
     def _capabilities(self, member_ids: list[int]) -> list[dict[str, Any]]:
         table = []
@@ -77,6 +78,33 @@ class CooperationRunner:
                 }
             )
         return table
+
+    def _match_assignments(
+        self,
+        steps: list[dict[str, Any]],
+        member_ids: list[int],
+    ) -> None:
+        """Move a step to a member whose expertise actually covers it.
+
+        The planner is free to hand "分析租金结构" to whoever it likes, and
+        a mismatched author then writes outside their competence. Only a
+        step its assigned member has no expertise overlap with is moved,
+        and only when another member does overlap — otherwise the
+        planner's own judgement stands.
+        """
+        terms = {agent_id: expertise_terms(self.agent_loader(agent_id)) for agent_id in member_ids}
+        for step in steps:
+            assigned = int(step["agent_id"])
+            scores = {
+                agent_id: match_score(step["title"], member_terms)
+                for agent_id, member_terms in terms.items()
+            }
+            if scores.get(assigned):
+                continue
+            best = max(member_ids, key=lambda agent_id: scores[agent_id])
+            if scores[best] and best != assigned:
+                step["agent_id"] = best
+                step["reassigned_from"] = assigned
 
     def _fallback_plan(self, member_ids: list[int]) -> dict[str, Any]:
         return {
@@ -127,18 +155,21 @@ class CooperationRunner:
                     {
                         "title": str(item.get("title") or f"子任务 {index}").strip(),
                         "agent_id": agent_id,
-                        "artifact": self._safe_filename(
-                            item.get("artifact"),
-                            f"member_{agent_id}_{index}.md",
-                        ),
+                        "artifact": item.get("artifact"),
                         "status": "pending",
                     }
                 )
         if not steps:
             steps = [dict(item, status="pending") for item in fallback["steps"]]
+        # Reassign before naming so a fallback filename carries the id of
+        # the member who actually authors the step.
+        self._match_assignments(steps, member_ids)
         used_filenames = {"final.md"}
         for index, step in enumerate(steps, start=1):
-            filename = str(step["artifact"])
+            filename = self._safe_filename(
+                step["artifact"],
+                f"member_{step['agent_id']}_{index}.md",
+            )
             if filename in used_filenames:
                 path = Path(filename)
                 stem = path.stem or "artifact"
@@ -332,8 +363,13 @@ class CooperationRunner:
                     {
                         "task": session.task,
                         "role": session.roles.get(str(author_id), ""),
+                        "executor": self._persona(author_id),
                         "step": step,
-                        "instruction": "完成该子任务并输出可直接保存的 Markdown。",
+                        "instruction": (
+                            "你是 executor 描述的这位居民。以自身的职业背景与专长为切入点"
+                            "完成该子任务，让分析角度与用词自然体现你的本行，"
+                            "不必刻意堆砌术语。输出可直接保存的 Markdown。"
+                        ),
                     },
                     ensure_ascii=False,
                 ),
@@ -387,7 +423,12 @@ class CooperationRunner:
                     {
                         "task": session.task,
                         "artifact": delivery,
-                        "instruction": "输出 JSON：approved 布尔值与 feedback 字符串。",
+                        "reviewer": self._persona(reviewer_id),
+                        "instruction": (
+                            "你是 reviewer 描述的这位居民。以自身的职业背景与专长审阅这份成果，"
+                            "只对你确有判断力的部分给出意见。"
+                            "输出 JSON：approved 布尔值与 feedback 字符串。"
+                        ),
                     },
                     ensure_ascii=False,
                 ),
@@ -442,7 +483,11 @@ class CooperationRunner:
                         "task": session.task,
                         "artifact": delivery,
                         "feedback": feedback,
-                        "instruction": "根据审阅意见修订并输出完整 Markdown。",
+                        "author": self._persona(author_id),
+                        "instruction": (
+                            "你是 author 描述的这位居民。结合自身的职业背景与专长"
+                            "根据审阅意见修订，输出完整 Markdown。"
+                        ),
                     },
                     ensure_ascii=False,
                 ),
@@ -514,7 +559,11 @@ class CooperationRunner:
                         "task": session.task,
                         "plan": session.plan,
                         "artifacts": session.artifacts,
-                        "instruction": "汇总团队成果，输出完整最终 Markdown。",
+                        "leader": self._persona(session.leader_id),
+                        "instruction": (
+                            "你是 leader 描述的这位居民。以自身的职业背景与专长统稿，"
+                            "汇总团队成果，输出完整最终 Markdown。"
+                        ),
                     },
                     ensure_ascii=False,
                 ),

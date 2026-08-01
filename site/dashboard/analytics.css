@@ -12,6 +12,41 @@
 .an-status.is-ok { background: rgba(159, 224, 196, 0.28); }
 .an-status.is-error { background: rgba(192, 69, 69, 0.42); }
 
+/* --------------------------------------------------------------- export */
+
+.an-export { position: relative; }
+.an-export > summary { list-style: none; cursor: pointer; }
+.an-export > summary::-webkit-details-marker { display: none; }
+/* Fixed, not absolute: the hero clips its overflow, so an absolutely
+   positioned dropdown would be invisible. analytics.js sets top/left. */
+.an-export-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  gap: 2px;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+}
+.an-export-menu button {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.an-export-menu button:hover { background: var(--green-soft); }
+.an-export-menu em { font-style: normal; font-size: 11px; font-weight: 400; color: var(--muted); }
+
 /* ----------------------------------------------------------------- KPIs */
 
 .an-kpis {

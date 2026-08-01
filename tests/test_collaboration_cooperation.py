@@ -147,6 +147,45 @@ def test_cooperation_replaces_unsafe_artifact_name(tmp_path):
     assert not (tmp_path / "escape.md").exists()
 
 
+def test_cooperation_honours_fenced_review_approval(tmp_path):
+    """A ```json-fenced approval must not be read as a rejection.
+
+    Strict json.loads fails on the fence, the verdict defaults to False,
+    and the runner burns an extra revision round contradicting the
+    reviewer while dumping the raw fence into the activity feed.
+    """
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="围栏审阅",
+        leader_id=1,
+        plan=[_step("研究", 1, "research.md")],
+    )
+    store.create(session)
+    revision_calls = 0
+
+    def llm(prompt, task=None, agent_id=None):
+        nonlocal revision_calls
+        if task == "collaboration_execute":
+            return "初稿"
+        if task == "collaboration_review":
+            return '```json\n{"approved": true, "feedback": "内容完整。"}\n```'
+        if task == "collaboration_revision":
+            revision_calls += 1
+            return "修订稿"
+        return "# 汇总"
+
+    CooperationRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    events = store.events(session.id)
+    review = next(event for event in events if event.type == "review")
+    assert review.metadata["approved"] is True
+    assert review.content == "内容完整。"
+    assert revision_calls == 0
+    assert not [event for event in events if event.type == "revision"]
+
+
 def test_cooperation_replaces_prose_artifact_name(tmp_path):
     """Models often answer `artifact` with a sentence, not a filename.
 
@@ -484,6 +523,115 @@ def test_cooperation_resumes_missing_episode_side_effect(tmp_path):
     assert len(
         [event for event in events if event.type == "artifact" and event.metadata.get("final")]
     ) == 1
+
+
+def _specialist(agent_id):
+    """An economics teacher and a community worker with disjoint expertise."""
+    profiles = {
+        1: {"job_label": "teacher", "skills": ["经济学分析"], "interests": ["公共政策"]},
+        2: {"job_label": "other", "skills": ["社区走访"], "interests": ["邻里关系"]},
+    }
+    return {
+        "identity": {"id": agent_id, "name": f"居民{agent_id}"},
+        "capabilities": profiles[agent_id],
+    }
+
+
+def test_cooperation_carries_member_persona_into_every_call(tmp_path):
+    """Execute/review/revision/synthesis once ran without any author identity.
+
+    Without it the same deliverable comes back whoever is assigned, which
+    defeats the point of composing a team out of distinct residents.
+    """
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="评估社区租金压力",
+        leader_id=1,
+        roles={"1": "作者", "2": "审阅"},
+        plan=[_step("分析租金结构", 1, "rent.md")],
+    )
+    store.create(session)
+    prompts = {}
+
+    def llm(prompt, task=None, agent_id=None):
+        prompts[task] = json.loads(prompt)
+        if task == "collaboration_review":
+            return json.dumps({"approved": False, "feedback": "补充数据"}, ensure_ascii=False)
+        if task == "collaboration_synthesis":
+            return "# 汇总"
+        return "# 交付"
+
+    CooperationRunner(store=store, agent_loader=_specialist, llm=llm).run(session.id)
+
+    assert prompts["collaboration_execute"]["executor"]["skills"] == ["经济学分析"]
+    assert prompts["collaboration_review"]["reviewer"]["skills"] == ["社区走访"]
+    assert prompts["collaboration_revision"]["author"]["skills"] == ["经济学分析"]
+    assert prompts["collaboration_synthesis"]["leader"]["job_label"] == "teacher"
+
+
+def test_cooperation_reassigns_step_to_the_competent_member(tmp_path):
+    """A planner is free to hand economics work to the community worker.
+
+    The mismatched author then writes outside their competence, so a step
+    its assignee has no expertise overlap with moves to a member who does.
+    """
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="评估社区租金压力",
+    )
+    store.create(session)
+
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_plan":
+            return json.dumps(
+                {
+                    "leader_id": 1,
+                    "steps": [
+                        {"title": "分析租金结构", "agent_id": 2},
+                        {"title": "走访邻里收集反馈", "agent_id": 2},
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        return _basic_llm(prompt, task=task, agent_id=agent_id)
+
+    CooperationRunner(store=store, agent_loader=_specialist, llm=llm).run(session.id)
+
+    saved = store.get(session.id)
+    assert [step["agent_id"] for step in saved.plan] == [1, 2]
+    assert saved.plan[0]["reassigned_from"] == 2
+    assert "reassigned_from" not in saved.plan[1]
+    # The fallback filename follows the member who actually authors the step.
+    assert [step["artifact"] for step in saved.plan] == ["member_1_1.md", "member_2_2.md"]
+
+
+def test_cooperation_keeps_assignment_when_no_member_matches(tmp_path):
+    """With nobody competent the planner's own judgement must stand."""
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="无人对口的任务",
+    )
+    store.create(session)
+
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_plan":
+            return json.dumps(
+                {"steps": [{"title": "布置会场桌椅", "agent_id": 2, "artifact": "venue.md"}]},
+                ensure_ascii=False,
+            )
+        return _basic_llm(prompt, task=task, agent_id=agent_id)
+
+    CooperationRunner(store=store, agent_loader=_specialist, llm=llm).run(session.id)
+
+    saved = store.get(session.id)
+    assert [step["agent_id"] for step in saved.plan] == [2]
+    assert "reassigned_from" not in saved.plan[0]
 
 
 def test_cooperation_reuses_completed_marker_after_snapshot_failure(tmp_path, monkeypatch):

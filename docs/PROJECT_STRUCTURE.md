@@ -39,6 +39,25 @@ CLI/backward-compat entrypoints until their callers have been migrated.
 - `gaworld/io/`: IO helpers such as HTTP guards and web scraping.
 - `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, progress updates, day-end forgetting decay, and interest-set evolution (retirement + social contagion).
 - `gaworld/work/`: real-work task routing, queueing, adapters, and market data.
+- `gaworld/population/`: parameterised population synthesis. `schema.py` owns the
+  knob contract (`PopulationSpec`, presets) and the pure-maths feasibility
+  precheck; `synth.py` IPF-fits a joint attribute table with structural zeros and
+  samples individuals; `network.py` builds households (child-first), power-law
+  workplaces and a homophily/geography social graph emitted in the existing
+  `ensure_relationship_schema` shape; `report.py` validates and produces the
+  review charts; `writer.py` serialises to the state CSV + profile Markdown
+  formats `build_agent` already reads. CLI: `python -m gaworld.population`.
+  See [`GROUP_SIMULATION_TUTORIAL.md`](GROUP_SIMULATION_TUTORIAL.md).
+- `gaworld/group/`: the cohort (group) simulation tier — a *parallel driver*, not
+  a modification of the tick loop, so individual runs are unaffected by
+  construction. `cohort.py` (partition; cohorts carry mean **and** dispersion;
+  `NetworkCoupling` adds a within-cohort mean-zero graph term), `cohort_day.py`
+  (one LLM call per cohort per day), `materialize.py` (focal / event / tail /
+  audit selection and the audit residual), `driver.py` (day loop + measured cost
+  accounting), `metrics.py` + `validate.py` (the L1–L4 validation gate),
+  `plugin.py` (`GroupPlugin`, observational cohort telemetry).
+  CLIs: `python -m gaworld.group`, `python -m gaworld.group.validate`.
+  Design + measured results: [`GROUP_AGENT_DESIGN.md`](GROUP_AGENT_DESIGN.md).
 - `gaworld/skills/`: per-agent Skill subsystem — global library at `data/skills/`, private skills under `output/memory/agent_<id>_skills/`, and experience-to-skill consolidation. See [`SKILL_SYSTEM.md`](SKILL_SYSTEM.md).
 - `gaworld/world/local_physical.py`: per-node occupancy / opening-hours snapshots and crowd-surge anomaly detection injected into perception. See [`physical_env_perception_changelog.md`](physical_env_perception_changelog.md).
 - `gaworld/memory/spatial_preferences.py`: learned location-avoidance preferences (recency-decayed), persisted to `output/memory/agent_<id>_env_preferences.json`.
@@ -51,6 +70,14 @@ CLI/backward-compat entrypoints until their callers have been migrated.
   `running` sessions as `interrupted` without discarding their transcript or
   artifacts.
 - `gaworld/apps/`: runnable local servers and dashboard backend entrypoints.
+  `population_api.py` is the Population Studio backend — a *delegate* module, so
+  `dashboard_server.py` only gains a prefix-forwarding branch for
+  `/api/population/*` rather than another subsystem's routes. It reads path
+  constants from `dashboard_server` at call time, because the dashboard tests
+  monkeypatch those constants onto a temp directory. `replay_runs.py` enumerates
+  every replayable trace on disk (live, `<visualization>/runs/<run_id>/` archives,
+  scenario output trees) for the replay page's run picker; it reads only the head
+  of each trace, because a listing must not parse a hundred multi-megabyte files.
 - `scripts/`: developer and launch utilities that are not imported by runtime modules.
 - `examples/`: sample external-agent inputs and integration examples.
 
@@ -88,14 +115,33 @@ New code that needs config assembly should prefer `gaworld.settings`.
     (`events.jsonl`), and cooperation Markdown under `artifacts/`; the root
     is configurable through `CONFIG["collaboration"]["sessions_dir"]`.
   - `output/work/`: real-work artifacts, capability cache, queue/market event logs.
+  - `output/economy/interventions.json`: the External Systems panel's queue of
+    macro/sector changes. Consumed by `gaworld/economy/finance.py` at each
+    simulated day boundary — the one channel available for mid-run monetary
+    intervention, since economy runtime state lives in the simulator subprocess
+    and `macro_state.json` is an output the simulator never reads back.
 - `site/`: dashboard and visualization frontends.
   - `site/dashboard/`: Dashboard (`index.html`) with reciprocal friendship
     and independent discussion controls; Agent Studio (`studio.html` —
     single-agent 7-step builder/inspector, wired to the state CSV + profile
-    Markdown via the Studio endpoints in `dashboard_server.py`); and the
-    cooperation lifecycle/artifact page (`collaboration.html`).
+    Markdown via the Studio endpoints in `dashboard_server.py`); Population
+    Studio (`population.html` — 5-step population generation, group-mode run
+    and validation verdict, backed by `gaworld/apps/population_api.py`, with two
+    node headless render tests — `population.test.js` for the input steps and
+    `population-verdict.test.js`, which drives the verdict card with a verbatim
+    validator payload so a renamed field in Python cannot silently blank it);
+    the cooperation
+    lifecycle/artifact page (`collaboration.html`); and External Systems
+    (`external.html` — observe/edit the money system, the external-environment
+    generator and the outward service connections, backed by
+    `gaworld/apps/external_systems_api.py`, with the `external.test.js` node
+    headless render test). Charts are hand-written SVG:
+    this tree has no build step and vendors no chart library, and a CDN
+    dependency would cost the dashboard its offline usability.
   - `site/console/`: unified console whose exact `合作任务` tab opens
-    `/site/dashboard/collaboration.html`.
+    `/site/dashboard/collaboration.html`, whose `人口与群体` tab opens
+    `/site/dashboard/population.html` and whose `外部系统` tab opens
+    `/site/dashboard/external.html`.
 - `video/`: Remotion video project.
 - `tmp/`: local temporary/generated scratch content.
 - `backup/`: historical scripts, not active runtime.

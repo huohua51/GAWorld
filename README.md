@@ -66,6 +66,10 @@ Across days, the simulator accumulates:
 - Agent interview CLI
 - Local dashboard for config editing, profile editing, run control, memory inspection, and interview
 - Agent Studio: a 7-step visual builder/inspector for a single agent — identity, the nine [0,1] state variables (editable radar), skills, tiered memory, Dunbar social circles, behavior dials, and review/deploy; writes back to the state CSV and profile Markdown and can create new agents
+- Parameterised population synthesis: turn panel-level knobs (size, age pyramid, employment, income Gini, household structure, social-graph shape) into a full town — IPF-fitted joint attributes with structural zeros, exact marginals via largest-remainder integerisation, a rank-transform so the requested income median and Gini hold while income still correlates with education and industry, child-first household formation, and power-law workplaces. Outputs the state CSV + profile Markdown formats the simulator already reads, so `build_agent` needs no changes
+- Group (cohort) simulation for large populations: partitions residents into cohorts that carry both mean **and** dispersion, spends one LLM call per cohort per day, materialises a budgeted set of individuals at full fidelity (focal / event / tail / audit), and keeps a mean-zero social-graph coupling term so network-mediated co-movement survives aggregation. ~25× cheaper than per-agent simulation at a 20-person daily materialisation budget
+- Group-mode validation gate (L1–L4): a paired experiment that measures what the cohort approximation costs — distributional distance, network co-movement, tail retention, and causal response to a policy shock — with thresholds set relative to the reference tier's own cross-seed noise rather than arbitrary constants. Exits non-zero when a dividing-line layer fails, so it can gate CI
+- Population Studio: a 5-step dashboard panel for generating a population, running group mode over it, and reading the validation verdict, with live feasibility prechecks that name the conflicting knob
 - Distributed multi-machine mode with relay-based communication
 
 ## Architecture: Microkernel + Plugins
@@ -127,7 +131,9 @@ code.
 - `gaworld/distributed/comm.py`: multi-machine relay client
 - `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, progress updates
 - `gaworld/work/`: real-work task system (runtime, worker pool, queue, market, router, adapters)
-- `gaworld/apps/`: local servers (dashboard, external-environment, distributed-comm)
+- `gaworld/population/`: parameterised population synthesis — `schema` (knob contract + feasibility precheck), `synth` (IPF + conditional sampling + income rank-transform), `network` (households, workplaces, homophily social graph), `report` (validation gate + review charts), `writer` (state CSV + profile Markdown + manifest)
+- `gaworld/group/`: cohort (group) simulation — `cohort` (partition, centroid **and** dispersion, mean-zero network coupling), `cohort_day` (one LLM call per cohort per day), `materialize` (focal / event / tail / audit selection, audit residual), `driver` (day loop + cost accounting), `metrics` + `validate` (the L1–L4 gate), `plugin` (observational cohort telemetry)
+- `gaworld/apps/`: local servers (dashboard, external-environment, distributed-comm) and `population_api` (Population Studio backend)
 - `gaworld/io/`: HTTP guard with retry/backoff and HTML extraction
 - `gaworld/sim/`: extracted simulator sub-modules — `_utils`, `agents_loader`, `_schedule`, `_location`, `_cognition`, `_rag`, `_diary` (more slices coming as the legacy file shrinks)
 - `simulation_visualizer.py`, `avatar_generator.py`, `generate_agent_rag_seed.py`, `analyze_wellbeing.py`: standalone CLI tools (not imported by the runtime)
@@ -272,6 +278,28 @@ Run the distributed relay:
 python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877
 ```
 
+### Population synthesis and group simulation
+
+Generate a parameterised town, simulate it as cohorts, and check what the approximation costs.
+All three run at zero LLM cost. Full walkthrough: [Group Simulation Tutorial](./docs/GROUP_SIMULATION_TUTORIAL.md).
+
+```bash
+# Preview a 500-person town without writing anything
+python -m gaworld.population --preset cn_county_town --size 500 --seed 42 --check
+
+# Write it out (state CSV + profile Markdown + reproducibility manifest)
+python -m gaworld.population --size 500 --seed 42 --name my_town --out data/town
+
+# Simulate it as cohorts for 7 days
+python -m gaworld.group --size 500 --days 7 --no-llm
+
+# Run the L1-L4 validation gate (exits 1 when a dividing-line layer fails)
+python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7
+```
+
+The generated files match the formats the simulator already reads, so they can be dropped straight
+into `CONFIG["csv_path"]` / `CONFIG["md_path"]`.
+
 ## Dashboard
 
 The local dashboard provides:
@@ -320,6 +348,46 @@ Backend API (added to `dashboard_server.py`):
 | POST | `/api/agents/{id}/state` | write state/identity to the CSV (+ profile sync) |
 | POST | `/api/agents` | create a new agent (CSV row + profile block) |
 
+### Population Studio
+
+Population Studio is the group-mode counterpart to Agent Studio: where Agent Studio builds one
+resident, Population Studio builds a whole town and simulates it as cohorts. Reachable from the
+console tab (**人口与群体 / Population**) or directly at
+`http://127.0.0.1:8766/site/dashboard/population.html`. Five steps:
+
+1. **选模板** — preset, size, seed; the chosen preset is described in plain language rather than left as a bare identifier
+2. **人口结构** — age / household / work / income knobs, a target-vs-achieved table, and age pyramid, Lorenz curve and degree-distribution charts
+3. **心理状态** — the nine state variables, with a group-mean radar and a P25–P75 envelope (a cohort is a distribution, so a bare mean polygon would misreport it)
+4. **跑模拟** — days, materialisation budget, audit fraction, network coupling, and which LLM provider to use; daily cohort briefs and measured LLM cost
+5. **检查结果** — the L1–L4 verdict in plain language, plus the written population files as clickable links
+
+Every metric is labelled bilingually (`压力 stress`), with the labels served from the schema
+endpoint so the panel never keeps a second copy of the names.
+
+The verdict card leads with a one-line conclusion and a can-use / cannot-use checklist derived
+from which layers passed — the question a reader actually has is "what may I conclude from this
+run?", not "what is the z-score". The full technical output stays available behind a disclosure.
+
+Written files (state CSV, profiles, manifest) are listed with an open-in-new-tab link, a download
+link and an inline preview: the dashboard already serves the repo statically, so a repo-relative
+URL is directly openable.
+
+A live feasibility precheck runs alongside every slider: it generates nobody, answers instantly,
+and names the conflicting knob plus the reachable range when parameters contradict each other.
+
+Backend API (delegated from `dashboard_server.py` to `gaworld/apps/population_api.py`):
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/population/schema` | the knob contract — served, not duplicated in JS |
+| POST | `/api/population/preview` | pure-maths feasibility precheck |
+| POST | `/api/population/generate` | start generation → `job_id` |
+| GET | `/api/population/jobs/{id}` | poll progress / result |
+| POST | `/api/population/group-run` | run group mode over the last generated population |
+| POST | `/api/population/validate` | run the L1–L4 validation gate |
+
+Generation and simulation are asynchronous jobs, so a 500-person town does not block the browser.
+
 ## Configuration
 
 All base settings live in `config.py`.
@@ -330,6 +398,7 @@ Important fields:
 - `sim_days`: number of simulated days
 - `seconds_per_day`: wall-clock seconds per simulated day
 - `time_step_minutes`: optional fixed timeline step
+- `time_grid_snap`: align every agent's schedule onto that grid (default `False`). Setting `time_step_minutes` alone does **not** bound the tick count — the master timeline is the *union* of the grid and every agent's LLM-authored `HH:MM` times, so ticks (and therefore LLM cost) grow super-linearly with the agent count. Snapping pins them at `1440 / step` regardless of population size. Off by default because it changes intra-day timing
 - `llm.providers`: provider registry
 - `llm.routing.default`: default provider
 - `llm.routing.tasks`: task-specific provider overrides
@@ -739,6 +808,7 @@ Generated artifacts are written under `output/`, including:
 - [Real Work — Usage](./docs/REAL_WORK_USAGE.md) · [Design](./docs/REAL_WORK_DESIGN.md)
 - [Physical Environment Perception & Reactive Replanning](./docs/physical_env_perception_changelog.md)
 - [Social Network — Design](./docs/SOCIAL_NETWORK_DESIGN.md) · [Tutorial](./docs/SOCIAL_NETWORK_TUTORIAL.md)
+- [Group Simulation — Tutorial](./docs/GROUP_SIMULATION_TUTORIAL.md) · [Design](./docs/GROUP_AGENT_DESIGN.md) (population synthesis, cohort mode, the L1–L4 validation gate)
 - [Project Structure](./docs/PROJECT_STRUCTURE.md)
 - [Repository Guidelines](./AGENTS.md)
 - [Changelog](./CHANGELOG.md)

@@ -1069,6 +1069,163 @@ def _system_total(agents, sectors):
     return round(_agents_total(agents) + sector_sum, 2)
 
 
+# ---------------------------------------------------------------------------
+# 11b. RUNTIME INTERVENTIONS (dashboard -> running simulation)
+# ---------------------------------------------------------------------------
+#
+# Macro state and sector pools live in ``context["extension_state"]`` of the
+# simulator process only, and the dashboard launches that simulator as a
+# subprocess. A file queue consumed at the day boundary is therefore the one
+# channel available for mid-run monetary intervention; it deliberately mirrors
+# the existing life-events queue rather than inventing a second convention.
+
+INTERVENTION_FILE = "interventions.json"
+
+#: Macro fields an intervention may set, with the coercion applied to each.
+MACRO_INTERVENTION_FIELDS = {
+    "phase": str,
+    "phase_day_counter": int,
+    "phase_duration": int,
+    "inflation_rate": float,
+    "unemployment_rate": float,
+    "cumulative_inflation": float,
+}
+
+SECTOR_NAMES = ("firms", "government", "bank")
+
+
+def intervention_path(cfg):
+    """Path of the intervention queue for an economy config."""
+    return os.path.join(cfg.get("output_dir", "output/economy"), INTERVENTION_FILE)
+
+
+def read_interventions(path):
+    """Load the queue, tolerating a missing or malformed file."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"pending": [], "applied": []}
+    if not isinstance(payload, dict):
+        return {"pending": [], "applied": []}
+    pending = payload.get("pending")
+    applied = payload.get("applied")
+    return {
+        "pending": [item for item in pending if isinstance(item, dict)] if isinstance(pending, list) else [],
+        "applied": [item for item in applied if isinstance(item, dict)] if isinstance(applied, list) else [],
+    }
+
+
+def write_interventions(path, queue):
+    """Persist the queue, keeping only the most recent applied entries."""
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    payload = {
+        "pending": list(queue.get("pending", [])),
+        "applied": list(queue.get("applied", []))[-50:],
+    }
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _apply_macro_intervention(macro_state, changes):
+    """Set macro fields directly. Returns the applied {field: value} map."""
+    applied = {}
+    if not isinstance(macro_state, dict) or not isinstance(changes, dict):
+        return applied
+    for field, cast in MACRO_INTERVENTION_FIELDS.items():
+        if field not in changes:
+            continue
+        try:
+            value = cast(changes[field])
+        except (TypeError, ValueError):
+            continue
+        if field == "inflation_rate":
+            value = _clip(value, 0.001, 0.15)
+        elif field == "unemployment_rate":
+            value = _clip(value, 0.02, 0.20)
+        macro_state[field] = value
+        applied[field] = value
+    conditions = changes.get("industry_conditions")
+    if isinstance(conditions, dict):
+        target = macro_state.setdefault("industry_conditions", {})
+        applied_conditions = {}
+        for industry, raw in conditions.items():
+            value = _clip(_to_float(raw, 1.0), 0.5, 1.5)
+            target[str(industry)] = value
+            applied_conditions[str(industry)] = value
+        if applied_conditions:
+            applied["industry_conditions"] = applied_conditions
+    return applied
+
+
+def _apply_sector_intervention(runtime, sectors, deltas):
+    """Inject/withdraw money from sector pools.
+
+    The money stock changes, so ``initial_system_total`` moves by the same
+    amount: without that the daily conservation audit would report the
+    deliberate injection as drift, i.e. as a bug in the money plumbing.
+    """
+    applied = {}
+    if not isinstance(sectors, dict) or not isinstance(deltas, dict):
+        return applied
+    total = 0.0
+    for name in SECTOR_NAMES:
+        if name not in deltas:
+            continue
+        amount = round(_to_float(deltas[name], 0.0), 2)
+        if not amount:
+            continue
+        _sector_add(sectors, name, amount)
+        applied[name] = amount
+        total += amount
+    if total:
+        runtime["initial_system_total"] = round(
+            _to_float(runtime.get("initial_system_total", 0.0), 0.0) + total, 2)
+        runtime["intervention_injected_total"] = round(
+            _to_float(runtime.get("intervention_injected_total", 0.0), 0.0) + total, 2)
+    return applied
+
+
+def _consume_interventions(context, runtime, cfg, day):
+    """Apply every queued intervention that is due on ``day``."""
+    path = intervention_path(cfg)
+    if not os.path.exists(path):
+        return []
+    queue = read_interventions(path)
+    pending = queue.get("pending", [])
+    if not pending:
+        return []
+
+    due, remaining, applied_records = [], [], []
+    for item in pending:
+        scheduled = item.get("day")
+        if scheduled is None or _to_float(scheduled, 0) <= day:
+            due.append(item)
+        else:
+            remaining.append(item)
+    if not due:
+        return []
+
+    macro_state = runtime.get("macro", {})
+    sectors = runtime.get("sectors")
+    for item in due:
+        record = dict(item)
+        record["applied_day"] = day
+        record["applied_macro"] = _apply_macro_intervention(macro_state, item.get("macro"))
+        record["applied_sector_delta"] = _apply_sector_intervention(
+            runtime, sectors, item.get("sector_delta"))
+        applied_records.append(record)
+
+    queue["pending"] = remaining
+    queue["applied"] = list(queue.get("applied", [])) + applied_records
+    write_interventions(path, queue)
+    return applied_records
+
+
 def _record_income(econ, amount, sectors=None):
     """Wage-type income. With `sectors`, it is paid out of the firms pool."""
     value = round(max(0.0, _to_float(amount, 0.0)), 2)
@@ -1774,6 +1931,11 @@ def on_day_start(context):
     _advance_macro_cycle(macro_state, cfg)
     runtime["sim_day_counter"] = runtime.get("sim_day_counter", 0) + 1
 
+    # Dashboard-queued interventions land *after* the cycle advance, so an
+    # operator-set inflation/unemployment figure is the one this day actually
+    # uses instead of being immediately multiplied away by the phase drift.
+    _consume_interventions(context, runtime, cfg, _to_float(context.get("day", 0), 0))
+
     # Is a layoff-type policy event active today? (event -> economy bridge)
     event_layoff = _active_event_layoff(context)
     sectors = runtime.get("sectors")
@@ -2263,7 +2425,11 @@ def on_simulation_end(context):
         with open(os.path.join(output_dir, "sectors.json"), "w", encoding="utf-8") as f:
             json.dump({
                 "sectors": sectors,
+                # Baseline the audit compares against. Interventions move it by
+                # the amount they inject, so record that separately: otherwise
+                # a deliberate injection is indistinguishable from a leak.
                 "initial_system_total": runtime.get("initial_system_total"),
+                "intervention_injected_total": runtime.get("intervention_injected_total", 0.0),
                 "final_system_total": _system_total(context.get("agents", []), sectors),
             }, f, ensure_ascii=False, indent=2)
     audit_rows = runtime.get("audit_rows", [])

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GAWorld · 外部系统</title>
+  <meta name="description" content="GAWorld 外部系统观测台：货币系统 · 外部环境 · 对外服务" />
+  <link rel="stylesheet" href="/site/dashboard/styles.css" />
+  <link rel="stylesheet" href="/site/dashboard/studio.css?v=3" />
+  <link rel="stylesheet" href="/site/dashboard/external.css?v=1" />
+</head>
+<body class="studio-body">
+  <main class="studio-shell">
+    <header class="studio-top">
+      <div class="brand">
+        <div class="brand-mark">GA</div>
+        <div class="brand-copy">
+          <p class="kicker">GAWorld 外部系统</p>
+          <h1>看住世界本身，而不只是住在里面的人</h1>
+          <p class="sub">
+            货币怎么流、环境抛出了什么事件、对外服务通不通 —— 观察它们，然后直接改。
+          </p>
+        </div>
+      </div>
+      <div class="ext-topmeta" id="extTopMeta"></div>
+    </header>
+
+    <nav class="studio-steps" id="extTabs">
+      <button class="step is-active" data-tab="currency" title="宏观周期、部门池、货币守恒、财富分布，以及对运行中仿真的干预">
+        <i>¥</i>货币系统
+      </button>
+      <button class="step" data-tab="environment" title="外部环境生成器抛出的天气/经济/政策/科技事件，以及生成参数">
+        <i>≋</i>外部环境
+      </button>
+      <button class="step" data-tab="services" title="外部环境服务、分布式中继、外部信息源、LLM 路由">
+        <i>⇄</i>对外服务
+      </button>
+    </nav>
+
+    <section class="ext-main">
+      <div class="ext-observe" id="extObserve">
+        <div class="ext-card"><p class="ext-hint">正在加载…</p></div>
+      </div>
+      <aside class="ext-edit" id="extEdit"></aside>
+    </section>
+
+    <footer class="studio-foot ext-foot">
+      <div class="ext-status" id="extStatus"></div>
+      <div class="ext-actions">
+        <button class="button subtle" id="extRefresh">刷新观测</button>
+      </div>
+    </footer>
+  </main>
+  <script src="/site/dashboard/external.js?v=1"></script>
+</body>
+</html>

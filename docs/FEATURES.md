@@ -18,7 +18,11 @@
 | Dashboard 智能体互动 | 对两位或更多居民建立双向好友关系；启动独立于主仿真的多轮讨论，并实时观察发言、摘要与完整记录 | Dashboard「智能体互动」面板；会话与事件写入 `CONFIG["collaboration"]["sessions_dir"]` |
 | Dashboard 合作任务 | 多智能体按“规划 → 分工执行 → 同伴审阅/修订 → 汇总”完成任务，展示可观测事件与 Markdown 产物 | 控制台「合作任务」页签 → `/site/dashboard/collaboration.html`；产物位于 `<sessions_dir>/<session_id>/artifacts/` |
 | Agent Studio | 单智能体 7 步可视化构建/查看：身份、九维状态（可编辑雷达）、技能、记忆、Dunbar 社交、行为、复核部署；写回 CSV+profile，可创建新 agent | 控制台工具栏「Agent Studio ↗」→ `http://127.0.0.1:8766/site/dashboard/studio.html` |
-| 轨迹回放查看器 | 可视化回放智能体移动轨迹 | `python generative_city_sim.py serve-viz --port 8000` → `/site/simviz/index.html` |
+| 参数化人口合成 | 按人口学旋钮生成整座小镇（年龄金字塔、家庭结构、就业、收入基尼、社交图），产出与现有格式完全一致的状态 CSV + profile MD | `python -m gaworld.population --size 500 --seed 42 --out data/town`；`--check` 只预览不写文件 |
+| 群体（cohort）模拟 | 把人口划分成群体，每群每天 1 次 LLM 调用 + 按预算实体化少数个体，实现大规模人群的低成本模拟 | `python -m gaworld.group --size 500 --days 7 --no-llm`；`--focal 7,42` 全程跟踪指定居民；`--network-coupling 0.7` 开社交图耦合（不开则验证门 L2 不通过）；不加 `--no-llm` 会真的调 LLM，运行前先打印预估次数 |
+| 群体模式验证门 | L1–L4 配对实验，量化 cohort 近似的代价并给出"能回答哪类研究问题"的结论；分水岭层不过时退出码为 1 | `python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7` |
+| Population Studio | 5 步可视化：选模板（预设带说明）→ 人口结构（目标 vs 实际 + 金字塔/洛伦兹/度分布）→ 心理状态（均值雷达 + P25–P75）→ 跑模拟（可选后端模型）→ 检查结果（白话判定 + 文件可直接点开）；指标统一中英文双标 | 控制台「人口与群体」页签 → `http://127.0.0.1:8766/site/dashboard/population.html` |
+| 轨迹回放查看器 | 可视化回放智能体移动轨迹；顶部「运行」下拉可选择任意一次已记录的仿真：当前运行（实时）、历史归档运行（`output/visualization/runs/<run_id>/`）、compare-event 等场景运行；`?run=<id>` 可分享指定运行 | `python generative_city_sim.py serve-viz --port 8000` → `/site/simviz/index.html`（Dashboard 内为「仿真回放」页签） |
 | 分布式 relay | 多机协同仿真，各节点处理本地 agent 子集 | `python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877` |
 | 城市地图生成 | 用自然语言描述生成城市地图（节点 / 道路 / 地铁） | `python scripts/generate_citymap.py --description "..."` |
 
@@ -53,6 +57,8 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 | 经验 → Skill 自动提炼 | agent 从最近经历自总结私有技能 | `CONFIG["memory"]["skill_consolidation"]["enabled"]`（默认 OFF）；产物 `output/memory/agent_<id>_skills/*.md` |
 | 真实工作任务系统 | agent 按职业 / 技能产出真实产物（HTML / Python / 文章 / 教案 / 研究笔记）并接单结算 | `CONFIG["real_work"]["enabled"]`；产物 `output/work/agent_<id>/<task_id>/` |
 | 长时段快进（fast-forward） | 每天压缩成每个智能体一条日简报、跳过日内时刻循环，让 60/600 天长期模拟可行；状态/目标/关系仍近似推进，输出为每天一个 `Day N 简报` | `CONFIG["long_run"]["enabled"]`（或 `run --fast-forward`）；`long_run.randomness`(0–1) 越高突发事件越频繁、波动越大；Dashboard 工具栏勾选「长时段快进」+「随机性」滑杆 |
+| 日程网格对齐 | 把每个 agent 的日程对齐到固定时间网格，让 tick 数恒为 `1440/step` 而不随人口超线性增长。**只设 `time_step_minutes` 不够**——主时间线是网格与 LLM 自拟时间的并集 | `CONFIG["time_grid_snap"]=True` + `CONFIG["time_step_minutes"]=30`；默认 OFF（会改变日内时序） |
+| Cohort 遥测插件 | 在个体运行中发布群体划分与逐日漂移到 recorder，只观测不改行为 | `CONFIG["group"]["enabled"]=True`；产物 `output/records/*.jsonl` 中的 `group.partition` / `group.cohort_stats` |
 
 ## 四、微内核插件体系（2026-07）
 
@@ -81,4 +87,5 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 - [插件作者指南](PLUGIN_AUTHORING.md) · [微内核架构设计](proposals/2026-07-11-microkernel-plugin-architecture.md)
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统](SKILL_SYSTEM.md) · [真实工作系统使用](REAL_WORK_USAGE.md)
+- [群体模拟教程](GROUP_SIMULATION_TUTORIAL.md) · [群体模拟设计](GROUP_AGENT_DESIGN.md)
 - [项目结构](PROJECT_STRUCTURE.md) · [中文 README](../README.zh-CN.md) · [English README](../README.md)

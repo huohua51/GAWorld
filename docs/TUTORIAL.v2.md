@@ -23,11 +23,13 @@
 11. [分布式 relay：多机通信](#11-分布式-relay多机通信)
 12. [Dashboard 使用指南](#12-dashboard-使用指南)
     - [12.1 Agent Studio（单智能体构建/查看器）](#121-agent-studio单智能体构建查看器)
-13. [配置与开关总表](#13-配置与开关总表)
-14. [输出文件地图](#14-输出文件地图)
-15. [常见问题](#15-常见问题)
-16. [命令速查表](#16-命令速查表)
-17. [微内核插件架构：扩展 GAWorld](#17-微内核插件架构扩展-gaworld)
+    - [12.2 Population Studio（人口生成与群体模拟）](#122-population-studio人口生成与群体模拟)
+13. [大规模人群：人口合成与群体模拟](#13-大规模人群人口合成与群体模拟)
+14. [配置与开关总表](#14-配置与开关总表)
+15. [输出文件地图](#15-输出文件地图)
+16. [常见问题](#16-常见问题)
+17. [命令速查表](#17-命令速查表)
+18. [微内核插件架构：扩展 GAWorld](#18-微内核插件架构扩展-gaworld)
 
 ---
 
@@ -691,7 +693,107 @@ python generative_city_sim.py dashboard --port 8766
 
 ---
 
-## 13. 配置与开关总表
+### 12.2 Population Studio（人口生成与群体模拟）
+
+Agent Studio 造一个居民，Population Studio 造一座小镇并按群体模拟它。
+控制台「**人口与群体**」页签，或直接
+`http://127.0.0.1:8766/site/dashboard/population.html`。
+
+五个步骤：**选模板 → 人口结构 → 心理状态 → 跑模拟 → 检查结果**。
+
+- 第 1 步选中预设后会显示它是什么人口、什么时候该用它；随机种子的说明是
+  「换个数字就是另一批人，填回同一个数字还是原来那批人」。
+- 第 2 步给出**目标 vs 实际对照表**：达不成的旋钮会显示相对偏差，而不是假装达成了；
+  同时有年龄金字塔、收入洛伦兹曲线、社交网络度分布。
+- 第 3 步的雷达图画的是**均值 + P25–P75 包络**——群体是一个分布，只画均值多边形会误报。
+- 第 4 步可以选**后端模型**（`gaworld/llm/providers.py` 里配好的 provider，例如本地 ollama），
+  跑完显示每日群体简报与**实测** LLM 调用数。
+- 第 5 步把 L1–L4 判定翻译成一句话结论 + 「可以用来 / 不要用来」清单，
+  并把写出的三个人口文件做成可直接点开的链接（附前几行预览）。
+
+所有指标都是**中英文双标**（「压力 stress」），标签来自 `GET /api/population/schema`
+的 `labels` 字段——面板不再自己抄一份中文名，同一个量在不同卡片里不会长成两个样子。
+
+右侧常驻**参数体检**：不生成任何人、瞬时返回、参数冲突时直接指出该动哪个旋钮并给出可达区间。
+
+**后端 API**（`dashboard_server.py` 转发到 `gaworld/apps/population_api.py`）：
+`GET /api/population/schema`、`POST /api/population/preview`、
+`POST /api/population/generate` → `job_id`、`GET /api/population/jobs/{id}`、
+`POST /api/population/group-run`、`POST /api/population/validate`。
+生成与模拟都是异步 job。测试见 `tests/test_dashboard_population.py`。
+
+---
+
+## 13. 大规模人群：人口合成与群体模拟
+
+> 本节是**摘要**。完整教程（含全部参数、成本表、判定阈值的来龙去脉）见
+> [群体模拟教程](GROUP_SIMULATION_TUTORIAL.md)。
+
+个体模拟里每个 agent 每天要走多次完整认知流水线——500 人跑一天约 **10 万次 LLM 调用**。
+群体模式加了一个更粗的层：把人口划分成 **cohort（群体）**，每群每天只花 **1 次** LLM 调用，
+同时每天按预算把一小批个体提升到完整保真度。
+
+### 13.1 三条命令
+
+```bash
+# 造一座 500 人的小镇（不写文件，只看结果）
+python -m gaworld.population --preset cn_county_town --size 500 --seed 42 --check
+
+# 按群体模拟 7 天（零 LLM 成本）
+python -m gaworld.group --size 500 --days 7 --no-llm
+
+# 验证这个近似能回答哪类研究问题（分水岭层不过时退出码为 1）
+python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7
+```
+
+写出文件用 `python -m gaworld.population --size 500 --name my_town --out data/town`，
+产出的状态 CSV 与 profile Markdown **与现有格式完全一致**，可以直接填进
+`CONFIG["csv_path"]` / `CONFIG["md_path"]`，`build_agent` 无需改动。
+
+### 13.2 成本从哪来
+
+500 人 × 30 天，逐次实测（全个体基准 297 万次）：
+
+| 实体化预算 | cohort 层 | 实体化层 | 合计 | 相对全个体 |
+|---|---|---|---|---|
+| 0 | 1,140 | 0 | 1,140 | 2605× 省 |
+| **20**（默认） | 1,140 | 118,800 | 119,940 | **25× 省** |
+| 50 | 1,140 | 297,000 | 298,140 | 10× 省 |
+
+**cohort 层几乎免费，成本几乎完全由 `--budget` 决定。** 调群体粒度对成本影响很小。
+
+### 13.3 什么时候能用、什么时候不能
+
+| 研究问题 | 适合？ |
+|---|---|
+| 人口分布级指标、政策处理效应与子群异质性、极端个体占比 | ✅ |
+| 观点扩散、极化、少数派引爆 | ⚠️ 必须开网络耦合并跑验证门确认 |
+| 单个居民的完整生活叙事 | ❌ 用个体模式，或把 TA 设为 `--focal` |
+
+这不是猜的：验证门的四层判定会直接告诉你。**L2（网络级）与 L4（因果响应）是分水岭。**
+
+关键实测：不开网络耦合时 L2 一定不通过，且**不是调参能解决的**——要过 L2 得实体化 80% 以上
+人口，那已经等于放弃群体层。开启群内零均值的图耦合项（`network_coupling=0.7`）后四层全过。
+
+> ⚠️ 0.7 是针对验证门内那个参照过程标定出来的，**不是普适常数**。换成真实 LLM 驱动的个体层
+> 后必须重新标定。默认值是 `0.0`（关闭）。
+
+### 13.4 顺带：一个与群体无关的性能修复
+
+个体模式的 tick 数其实随 agent 数**超线性**增长：主时间线是固定网格与每个 agent 的
+LLM 自拟日程时间的**并集**，而 LLM 生成的 `HH:MM` 没有对齐逻辑。
+
+```python
+CONFIG["time_step_minutes"] = 30
+CONFIG["time_grid_snap"] = True    # 默认 False
+```
+
+开启后 tick 数恒等于 `1440 / step`，与人口规模无关。
+**只设 `time_step_minutes` 不够**——那只给 tick 数加了个下界。默认关闭是因为它会改变日内时序。
+
+---
+
+## 14. 配置与开关总表
 
 基础配置入口 `config.py`（实际分层在 `gaworld/settings/`）。常用字段：
 
@@ -709,6 +811,8 @@ python generative_city_sim.py dashboard --port 8766
 | `real_work` | **新**：真实工作任务系统 |
 | `intervention` | PolicySim 风格干预评估 |
 | `policy_events` / `distributed` | 政策事件 / 多机通信（relay，详见第 11 节） |
+| `time_grid_snap` | **新**：日程对齐到 `time_step_minutes` 网格，tick 数恒为 `1440/step`（默认 OFF；只设 `time_step_minutes` 不够，见 [13.4](#134-顺带一个与群体无关的性能修复)） |
+| `group.enabled` | **新**：`GroupPlugin` — 在个体运行中发布 cohort 划分与逐日漂移到 recorder，只观测不改行为 |
 
 日志模式：`GAWORLD_LOG_MODE=simple|verbose`，`GAWORLD_LOG_LEVEL=DEBUG` 看 token / 延迟。
 
@@ -716,7 +820,7 @@ python generative_city_sim.py dashboard --port 8766
 
 ---
 
-## 14. 输出文件地图
+## 15. 输出文件地图
 
 ```
 output/
@@ -739,7 +843,7 @@ output/
 
 ---
 
-## 15. 常见问题
+## 16. 常见问题
 
 **Q: 报错 API key 缺失** — 检查环境变量是否设置，且 `config.py` 的 `llm.routing.default` 指向已配置的 provider。
 
@@ -762,7 +866,7 @@ output/
 
 ---
 
-## 16. 命令速查表
+## 17. 命令速查表
 
 ```bash
 # 基本
@@ -786,6 +890,14 @@ python generative_city_sim.py create-agent-from-social --url "..."
 python generative_city_sim.py compare-event --event-name "..." --sim-days 3 --seed 42
 python scripts/generate_citymap.py --description "..."
 
+# 人口合成与群体模拟（详见第 13 节 / GROUP_SIMULATION_TUTORIAL.md）
+python -m gaworld.population --size 500 --seed 42 --check          # 预览，不写文件
+python -m gaworld.population --size 500 --name my_town --out data/town
+python -m gaworld.group --size 500 --days 7 --no-llm               # 群体模拟，零成本
+python -m gaworld.group --size 500 --days 7 --focal 7,42 --no-llm  # 跟踪指定居民
+python -m gaworld.group --size 500 --days 7 --network-coupling 0.7 --no-llm  # 开社交图耦合
+python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7
+
 # 日志模式
 GAWORLD_LOG_MODE=verbose python generative_city_sim.py run
 GAWORLD_LOG_LEVEL=DEBUG  python generative_city_sim.py run
@@ -793,7 +905,7 @@ GAWORLD_LOG_LEVEL=DEBUG  python generative_city_sim.py run
 
 ---
 
-## 17. 微内核插件架构：扩展 GAWorld
+## 18. 微内核插件架构：扩展 GAWorld
 
 自 2026-07 起，GAWorld 的所有子系统（干预、技能、兴趣成长、人生事件、
 经济、物理感知、真实工作、动态行为、空间偏好）都运行在统一的微内核

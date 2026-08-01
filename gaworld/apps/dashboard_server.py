@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from gaworld.settings import CONFIG
-from gaworld.apps import analytics
+from gaworld.apps import analytics, replay_runs
 from gaworld.events.life import add_life_event, list_life_event_templates, list_life_events
 from gaworld.integrations.fos_prompt import generate_fos_prompt
 from gaworld.logging_setup import get_logger
@@ -572,10 +572,16 @@ def _sync_profile_state_lines(agent_id, state):
         _save_agent_profile(agent_id, new_text)
 
 
+def _memory_base_dir():
+    return os.path.join(REPO_ROOT, _effective_config().get("memory_dir", "output/memory"))
+
+
+def _memory_file(agent_id, suffix=""):
+    return os.path.join(_memory_base_dir(), f"agent_{int(agent_id)}{suffix}.json")
+
+
 def _social_snapshot(agent_id):
-    memory_dir = _effective_config().get("memory_dir", "output/memory")
-    path = os.path.join(REPO_ROOT, memory_dir, f"agent_{agent_id}_relationships.json")
-    rels = _read_json_file(path, {})
+    rels = _read_json_file(_memory_file(agent_id, "_relationships"), {})
     if not isinstance(rels, dict) or not rels:
         return None
     tier_counts = {"inner": 0, "close": 0, "acquaintance": 0, "weak": 0}
@@ -598,6 +604,74 @@ def _social_snapshot(agent_id):
         })
     relations.sort(key=lambda r: r["closeness"], reverse=True)
     return {"count": len(relations), "tier_counts": tier_counts, "relations": relations[:40]}
+
+
+DUNBAR_TIER_KEYS = ("inner", "close", "acquaintance", "weak")
+
+# Shape a manually added tie starts from. The simulator's own relationship
+# schema (gaworld/social/network.py) fills the rest on first load; these are
+# the fields a hand-authored edge needs to be usable straight away.
+_MANUAL_RELATION_DEFAULTS = {
+    "kind": "ghost",
+    "tie_origin": "manual",
+    "channels": ["chat"],
+    "obligation": 0.4,
+    "obligation_base": 0.4,
+    "friction": 0.2,
+    "decay_rate": 0.002,
+    "last_interaction_day": 0,
+    "last_contact_day": 0,
+    "dunbar_tier": "acquaintance",
+}
+
+
+def _new_relation_key(rels):
+    index = 1
+    while f"manual_{index}" in rels:
+        index += 1
+    return f"manual_{index}"
+
+
+def _save_agent_relationships(agent_id, payload):
+    """Upsert / remove relationship edges edited in the Studio.
+
+    Only the fields the UI exposes (name / role / tier / closeness / trust)
+    are touched; every other key the simulator wrote — friction, channels,
+    interaction days — is preserved on existing edges. ``relations`` upserts,
+    ``removed`` deletes; ties outside the snapshot's top-40 window are left
+    alone because neither list mentions them.
+    """
+    path = _memory_file(agent_id, "_relationships")
+    rels = _read_json_file(path, {})
+    if not isinstance(rels, dict):
+        rels = {}
+    for key in payload.get("removed") or []:
+        rels.pop(str(key), None)
+    for item in payload.get("relations") or []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("id") or "").strip() or _new_relation_key(rels)
+        entry = rels.get(key)
+        if not isinstance(entry, dict):
+            entry = deepcopy(_MANUAL_RELATION_DEFAULTS)
+            rels[key] = entry
+        profile = entry.get("profile")
+        if not isinstance(profile, dict):
+            profile = {}
+            entry["profile"] = profile
+        name = str(item.get("name") or "").strip()
+        if name:
+            profile["name"] = name
+        role = str(item.get("role") or "").strip()
+        if role:
+            entry["role"] = role
+        if item.get("tier") in DUNBAR_TIER_KEYS:
+            entry["dunbar_tier"] = item["tier"]
+        for field in ("closeness", "trust"):
+            if item.get(field) is not None:
+                entry[field] = round(max(0.0, min(1.0, float(item[field]))), 4)
+    _atomic_write_json(path, rels)
+    return _social_snapshot(agent_id) or {"count": 0, "tier_counts": {}, "relations": []}
 
 
 def _scan_skill_dir(directory):
@@ -646,6 +720,181 @@ def _rag_snapshot(memory_items):
         if text.startswith("[额外信息"):
             items.append(text[:300])
     return {"count": len(items), "items": items[:20]}
+
+
+# --- Memory content (Studio step 4) -----------------------------------------
+# The counts alone don't say what an agent actually remembers, so the Studio
+# also reads the memory bodies. Lists are capped to keep the detail payload —
+# which the collaboration service reuses per LLM turn — from ballooning.
+
+RAG_TAG_PREFIX = "[额外信息"
+MANUAL_RAG_PREFIX = "[额外信息 | 来源:manual] "
+MEMORY_TEXT_MAX_CHARS = 600
+MEMORY_LIST_LIMIT = 300
+
+
+def _memory_items(memory):
+    rows = []
+    for index, raw in enumerate(memory if isinstance(memory, list) else []):
+        text = str(raw).strip()
+        if not text:
+            continue
+        rows.append({
+            "index": index,
+            "text": text[:MEMORY_TEXT_MAX_CHARS],
+            "rag": text.startswith(RAG_TAG_PREFIX),
+        })
+    return rows[-MEMORY_LIST_LIMIT:]
+
+
+def _habit_rows(habits):
+    """Flatten the ``{phase}|{scope}|{activity}`` habit map into sorted rows."""
+    rows = []
+    for key, item in (habits.items() if isinstance(habits, dict) else []):
+        if not isinstance(item, dict):
+            continue
+        parts = str(key).split("|")
+        rows.append({
+            "key": str(key),
+            "phase": parts[0] if parts else "",
+            "activity": parts[-1] if len(parts) > 1 else "",
+            "preferred_action": str(item.get("preferred_action") or ""),
+            "strength": _num(item.get("strength"), 0.0),
+            "last_updated_day": item.get("last_updated_day"),
+        })
+    rows.sort(key=lambda row: row["strength"], reverse=True)
+    return rows[:60]
+
+
+def _schedule_rows(schedule):
+    rows = []
+    for item in schedule if isinstance(schedule, list) else []:
+        if not isinstance(item, dict):
+            continue
+        rows.append({
+            "time": str(item.get("time") or ""),
+            "activity": str(item.get("activity") or ""),
+        })
+    return rows[:80]
+
+
+def _memory_detail(memory):
+    intentions = memory.get("intentions")
+    return {
+        "long_term": _memory_items(memory.get("memory")),
+        "habits": _habit_rows(memory.get("habits")),
+        "intentions": intentions if isinstance(intentions, dict) else {},
+        "schedule": _schedule_rows(memory.get("schedule")),
+    }
+
+
+def _index_memory_entry(agent_id, text):
+    """Mirror a hand-added memory into the vector DB when one is already built.
+
+    When the DB has no rows for this agent yet the simulator seeds it from the
+    JSON file on its next start, so writing here would be redundant. Failures
+    are swallowed: the JSON file is the source of truth and must not be held
+    hostage to an embedding backend.
+    """
+    try:
+        from gaworld.memory.store import vector_db_add_entry, vector_db_count_entries
+
+        if vector_db_count_entries(int(agent_id)) > 0:
+            vector_db_add_entry(int(agent_id), "memory", text)
+    except Exception:  # noqa: BLE001 - best-effort index, never blocks the write
+        _LOG.exception("vector index failed for agent %s", agent_id)
+
+
+def _append_agent_memory(agent_id, payload):
+    """Append one hand-written long-term memory or RAG snippet."""
+    kind = str(payload.get("kind") or "memory").strip().lower()
+    if kind not in ("memory", "rag"):
+        raise ValueError("kind must be 'memory' or 'rag'")
+    text = re.sub(r"\s+", " ", str(payload.get("text") or "")).strip()
+    if not text:
+        raise ValueError("text is required")
+    text = text[:MEMORY_TEXT_MAX_CHARS]
+    if kind == "rag" and not text.startswith(RAG_TAG_PREFIX):
+        text = MANUAL_RAG_PREFIX + text
+    path = _memory_file(agent_id)
+    items = _read_json_file(path, [])
+    if not isinstance(items, list):
+        items = []
+    items.append(text)
+    _atomic_write_json(path, items)
+    _index_memory_entry(agent_id, text)
+    return {
+        "kind": kind,
+        "text": text,
+        "count": len(items),
+        "long_term": _memory_items(items),
+        "rag": _rag_snapshot(items),
+    }
+
+
+# --- Finance (Studio step 7) ------------------------------------------------
+# The per-agent economy JSON is the simulator's live state and is reloaded on
+# the next stateful run, so that is what the Studio edits. The wealth snapshot
+# CSV is a run artifact — readable, but not a place to write back into.
+
+FINANCE_ACCOUNT_KEYS = ("checking", "savings", "investment", "housing_fund")
+FINANCE_AMOUNT_KEYS = ("debt", "gross_monthly_salary", "net_monthly_salary", "monthly_rent")
+FINANCE_RATE_KEYS = ("engel_coefficient", "savings_rate")
+# Liquid accounts only — mirrors _total_balance in gaworld/economy/finance.py.
+FINANCE_LIQUID_KEYS = ("checking", "savings", "investment")
+
+
+def _agent_finance(agent_id):
+    econ = _read_json_file(_memory_file(agent_id, "_economy"), {})
+    if isinstance(econ, dict) and econ:
+        accounts = econ.get("accounts") if isinstance(econ.get("accounts"), dict) else {}
+        payload = {
+            "source": "state",
+            "editable": True,
+            "currency": str(econ.get("currency") or "CNY"),
+            "accounts": {key: _num(accounts.get(key), 0.0) for key in FINANCE_ACCOUNT_KEYS},
+            "balance": _num(econ.get("balance"), 0.0),
+        }
+        payload.update({key: _num(econ.get(key), 0.0) for key in FINANCE_AMOUNT_KEYS})
+        payload.update({key: _num(econ.get(key), 0.0) for key in FINANCE_RATE_KEYS})
+        return payload
+    row = _finance_snapshot(agent_id)
+    if not row:
+        return None
+    payload = {
+        "source": "snapshot",
+        "editable": False,
+        "currency": str(row.get("currency") or "CNY"),
+        "accounts": {key: _num(row.get(key), 0.0) for key in FINANCE_ACCOUNT_KEYS},
+        "balance": _num(row.get("balance"), 0.0),
+    }
+    payload.update({key: _num(row.get(key), 0.0) for key in FINANCE_AMOUNT_KEYS})
+    payload.update({key: _num(row.get(key), 0.0) for key in FINANCE_RATE_KEYS})
+    return payload
+
+
+def _save_agent_finance(agent_id, payload):
+    path = _memory_file(agent_id, "_economy")
+    econ = _read_json_file(path, {})
+    if not isinstance(econ, dict) or not econ:
+        raise ValueError("No economy state for this agent yet — run the simulation once first")
+    accounts = econ.get("accounts")
+    if not isinstance(accounts, dict):
+        accounts = {}
+        econ["accounts"] = accounts
+    incoming = payload.get("accounts") if isinstance(payload.get("accounts"), dict) else {}
+    for key in FINANCE_ACCOUNT_KEYS:
+        if incoming.get(key) is not None:
+            accounts[key] = round(max(0.0, float(incoming[key])), 2)
+    for key in FINANCE_AMOUNT_KEYS:
+        if payload.get(key) is not None:
+            econ[key] = round(max(0.0, float(payload[key])), 2)
+    for key in FINANCE_RATE_KEYS:
+        if payload.get(key) is not None:
+            econ[key] = round(max(0.0, min(1.0, float(payload[key]))), 4)
+    econ["balance"] = round(sum(_num(accounts.get(key), 0.0) for key in FINANCE_LIQUID_KEYS), 2)
+    _atomic_write_json(path, econ)
+    return _agent_finance(agent_id)
 
 
 def _growth_snapshot(agent_id):
@@ -816,7 +1065,9 @@ def _agent_detail(agent_id):
         "state": state["state"],
         "profile_text": profile.get("text", ""),
         "memory_counts": memory_counts,
+        "memory": _memory_detail(memory),
         "finance": _finance_snapshot(agent_id),
+        "finance_state": _agent_finance(agent_id),
         "social": _social_snapshot(agent_id),
         "skills": _skills_library(),
         "private_skills": private_skills,
@@ -1048,6 +1299,12 @@ def _latest_trace_meta():
     }
 
 
+def _replay_runs():
+    """Every replayable trace on disk: the live run, archives, scenario runs."""
+    visualization_dir = _effective_config().get("visualization", {}).get("output_dir", "output/visualization")
+    return replay_runs.list_runs(REPO_ROOT, visualization_dir)
+
+
 def _current_trace_frame():
     latest = _latest_trace_meta().get("latest", {})
     if isinstance(latest, dict) and isinstance(latest.get("frame"), dict):
@@ -1164,6 +1421,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         return payload
 
     def _handle_api_get(self, path, query):
+        # Population Studio / group mode live in their own module; this file is
+        # already long enough without another subsystem's routes in it.
+        if path.startswith("/api/population"):
+            from gaworld.apps import population_api
+
+            payload, status = population_api.handle_get(path, query)
+            return self._json_response(payload, status=status)
+        if path.startswith("/api/external-systems"):
+            from gaworld.apps import external_systems_api
+
+            payload, status = external_systems_api.handle_get(path, query)
+            return self._json_response(payload, status=status)
         if path == "/api/config":
             return self._json_response(_config_summary())
         if path == "/api/agents":
@@ -1203,6 +1472,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self._json_response(_run_status())
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
+        if path == "/api/replay/runs":
+            return self._json_response({"runs": _replay_runs()})
         if path == "/api/life-events":
             return self._json_response(_life_events_payload())
         if path == "/api/collaboration/sessions":
@@ -1246,6 +1517,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _handle_api_post(self, path):
         payload = self._read_json_body()
+        if path.startswith("/api/population"):
+            from gaworld.apps import population_api
+
+            body, status = population_api.handle_post(path, payload)
+            return self._json_response(body, status=status)
+        if path.startswith("/api/external-systems"):
+            from gaworld.apps import external_systems_api
+
+            body, status = external_systems_api.handle_post(path, payload)
+            return self._json_response(body, status=status)
         if path == "/api/config":
             return self._json_response(_save_config_patch(payload))
         if path == "/api/agents":
@@ -1263,6 +1544,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 return self._json_response({"error": str(exc)}, status=400)
             return self._json_response(saved)
+        if path.startswith("/api/agents/") and path.endswith("/memory"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_append_agent_memory(agent_id, payload))
+        if path.startswith("/api/agents/") and path.endswith("/relationships"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_save_agent_relationships(agent_id, payload))
+        if path.startswith("/api/agents/") and path.endswith("/finance"):
+            agent_id = path.split("/")[3]
+            return self._json_response(_save_agent_finance(agent_id, payload))
         if path == "/api/run/start":
             return self._json_response(_start_simulation(payload))
         if path == "/api/run/stop":

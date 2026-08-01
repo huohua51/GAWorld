@@ -1,0 +1,594 @@
+// Export builders for the analytics view.
+//
+// Everything here is pure: it takes the payloads already loaded by
+// analytics.js plus the current picker selection, and returns strings (or
+// bytes, for the zip) ready to be handed to a Blob. Keeping it separate from
+// the renderers means the formats can be tested headlessly in node — see
+// analytics-export.test.js.
+(function (root, factory) {
+  "use strict";
+
+  var api = factory();
+  if (typeof module === "object" && module.exports) {
+    module.exports = api;
+  }
+  if (root) {
+    root.GAWorldAnalyticsExport = api;
+  }
+}(typeof window !== "undefined" ? window : globalThis, function () {
+  "use strict";
+
+  function num(value, digits) {
+    if (value == null || isNaN(value)) return "";
+    return Number(value).toFixed(digits == null ? 4 : digits);
+  }
+
+  function label(map, key) {
+    return (map && map[key]) || key;
+  }
+
+  function pad(value) {
+    return String(value).padStart(2, "0");
+  }
+
+  /* --------------------------------------------------------------- scope */
+
+  // What the user currently has selected, resolved against the payloads. The
+  // economy fallback mirrors renderEconomy(): when no selected agent has a
+  // ledger we show (and therefore export) every ledger rather than nothing.
+  function selection(state) {
+    var history = state.history && state.history.available ? state.history : null;
+    var economy = state.economy && state.economy.available ? state.economy : null;
+    var metrics = history
+      ? (state.metrics || []).filter(function (key) { return history.metrics.indexOf(key) >= 0; })
+      : [];
+    var agents = history
+      ? history.agents.filter(function (agent) {
+          return (state.agents || []).indexOf(String(agent.id)) >= 0;
+        })
+      : [];
+    var ledgers = [];
+    if (economy) {
+      ledgers = economy.ledger.filter(function (item) {
+        return !(state.agents || []).length || state.agents.indexOf(String(item.id)) >= 0;
+      });
+      if (!ledgers.length) ledgers = economy.ledger;
+    }
+    return {
+      metrics: metrics,
+      agents: agents,
+      econSeries: economy
+        ? (state.econSeries || []).filter(function (key) { return economy.series_keys.indexOf(key) >= 0; })
+        : [],
+      ledgers: ledgers,
+    };
+  }
+
+  function scopeSummary(state, labels) {
+    var pick = selection(state);
+    return {
+      metrics: pick.metrics.map(function (key) { return label(labels.metric, key); }),
+      agents: pick.agents.map(function (agent) { return agent.name; }),
+      econ_series: pick.econSeries.map(function (key) { return label(labels.econ, key); }),
+    };
+  }
+
+  /* ---------------------------------------------------------------- json */
+
+  // Raw payloads, trimmed to the current selection so the file matches what is
+  // on screen. Sections without a picker (social / behavior / events) are kept
+  // whole.
+  function buildJson(state, labels, stamp) {
+    var pick = selection(state);
+    var history = null;
+    if (state.history && state.history.available) {
+      history = {
+        available: true,
+        steps: state.history.steps,
+        sampled: state.history.sampled,
+        metrics: pick.metrics,
+        agents: pick.agents,
+        series: {},
+        deltas: {},
+      };
+      pick.metrics.forEach(function (metric) {
+        history.series[metric] = {};
+        history.deltas[metric] = {};
+        pick.agents.forEach(function (agent) {
+          var id = String(agent.id);
+          history.series[metric][id] = (state.history.series[metric] || {})[id] || [];
+          history.deltas[metric][id] = (state.history.deltas[metric] || {})[id] || {};
+        });
+      });
+    }
+
+    var economy = null;
+    if (state.economy && state.economy.available) {
+      economy = {
+        available: true,
+        series_keys: pick.econSeries,
+        ledger: pick.ledgers.map(function (item) {
+          var row = { id: item.id, name: item.name, days: item.days };
+          pick.econSeries.forEach(function (key) { row[key] = item[key] || []; });
+          return row;
+        }),
+        wealth: state.economy.wealth,
+        conservation: state.economy.conservation,
+        macro: state.economy.macro,
+        macro_timeline: state.economy.macro_timeline,
+        sectors: state.economy.sectors,
+      };
+    }
+
+    return {
+      exported_at: stamp,
+      scope: scopeSummary(state, labels),
+      overview: state.overview,
+      state_history: history,
+      economy: economy,
+      social: state.social,
+      behavior: state.behavior,
+      events: state.events,
+    };
+  }
+
+  /* ----------------------------------------------------------------- csv */
+
+  function csvCell(value) {
+    var text = value == null ? "" : String(value);
+    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  function csv(header, rows) {
+    return [header].concat(rows).map(function (row) {
+      return row.map(csvCell).join(",");
+    }).join("\r\n") + "\r\n";
+  }
+
+  // One file per figure on the page. Long format (one observation per row)
+  // wherever a series is involved, so the output loads straight into
+  // pandas/R without reshaping.
+  function buildCsvFiles(state, labels) {
+    var pick = selection(state);
+    var files = [];
+    var rows;
+
+    if (state.overview) {
+      var data = state.overview;
+      var meta = data.sim_meta || {};
+      rows = [
+        ["参与智能体", data.agent_count], ["状态指标数", data.metric_count],
+        ["状态采样步数", data.step_count], ["回放帧数", data.frame_count],
+        ["环境事件", data.event_total], ["日记条目", data.diary_count],
+        ["社会关系", data.relationship_total],
+        ["首日", data.day_span ? data.day_span.first : ""],
+        ["末日", data.day_span ? data.day_span.last : ""],
+        ["已完成", data.finished ? "true" : "false"],
+        ["仿真天数", meta.sim_days], ["每天秒数", meta.seconds_per_day],
+        ["时间步长", meta.time_step_minutes], ["地图", meta.map_path],
+        ["生成时间", data.generated_at], ["最后更新", data.last_updated],
+      ];
+      (data.top_movers || []).forEach(function (item) {
+        rows.push(["变化最显著 · " + label(labels.metric, item.metric), item.mean_delta]);
+      });
+      files.push({ name: "overview.csv", text: csv(["item", "value"], rows) });
+    }
+
+    if (pick.metrics.length && pick.agents.length) {
+      rows = [];
+      var deltaRows = [];
+      pick.metrics.forEach(function (metric) {
+        pick.agents.forEach(function (agent) {
+          var id = String(agent.id);
+          ((state.history.series[metric] || {})[id] || []).forEach(function (value, index) {
+            rows.push([metric, label(labels.metric, metric), agent.id, agent.name, index, num(value, 6)]);
+          });
+          var stats = (state.history.deltas[metric] || {})[id] || {};
+          deltaRows.push([
+            metric, label(labels.metric, metric), agent.id, agent.name,
+            num(stats.first, 6), num(stats.last, 6), num(stats.delta, 6),
+            num(stats.min, 6), num(stats.max, 6), num(stats.mean, 6),
+          ]);
+        });
+      });
+      files.push({
+        name: "state_history.csv",
+        text: csv(["metric", "metric_label", "agent_id", "agent_name", "step_index", "value"], rows),
+      });
+      files.push({
+        name: "state_deltas.csv",
+        text: csv(
+          ["metric", "metric_label", "agent_id", "agent_name", "first", "last", "delta", "min", "max", "mean"],
+          deltaRows),
+      });
+    }
+
+    if (pick.ledgers.length && pick.econSeries.length) {
+      rows = [];
+      pick.ledgers.forEach(function (item) {
+        (item.days || []).forEach(function (day, index) {
+          rows.push([item.id, item.name, day].concat(pick.econSeries.map(function (key) {
+            return num((item[key] || [])[index], 4);
+          })));
+        });
+      });
+      files.push({
+        name: "economy_ledger.csv",
+        text: csv(["agent_id", "agent_name", "day"].concat(pick.econSeries), rows),
+      });
+    }
+
+    if (state.economy && (state.economy.wealth || []).length) {
+      var wealthKeys = Object.keys(state.economy.wealth[0]).filter(function (key) {
+        return key !== "id" && key !== "name";
+      });
+      files.push({
+        name: "economy_wealth.csv",
+        text: csv(["agent_id", "agent_name"].concat(wealthKeys), state.economy.wealth.map(function (item) {
+          return [item.id, item.name].concat(wealthKeys.map(function (key) {
+            return typeof item[key] === "number" ? num(item[key], 4) : item[key];
+          }));
+        })),
+      });
+    }
+
+    if (state.social && state.social.available) {
+      var byId = {};
+      state.social.nodes.forEach(function (node) { byId[node.id] = node.label; });
+      files.push({
+        name: "social_links.csv",
+        text: csv(
+          ["source", "source_label", "target", "target_label", "role", "closeness", "trust", "obligation", "last_contact_day"],
+          state.social.links.map(function (link) {
+            return [
+              link.source, byId[link.source] || "", link.target, byId[link.target] || "",
+              link.role, num(link.closeness, 4), num(link.trust, 4), num(link.obligation, 4),
+              link.last_contact_day,
+            ];
+          })),
+      });
+    }
+
+    if (state.behavior && state.behavior.available) {
+      var behavior = state.behavior;
+      files.push({
+        name: "behavior_places.csv",
+        text: csv(["place", "visits"], behavior.places.map(function (item) {
+          return [item.name, item.visits];
+        })),
+      });
+      files.push({
+        name: "behavior_modes.csv",
+        text: csv(["mode", "trips"], behavior.modes.map(function (item) {
+          return [item.mode, item.trips];
+        })),
+      });
+      files.push({
+        name: "behavior_habits.csv",
+        text: csv(
+          ["agent_id", "agent_name", "period", "period_label", "context", "activity", "strength", "action", "last_updated_day"],
+          behavior.habits.map(function (habit) {
+            return [
+              habit.agent_id, habit.name, habit.period, label(labels.period, habit.period),
+              habit.context, habit.activity, num(habit.strength, 4), habit.action, habit.last_updated_day,
+            ];
+          })),
+      });
+      files.push({
+        name: "behavior_heatmap.csv",
+        text: csv(["period", "period_label", "context", "strength"],
+          (behavior.heatmap.cells || []).map(function (cell) {
+            return [cell.period, label(labels.period, cell.period), cell.context, num(cell.value, 4)];
+          })),
+      });
+      files.push({
+        name: "schedule_hours.csv",
+        text: csv(["hour", "count"], (behavior.schedule_hours || []).map(function (item) {
+          return [item.hour, item.count];
+        })),
+      });
+    }
+
+    if (state.events && state.events.available) {
+      rows = [];
+      state.events.timeline.forEach(function (frame) {
+        frame.events.forEach(function (event) {
+          rows.push([
+            frame.day, frame.date, frame.weekday, frame.day_type, event.type, event.topic,
+            event.name, event.scope, num(event.severity, 3),
+            (event.impact_tags || []).join("|"), event.description,
+          ]);
+        });
+      });
+      files.push({
+        name: "events.csv",
+        text: csv(
+          ["day", "date", "weekday", "day_type", "type", "topic", "name", "scope", "severity", "impact_tags", "description"],
+          rows),
+      });
+    }
+
+    return files;
+  }
+
+  /* ------------------------------------------------------------ markdown */
+
+  function mdTable(header, rows) {
+    if (!rows.length) return "_暂无数据_\n";
+    return "| " + header.join(" | ") + " |\n"
+      + "| " + header.map(function () { return "---"; }).join(" | ") + " |\n"
+      + rows.map(function (row) {
+        return "| " + row.map(function (cell) {
+          return String(cell == null ? "" : cell).replace(/\|/g, "\\|");
+        }).join(" | ") + " |";
+      }).join("\n") + "\n";
+  }
+
+  function buildMarkdown(state, labels, stamp) {
+    var pick = selection(state);
+    var out = ["# GAWorld 仿真结果分析", "", "导出时间：" + stamp, ""];
+
+    out.push("**导出范围**：" + [
+      "指标 " + (pick.metrics.length ? pick.metrics.map(function (k) { return label(labels.metric, k); }).join("、") : "无"),
+      "居民 " + (pick.agents.length ? pick.agents.map(function (a) { return a.name; }).join("、") : "无"),
+      "经济序列 " + (pick.econSeries.length ? pick.econSeries.map(function (k) { return label(labels.econ, k); }).join("、") : "无"),
+    ].join("；"), "");
+
+    var data = state.overview;
+    if (data) {
+      var meta = data.sim_meta || {};
+      out.push("## 运行总览", "");
+      out.push(mdTable(["项目", "数值"], [
+        ["参与智能体", data.agent_count], ["状态指标数", data.metric_count],
+        ["状态采样步数", data.step_count], ["回放帧数", data.frame_count],
+        ["环境事件", data.event_total], ["日记条目", data.diary_count],
+        ["社会关系", data.relationship_total],
+        ["天数范围", data.day_span ? "Day " + data.day_span.first + " – " + data.day_span.last : "—"],
+        ["运行状态", data.finished ? "已完成" : "运行中 / 部分数据"],
+        ["仿真天数", meta.sim_days == null ? "—" : meta.sim_days],
+        ["地图", meta.map_path || "—"],
+        ["最后更新", data.last_updated || "—"],
+      ]));
+      out.push("", "### 变化最显著的状态指标", "");
+      out.push(mdTable(["指标", "全体均值 Δ"], (data.top_movers || []).map(function (item) {
+        return [label(labels.metric, item.metric), (item.mean_delta > 0 ? "+" : "") + num(item.mean_delta, 3)];
+      })));
+    }
+
+    if (pick.metrics.length && pick.agents.length) {
+      out.push("", "## 智能体状态变化（首末对比）", "");
+      var rows = [];
+      pick.metrics.forEach(function (metric) {
+        pick.agents.forEach(function (agent) {
+          var stats = (state.history.deltas[metric] || {})[String(agent.id)] || {};
+          rows.push([
+            label(labels.metric, metric), agent.name,
+            num(stats.first, 3), num(stats.last, 3),
+            (stats.delta > 0 ? "+" : "") + num(stats.delta, 3),
+            num(stats.mean, 3),
+          ]);
+        });
+      });
+      out.push(mdTable(["指标", "居民", "起始", "结束", "Δ", "均值"], rows));
+    }
+
+    if (state.economy && state.economy.available) {
+      var macro = state.economy.macro || {};
+      out.push("", "## 经济", "", "### 宏观状态", "");
+      out.push(mdTable(["项目", "数值"], [
+        ["宏观周期", macro.phase || "—"],
+        ["通胀率", macro.inflation_rate == null ? "—" : (macro.inflation_rate * 100).toFixed(2) + "%"],
+        ["失业率", macro.unemployment_rate == null ? "—" : (macro.unemployment_rate * 100).toFixed(2) + "%"],
+        ["累计通胀", num(macro.cumulative_inflation, 4) || "—"],
+        ["货币守恒漂移", state.economy.conservation ? num(state.economy.conservation.drift, 6) : "—"],
+      ]));
+      out.push("", "### 最终财富排名（前 10）", "");
+      out.push(mdTable(["居民", "总资产"], state.economy.wealth.slice(0, 10).map(function (item) {
+        return [item.name, num(item.balance, 2)];
+      })));
+    }
+
+    if (state.social && state.social.available) {
+      out.push("", "## 社交关系", "");
+      out.push(mdTable(["分层", "数量"], Object.keys(state.social.tier_counts).map(function (tier) {
+        return [tier, state.social.tier_counts[tier]];
+      })));
+      out.push("", "### 关系角色分布", "");
+      out.push(mdTable(["角色", "数量"], Object.keys(state.social.role_counts).map(function (role) {
+        return [role, state.social.role_counts[role]];
+      })));
+    }
+
+    if (state.behavior && state.behavior.available) {
+      out.push("", "## 行为与空间", "", "### 高频地点（前 10）", "");
+      out.push(mdTable(["地点", "到访次数"], state.behavior.places.slice(0, 10).map(function (item) {
+        return [item.name, item.visits];
+      })));
+      out.push("", "### 出行方式", "");
+      out.push(mdTable(["方式", "出行次数"], state.behavior.modes.map(function (item) {
+        return [item.mode, item.trips];
+      })));
+      out.push("", "### 最强习惯（前 10）", "");
+      out.push(mdTable(["居民", "时段", "情境", "活动", "强度"],
+        state.behavior.habits.slice(0, 10).map(function (habit) {
+          return [
+            habit.name || habit.agent_id, label(labels.period, habit.period),
+            habit.context, habit.activity, num(habit.strength, 3),
+          ];
+        })));
+    }
+
+    if (state.events && state.events.available) {
+      out.push("", "## 环境与政策事件", "");
+      out.push(mdTable(["事件类型", "次数"], Object.keys(state.events.type_counts).map(function (type) {
+        return [type, state.events.type_counts[type]];
+      })));
+      out.push("", "### 影响标签分布", "");
+      out.push(mdTable(["标签", "次数"], Object.keys(state.events.impact_counts).map(function (tag) {
+        return [tag, state.events.impact_counts[tag]];
+      })));
+      var recent = [];
+      state.events.timeline.slice(-30).reverse().forEach(function (frame) {
+        frame.events.forEach(function (event) {
+          recent.push(["Day " + frame.day, event.type, event.name, event.scope, num(event.severity, 2)]);
+        });
+      });
+      out.push("", "### 最近事件", "");
+      out.push(mdTable(["天", "类型", "事件", "范围", "强度"], recent));
+    }
+
+    return out.join("\n").replace(/\n{3,}/g, "\n\n") + "\n";
+  }
+
+  /* ---------------------------------------------------------------- html */
+
+  function escapeHtml(text) {
+    return String(text == null ? "" : text).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  // The page already renders every figure as inline SVG, so a snapshot of the
+  // live markup plus the inlined stylesheets is a complete offline report —
+  // no chart library, no network, printable straight to PDF.
+  function buildHtmlReport(state, labels, stamp, bodyHtml, css) {
+    var scope = scopeSummary(state, labels);
+    var lines = [
+      ["导出时间", stamp],
+      ["状态指标", scope.metrics.join("、") || "无"],
+      ["居民", scope.agents.join("、") || "无"],
+      ["经济指标", scope.econ_series.join("、") || "无"],
+    ];
+    return "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n"
+      + '<meta charset="utf-8" />\n'
+      + '<meta name="viewport" content="width=device-width, initial-scale=1" />\n'
+      + "<title>GAWorld 仿真结果分析 · " + escapeHtml(stamp) + "</title>\n"
+      + "<style>\n" + css + "\n"
+      + ".an-report-scope{display:grid;gap:6px;padding:14px 16px;margin-bottom:4px;"
+      + "border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--card);font-size:12px}\n"
+      + ".an-report-scope b{color:var(--muted);font-weight:600;margin-right:8px}\n"
+      + ".an-table-wrap,.an-event-list{max-height:none;overflow:visible}\n"
+      // The hero's decorative overlay is the one asset the stylesheets pull
+      // from the server; dropping it keeps the file from touching the network.
+      + ".hero::before{display:none}\n"
+      + "@media print{body{background:#fff}.panel,.an-card{break-inside:avoid}}\n"
+      + "</style>\n</head>\n<body>\n<main class=\"shell\">\n"
+      + '<div class="an-report-scope">'
+      + lines.map(function (pair) {
+        return "<div><b>" + escapeHtml(pair[0]) + "</b>" + escapeHtml(pair[1]) + "</div>";
+      }).join("")
+      + "</div>\n" + bodyHtml + "\n</main>\n</body>\n</html>\n";
+  }
+
+  /* ----------------------------------------------------------------- zip */
+
+  var CRC_TABLE = (function () {
+    var table = new Int32Array(256), i, k, c;
+    for (i = 0; i < 256; i++) {
+      c = i;
+      for (k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      table[i] = c;
+    }
+    return table;
+  }());
+
+  function crc32(bytes) {
+    var c = -1;
+    for (var i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ -1) >>> 0;
+  }
+
+  // Store-only (method 0) zip writer. The payload is a handful of small CSVs,
+  // so skipping deflate costs nothing and keeps this dependency-free.
+  function zipStore(files, date) {
+    var encoder = new TextEncoder();
+    var when = date || new Date();
+    var dosTime = (when.getHours() << 11) | (when.getMinutes() << 5) | (when.getSeconds() >> 1);
+    var dosDate = ((when.getFullYear() - 1980) << 9) | ((when.getMonth() + 1) << 5) | when.getDate();
+
+    var entries = files.map(function (file) {
+      var name = encoder.encode(file.name);
+      // A BOM keeps Excel from mangling the Chinese column values.
+      var data = encoder.encode("﻿" + file.text);
+      return { name: name, data: data, crc: crc32(data) };
+    });
+
+    var localSize = entries.reduce(function (sum, e) { return sum + 30 + e.name.length + e.data.length; }, 0);
+    var centralSize = entries.reduce(function (sum, e) { return sum + 46 + e.name.length; }, 0);
+    var out = new Uint8Array(localSize + centralSize + 22);
+    var view = new DataView(out.buffer);
+    var offset = 0;
+
+    entries.forEach(function (entry) {
+      entry.offset = offset;
+      view.setUint32(offset, 0x04034b50, true);
+      view.setUint16(offset + 4, 20, true);
+      view.setUint16(offset + 6, 0x0800, true); // UTF-8 filenames
+      view.setUint16(offset + 8, 0, true);      // stored
+      view.setUint16(offset + 10, dosTime, true);
+      view.setUint16(offset + 12, dosDate, true);
+      view.setUint32(offset + 14, entry.crc, true);
+      view.setUint32(offset + 18, entry.data.length, true);
+      view.setUint32(offset + 22, entry.data.length, true);
+      view.setUint16(offset + 26, entry.name.length, true);
+      view.setUint16(offset + 28, 0, true);
+      out.set(entry.name, offset + 30);
+      out.set(entry.data, offset + 30 + entry.name.length);
+      offset += 30 + entry.name.length + entry.data.length;
+    });
+
+    var centralStart = offset;
+    entries.forEach(function (entry) {
+      view.setUint32(offset, 0x02014b50, true);
+      view.setUint16(offset + 4, 20, true);
+      view.setUint16(offset + 6, 20, true);
+      view.setUint16(offset + 8, 0x0800, true);
+      view.setUint16(offset + 10, 0, true);
+      view.setUint16(offset + 12, dosTime, true);
+      view.setUint16(offset + 14, dosDate, true);
+      view.setUint32(offset + 16, entry.crc, true);
+      view.setUint32(offset + 20, entry.data.length, true);
+      view.setUint32(offset + 24, entry.data.length, true);
+      view.setUint16(offset + 28, entry.name.length, true);
+      view.setUint16(offset + 30, 0, true);
+      view.setUint16(offset + 32, 0, true);
+      view.setUint16(offset + 34, 0, true);
+      view.setUint16(offset + 36, 0, true);
+      view.setUint32(offset + 38, 0, true);
+      view.setUint32(offset + 42, entry.offset, true);
+      out.set(entry.name, offset + 46);
+      offset += 46 + entry.name.length;
+    });
+
+    view.setUint32(offset, 0x06054b50, true);
+    view.setUint16(offset + 8, entries.length, true);
+    view.setUint16(offset + 10, entries.length, true);
+    view.setUint32(offset + 12, offset - centralStart, true);
+    view.setUint32(offset + 16, centralStart, true);
+    return out;
+  }
+
+  function timestamp(date) {
+    var when = date || new Date();
+    return when.getFullYear() + "-" + pad(when.getMonth() + 1) + "-" + pad(when.getDate())
+      + " " + pad(when.getHours()) + ":" + pad(when.getMinutes()) + ":" + pad(when.getSeconds());
+  }
+
+  function fileStamp(date) {
+    var when = date || new Date();
+    return String(when.getFullYear()) + pad(when.getMonth() + 1) + pad(when.getDate())
+      + "-" + pad(when.getHours()) + pad(when.getMinutes());
+  }
+
+  return {
+    selection: selection,
+    scopeSummary: scopeSummary,
+    buildJson: buildJson,
+    buildCsvFiles: buildCsvFiles,
+    buildMarkdown: buildMarkdown,
+    buildHtmlReport: buildHtmlReport,
+    zipStore: zipStore,
+    timestamp: timestamp,
+    fileStamp: fileStamp,
+  };
+}));

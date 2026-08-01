@@ -165,10 +165,31 @@ python generative_city_sim.py run
 
 如果你只想先验证流程可跑通，按上面 3 条命令执行即可。
 
-## 11. 想扩展 GAWorld？
+## 11. 想模拟几百人？
+
+上面的个体模式适合几十个 agent。人口上到几百，每天的 LLM 调用会变成十万量级，
+这时用**群体模式**：把人口划分成群体，每群每天只花 1 次 LLM 调用，
+同时每天挑一小批个体按完整保真度运行。
+
+```bash
+# 造一座 500 人的小镇（不写文件，只看结果）
+python -m gaworld.population --preset cn_county_town --size 500 --seed 42 --check
+
+# 按群体模拟 7 天（零 LLM 成本）
+python -m gaworld.group --size 500 --days 7 --no-llm
+
+# 验证这个近似能回答哪类研究问题
+python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7
+```
+
+第三条是关键：群体模式**不是**对所有研究问题都适用，验证门会直接告诉你哪类能答、哪类不能。
+Dashboard 里对应「人口与群体」页签。完整教程见
+[群体模拟教程](GROUP_SIMULATION_TUTORIAL.md)。
+
+## 12. 想扩展 GAWorld？
 
 所有子系统都运行在微内核插件接口上：写一个 `gaworld.kernel.Plugin`
 子类 + `CONFIG["plugins"]` 一行声明即可加新子系统，不用改核心代码；
 认知管线（感知 → 计划 → 行动 → 反思等 12 阶段）的消融与定制也只是
 改 `CONFIG["pipeline"]`。完整指南见
-[插件作者指南](PLUGIN_AUTHORING.md)与[完整教程第 17 章](TUTORIAL.v2.md#17-微内核插件架构扩展-gaworld)。
+[插件作者指南](PLUGIN_AUTHORING.md)与[完整教程第 18 章](TUTORIAL.v2.md#18-微内核插件架构扩展-gaworld)。

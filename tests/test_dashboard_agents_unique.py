@@ -7,6 +7,7 @@ carry a stale legacy-schema copy of Profile 05 (王思远) alongside the current
 these tests keep the data honest rather than papering over it in the loader.
 """
 
+import csv
 import os
 import re
 import shutil
@@ -18,6 +19,7 @@ import gaworld.apps.dashboard_server as ds
 
 REPO_ROOT = ds.REPO_ROOT
 REAL_MD = os.path.join(REPO_ROOT, "data", "hangzhou_profiles_with_names.md")
+REAL_CSV = os.path.join(REPO_ROOT, "data", "hangzhou_agents_state_init.csv")
 
 # The schema every current profile block uses. The retired one keyed its state
 # variables in Chinese under **可运行状态变量（示例）**.
@@ -35,6 +37,12 @@ def _profile_blocks(path):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         blocks.append((int(match.group(1)), match.group(2).strip(), text[match.start():end]))
     return blocks
+
+
+def _state_ids(path):
+    """Read the agent ids seeded by the state CSV. The file carries a UTF-8 BOM."""
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return [int(row["id"]) for row in csv.DictReader(f)]
 
 
 class TestSeedProfilesUnique(unittest.TestCase):
@@ -64,6 +72,26 @@ class TestSeedProfilesUnique(unittest.TestCase):
             if not CURRENT_STATE_RE.search(body)
         ]
         self.assertEqual([], missing, f"profiles missing **核心状态变量**: {missing}")
+
+
+class TestSeedFilesAgree(unittest.TestCase):
+    """The CSV seeds the simulator; the markdown drives ``/api/agents``.
+
+    An id in only one of them is invisible to half the system: a CSV-only agent
+    is simulated but cannot be listed or edited in the dashboard, and a
+    markdown-only agent shows a card that no state row backs. Profile 51
+    (内田有纪) was CSV-only until it was restored.
+    """
+
+    def test_csv_and_markdown_cover_the_same_agent_ids(self):
+        csv_ids = set(_state_ids(REAL_CSV))
+        md_ids = {agent_id for agent_id, _, _ in _profile_blocks(REAL_MD)}
+        self.assertEqual(
+            csv_ids,
+            md_ids,
+            "seed files disagree; "
+            f"CSV-only ids: {sorted(csv_ids - md_ids)}, markdown-only ids: {sorted(md_ids - csv_ids)}",
+        )
 
 
 class TestDuplicateHeaderIsDetectable(unittest.TestCase):

@@ -87,6 +87,10 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 单智能体采访 CLI
 - 本地 dashboard：配置编辑、profile 编辑、运行控制、记忆查看、访谈
 - Agent Studio：面向单个智能体的 7 步可视化构建/查看器——身份、九个 [0,1] 状态变量（可编辑雷达）、技能、分层记忆、Dunbar 社交圈、行为拨盘、复核/部署；改动写回状态 CSV 与 profile Markdown，并可创建新智能体
+- 参数化人口合成：把面板级旋钮（规模、年龄金字塔、就业率、收入基尼、家庭结构、社交图形态）变成一座完整的小镇——IPF 拟合联合分布（含结构性零）、最大余数法整数化让边缘精确命中、收入用秩变换使中位数与基尼严格成立同时仍与教育/行业相关、儿童优先建户、幂律规模的工作单位。产出与现有格式完全一致的状态 CSV + profile Markdown，`build_agent` 无需改动
+- 群体（cohort）模拟：把居民划分成同时携带**均值与离散度**的群体，每群每天只花 1 次 LLM 调用，并按预算把一小批个体（focal / event / tail / audit）提升到完整保真度；群内零均值的社交图耦合项让邻居共变在聚合后依然存在。实体化预算 20 人/天时约比逐个体模拟省 25 倍
+- 群体模式验证门（L1–L4）：配对实验，量化 cohort 近似的代价——分布距离、网络共变、尾部保留、政策冲击下的因果响应；判定阈值来自参照层自身的跨种子噪声，而不是拍脑袋的常数。分水岭层不通过时退出码非零，可直接进 CI
+- Population Studio：5 步 dashboard 面板，生成人口 → 群体模拟 → 阅读验证结论，并带实时可行性预检（参数冲突时直接指出该动哪个旋钮）
 - 多机分布式 relay 通信模式
 
 ## 项目结构
@@ -140,8 +144,10 @@ GAWorld/
 - `gaworld/world/city_map.py`：图结构、路线、出行成本、天气/高峰效应
 - `gaworld/sim/`：从主仿真器拆分出来的子模块（持续细化中）
 - `gaworld/work/`：real-work 任务系统（runtime、worker pool、queue、market）
-- `gaworld/apps/`：dashboard、外部环境服务器、分布式 relay
-- `site/dashboard/`：dashboard 前端（控制台 `index.html` + Agent Studio `studio.html`）
+- `gaworld/population/`：参数化人口合成——`schema`（旋钮契约 + 可行性预检）、`synth`（IPF + 条件采样 + 收入秩变换）、`network`（家庭、工作单位、同质性社交图）、`report`（校验门 + 复核图表）、`writer`（状态 CSV + profile MD + manifest）
+- `gaworld/group/`：群体（cohort）模拟——`cohort`（划分、均值**与**离散度、群内零均值网络耦合）、`cohort_day`（每群每天 1 次 LLM 调用）、`materialize`（focal/event/tail/audit 选取与审计残差）、`driver`（日循环 + 成本核算）、`metrics` + `validate`（L1–L4 验证门）、`plugin`（观测型 cohort 遥测）
+- `gaworld/apps/`：dashboard、外部环境服务器、分布式 relay，以及 `population_api`（Population Studio 后端）
+- `site/dashboard/`：dashboard 前端（控制台 `index.html` + Agent Studio `studio.html` + Population Studio `population.html`）
 - `site/simviz/`：轨迹回放页面
 - `output/`：生成结果
 
@@ -276,6 +282,27 @@ python scripts/generate_citymap.py --description "a small city with about 1000 r
 python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877
 ```
 
+### 人口合成与群体模拟
+
+参数化造一座小镇 → 按群体模拟 → 验证这个近似能回答哪类问题。三步都可以**零 LLM 成本**跑通。
+完整教程见 [群体模拟教程](./docs/GROUP_SIMULATION_TUTORIAL.md)。
+
+```bash
+# 预览一座 500 人的小镇（不写文件）
+python -m gaworld.population --preset cn_county_town --size 500 --seed 42 --check
+
+# 写出文件（状态 CSV + profile Markdown + 可复现 manifest）
+python -m gaworld.population --size 500 --seed 42 --name my_town --out data/town
+
+# 按群体模拟 7 天
+python -m gaworld.group --size 500 --days 7 --no-llm
+
+# 跑 L1–L4 验证门（分水岭层不通过时退出码为 1）
+python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7
+```
+
+生成的文件与仿真器现有格式完全一致，可以直接填进 `CONFIG["csv_path"]` / `CONFIG["md_path"]`。
+
 ## Dashboard
 
 本地 dashboard 支持：
@@ -322,6 +349,43 @@ Agent Studio 是面向单个智能体的可视化构建/查看器，可从控制
 | POST | `/api/agents/{id}/state` | 写状态/身份到 CSV（并同步 profile） |
 | POST | `/api/agents` | 创建新智能体（CSV 行 + profile 块） |
 
+### Population Studio
+
+Population Studio 是 Agent Studio 的群体版：Agent Studio 造一个居民，Population Studio 造一座
+小镇并按群体模拟它。可从控制台 tab（**人口与群体**）进入，或直接访问
+`http://127.0.0.1:8766/site/dashboard/population.html`。五个步骤：
+
+1. **选模板** —— preset、规模、种子；选中的预设会给出白话说明和「什么时候用它」，不再只留一个标识符
+2. **人口结构** —— 年龄/家庭/就业/收入旋钮，**目标 vs 实际对照表**，年龄金字塔、洛伦兹曲线、度分布
+3. **心理状态** —— 九维状态变量，群体均值雷达 + P25–P75 包络（群体是分布，只画均值多边形会误报）
+4. **跑模拟** —— 天数、实体化预算、审计比例、网络耦合强度、**后端模型**；跑完显示每日群体简报与实测 LLM 成本
+5. **检查结果** —— L1–L4 判定的白话解读，以及写出的人口文件（可直接点开）
+
+**中英文双标**：所有指标都写成「压力 stress」这样的双语标注，标签由 schema 端点下发，
+面板不再自己抄一份中文名。
+
+**验证结论说人话**：先给一句话结论，再给「这次结果可以用来 / 不要用来」两栏清单
+（由通过的层自动推出）——读的人真正要的是「这次跑出来的能不能拿去下结论」，
+而不是 z 值本身。完整技术输出折叠在下面，没有丢。
+
+**写出的文件可直接打开**：状态表 / 人物志 / 生成记录三个文件各带「在新标签打开」「下载」
+和一段前几行预览。dashboard 本来就静态托管仓库根目录，所以仓库内的文件点开即可查看。
+
+右侧常驻**参数体检**：不生成任何人、瞬时返回、参数冲突时直接指出该动哪个旋钮并给出可达区间。
+
+后端 API（由 `dashboard_server.py` 转发到 `gaworld/apps/population_api.py`）：
+
+| 方法 | 端点 | 用途 |
+|------|------|------|
+| GET | `/api/population/schema` | 旋钮契约——由后端下发，不在 JS 里再抄一份 |
+| POST | `/api/population/preview` | 纯数学可行性预检 |
+| POST | `/api/population/generate` | 启动生成 → `job_id` |
+| GET | `/api/population/jobs/{id}` | 轮询进度 / 结果 |
+| POST | `/api/population/group-run` | 对上一次生成的人口跑群体模拟 |
+| POST | `/api/population/validate` | 跑 L1–L4 验证门 |
+
+生成与模拟都是异步 job，500 人的生成不会把浏览器卡住。
+
 ## 配置说明
 
 基础配置位于 `config.py`。
@@ -332,6 +396,7 @@ Agent Studio 是面向单个智能体的可视化构建/查看器，可从控制
 - `sim_days`：仿真天数
 - `seconds_per_day`：每个模拟日对应的现实秒数
 - `time_step_minutes`：可选固定时间步长
+- `time_grid_snap`：把每个 agent 的日程对齐到该网格（默认 `False`）。**只设 `time_step_minutes` 不够**——主时间线是网格与每个 agent 的 LLM 自拟 `HH:MM` 时间的**并集**，而后者没有对齐逻辑，于是 tick 数（进而 LLM 成本）随 agent 数超线性增长。开启对齐后 tick 数恒等于 `1440 / step`，与人口规模无关。默认关闭是因为它会改变日内时序
 - `llm.providers`：模型 provider 列表
 - `llm.routing.default`：默认 provider
 - `llm.routing.tasks`：按任务覆盖 provider
@@ -674,6 +739,7 @@ LLM 调用之前完成决策。
 - [真实工作系统 — 使用](./docs/REAL_WORK_USAGE.md) · [设计](./docs/REAL_WORK_DESIGN.md)
 - [物理环境感知与反应式重规划](./docs/physical_env_perception_changelog.md)
 - [社交网络 — 设计](./docs/SOCIAL_NETWORK_DESIGN.md) · [教程](./docs/SOCIAL_NETWORK_TUTORIAL.md)
+- [群体模拟 — 教程](./docs/GROUP_SIMULATION_TUTORIAL.md) · [设计](./docs/GROUP_AGENT_DESIGN.md)（人口合成、cohort 模式、L1–L4 验证门）
 - [项目结构](./docs/PROJECT_STRUCTURE.md)
 - [仓库规范](./AGENTS.md)
 - [更新日志](./CHANGELOG.md)

@@ -46,6 +46,9 @@
     econSeries: ["balance", "income", "expense"],
   };
 
+  var LABELS = { metric: METRIC_LABELS, econ: ECON_LABELS, period: PERIOD_LABELS };
+  var exporter = window.GAWorldAnalyticsExport;
+
   function $(id) { return document.getElementById(id); }
 
   function esc(text) {
@@ -675,6 +678,110 @@
     }), { labelWidth: 120 });
   }
 
+  /* ----------------------------------------------------------------- export */
+
+  function showRunStatus() {
+    var status = $("anStatus");
+    if (!state.overview) return;
+    status.textContent = state.overview.finished ? "已完成的运行" : "运行中 / 部分数据";
+    status.className = "an-status" + (state.overview.finished ? " is-ok" : " is-busy");
+  }
+
+  function download(filename, blob) {
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
+  // Snapshot of the rendered page with the interactive chrome removed. Every
+  // figure is already inline SVG, so this alone is the whole report body.
+  function reportBody() {
+    var clone = document.querySelector("main.shell").cloneNode(true);
+    Array.prototype.forEach.call(
+      clone.querySelectorAll(".hero-status, .an-pickers, .help-tip, .an-export"),
+      function (node) { node.remove(); });
+    return clone.innerHTML;
+  }
+
+  // Inline the page's own stylesheets so the report renders identically with
+  // no server behind it.
+  async function reportCss() {
+    var hrefs = Array.prototype.map.call(
+      document.querySelectorAll('link[rel="stylesheet"]'),
+      function (link) { return link.getAttribute("href"); });
+    var sheets = await Promise.all(hrefs.map(function (href) {
+      return fetch(href).then(function (res) { return res.ok ? res.text() : ""; })
+        .catch(function () { return ""; });
+    }));
+    return sheets.join("\n");
+  }
+
+  async function runExport(kind) {
+    var now = new Date();
+    var base = "gaworld-analytics-" + exporter.fileStamp(now);
+    var stamp = exporter.timestamp(now);
+    if (kind === "json") {
+      download(base + ".json", new Blob(
+        [JSON.stringify(exporter.buildJson(state, LABELS, stamp), null, 2)],
+        { type: "application/json" }));
+    } else if (kind === "md") {
+      download(base + ".md", new Blob(
+        [exporter.buildMarkdown(state, LABELS, stamp)],
+        { type: "text/markdown;charset=utf-8" }));
+    } else if (kind === "csv") {
+      var files = exporter.buildCsvFiles(state, LABELS);
+      if (!files.length) throw new Error("没有可导出的数据");
+      download(base + "-csv.zip", new Blob(
+        [exporter.zipStore(files, now)], { type: "application/zip" }));
+    } else {
+      var css = await reportCss();
+      download(base + ".html", new Blob(
+        [exporter.buildHtmlReport(state, LABELS, stamp, reportBody(), css)],
+        { type: "text/html;charset=utf-8" }));
+    }
+  }
+
+  function bindExport() {
+    var menu = $("anExport");
+    var panel = menu.querySelector(".an-export-menu");
+
+    // The dropdown escapes the hero's overflow clipping by being fixed, which
+    // means its position has to be pinned to the summary on every open.
+    menu.addEventListener("toggle", function () {
+      if (!menu.open) return;
+      var rect = menu.querySelector("summary").getBoundingClientRect();
+      panel.style.top = rect.bottom + 6 + "px";
+      panel.style.left = Math.max(8, rect.right - panel.offsetWidth) + "px";
+    });
+    window.addEventListener("scroll", function () { menu.open = false; }, true);
+
+    menu.addEventListener("click", async function (event) {
+      var button = event.target.closest("[data-export]");
+      if (!button) return;
+      menu.open = false;
+      var status = $("anStatus");
+      try {
+        await runExport(button.dataset.export);
+        status.textContent = "已导出";
+        status.className = "an-status is-ok";
+        // The chip belongs to the run, so hand it back after the notice.
+        setTimeout(showRunStatus, 2500);
+      } catch (error) {
+        status.textContent = "导出失败：" + error.message;
+        status.className = "an-status is-error";
+      }
+    });
+    // Clicking anywhere else closes the dropdown, matching native menu feel.
+    document.addEventListener("click", function (event) {
+      if (menu.open && !menu.contains(event.target)) menu.open = false;
+    });
+  }
+
   /* ----------------------------------------------------------------- wiring */
 
   function pickDefaults() {
@@ -764,8 +871,7 @@
       renderBehavior();
       renderEvents();
 
-      status.textContent = state.overview.finished ? "已完成的运行" : "运行中 / 部分数据";
-      status.className = "an-status" + (state.overview.finished ? " is-ok" : " is-busy");
+      showRunStatus();
     } catch (error) {
       status.textContent = "加载失败：" + error.message;
       status.className = "an-status is-error";
@@ -773,5 +879,6 @@
   }
 
   bindPickers();
+  bindExport();
   load();
 })();

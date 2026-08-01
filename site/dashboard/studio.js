@@ -27,6 +27,13 @@ const store = {
   draft: null, // { identity:{...}, state:{...}, profile_text, narrative:{personality, job} }
   goalsDraft: null, // working copy of the three-tier goals, edited inline in step 6
   goalSeq: 0, // counter for client-side ids of newly added goals
+  stateDirty: false, // step 2 sliders moved but not yet confirmed
+  socialDraft: null, // working copy of the relationship edges, edited inline in step 5
+  socialRemoved: [], // ids deleted from socialDraft, sent with the next save
+  financeDraft: null, // working copy of the editable finance state (step 7)
+  memGraph: null, // { svg, nodes } for the inline memory graph
+  memGraphBig: null, // { svg, nodes } for the zoomed modal graph
+  memPick: null, // index into memGraph.nodes of the node whose body is shown
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -129,6 +136,11 @@ async function selectAgent(id) {
   store.detail = d;
   store.draft = draftFromDetail(d);
   store.goalsDraft = cloneGoals(d.goals);
+  store.socialDraft = cloneRelations(d.social);
+  store.socialRemoved = [];
+  store.financeDraft = cloneFinance(d.finance_state);
+  store.stateDirty = false;
+  store.memPick = null;
   $("#saveHint").textContent = "已加载 · 自动回填";
   renderSubject();
   renderStep();
@@ -140,6 +152,11 @@ function startCreate() {
   store.detail = null;
   store.draft = blankDraft();
   store.goalsDraft = null;
+  store.socialDraft = null;
+  store.socialRemoved = [];
+  store.financeDraft = null;
+  store.stateDirty = false;
+  store.memPick = null;
   store.step = 1;
   setActiveStepButton();
   $("#saveHint").textContent = "新建居民（未保存）";
@@ -227,11 +244,33 @@ function stepState() {
     </div>`).join("");
   return `
     <h2 class="section-title">状态 · 性格</h2>
-    <p class="section-note">九个归一化 [0,1] 状态变量——GAWorld 的“性格与内在状态”。拖动即时更新雷达。</p>
+    <p class="section-note">九个归一化 [0,1] 状态变量——GAWorld 的“性格与内在状态”。拖动即时更新雷达，调整后点“确认修改”写入 CSV 与 profile。</p>
     <div class="cols side">
-      <div class="card">${rows}</div>
+      <div class="card">${rows}
+        <div class="confirm-bar">
+          <span class="confirm-hint" id="stateHint">${store.stateDirty ? "有未确认的修改" : "与已保存的设定一致"}</span>
+          <button type="button" id="confirmStateBtn" class="button primary"${store.stateDirty ? "" : " disabled"}>确认修改</button>
+        </div>
+      </div>
       <div class="card"><h3>状态雷达</h3><div class="viz-wrap" id="bigRadar">${radarSVG(st, true)}</div></div>
     </div>`;
+}
+
+function markStateDirty() {
+  store.stateDirty = true;
+  const hint = $("#stateHint");
+  if (hint) hint.textContent = "有未确认的修改";
+  const btn = $("#confirmStateBtn");
+  if (btn) btn.disabled = false;
+}
+
+async function confirmState() {
+  if (!(await save())) return;
+  store.stateDirty = false;
+  const hint = $("#stateHint");
+  if (hint) hint.textContent = "已确认并写入";
+  const btn = $("#confirmStateBtn");
+  if (btn) btn.disabled = true;
 }
 
 const KIND_LABELS = { hobby: "兴趣", skill: "技能" };
@@ -296,34 +335,224 @@ function stepSkills() {
     </div>`;
 }
 
-function stepMemory() {
-  const c = (store.detail && store.detail.memory_counts) || { long_term: 0, habits: 0, intentions: 0, schedule: 0 };
-  const total = c.long_term + c.habits + c.intentions + c.schedule;
-  // dot cloud whose density reflects memory volume
-  const n = Math.min(240, 40 + total * 4);
-  let dots = "";
-  let seed = (store.currentId || 7) * 97 + 13;
-  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-  for (let k = 0; k < n; k++) {
-    const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * 96;
-    dots += `<circle cx="${(120 + Math.cos(a) * r).toFixed(1)}" cy="${(120 + Math.sin(a) * r).toFixed(1)}" r="${(0.8 + rnd() * 1.6).toFixed(1)}" fill="#385866" opacity="${(0.25 + rnd() * 0.55).toFixed(2)}"/>`;
+/* ---------- memory (step 4) ---------- */
+const MEMORY_GROUPS = [
+  { key: "long", label: "长期记忆", color: "#385866" },
+  { key: "rag", label: "外部知识", color: "#d6a81e" },
+  { key: "habit", label: "习惯", color: "#13795b" },
+  { key: "intent", label: "意图", color: "#17211d" },
+  { key: "sched", label: "日程", color: "#7a8b80" },
+];
+const INTENT_LABELS = {
+  priorities: "优先事项", avoidances: "回避", target_social: "社交目标",
+  target_recovery: "恢复目标", growth_focus: "成长焦点",
+};
+const PHASE_LABELS = { morning: "上午", afternoon: "下午", evening: "傍晚", night: "夜间" };
+
+/** Strip the [额外信息…] tag and the trailing bigram keyword tail. */
+function memoryBody(text) {
+  return String(text || "").replace(/^\[额外信息[^\]]*\]\s*/, "").split("关键词:")[0].trim();
+}
+function preview(text, n = 16) {
+  const t = String(text || "").trim();
+  return t.length > n ? t.slice(0, n) + "…" : t;
+}
+
+/** Turn the detail payload's memory bodies into graph groups + list rows. */
+function memoryGroups() {
+  const mem = (store.detail && store.detail.memory) || {};
+  const long = [], rag = [];
+  (mem.long_term || []).forEach((item) => {
+    const body = memoryBody(item.text) || item.text;
+    (item.rag ? rag : long).push({ title: preview(body), text: body });
+  });
+  const habit = (mem.habits || []).map((h) => ({
+    title: preview(h.activity || h.key),
+    text: `${PHASE_LABELS[h.phase] || h.phase || ""} · ${h.activity || h.key}\n倾向动作：${h.preferred_action || "—"}\n强度 ${clamp01(h.strength).toFixed(2)}${h.last_updated_day == null ? "" : ` · 第 ${h.last_updated_day} 天更新`}`,
+  }));
+  const intent = [];
+  Object.keys(mem.intentions || {}).forEach((key) => {
+    const value = mem.intentions[key];
+    (Array.isArray(value) ? value : [value]).filter(Boolean).forEach((v) => {
+      intent.push({ title: preview(String(v)), text: `${INTENT_LABELS[key] || key}：${v}` });
+    });
+  });
+  const sched = (mem.schedule || []).map((s) => ({
+    title: `${s.time} ${preview(s.activity, 8)}`,
+    text: `${s.time} · ${s.activity}`,
+  }));
+  const byKey = { long, rag, habit, intent, sched };
+  return MEMORY_GROUPS.map((g) => Object.assign({}, g, { items: byKey[g.key] || [] }));
+}
+
+/** Radial graph: agent at the centre, one hub per memory kind, items as leaves. */
+function memoryGraphSVG(groups, size, maxLeaves) {
+  const cx = size / 2, cy = size / 2;
+  const active = groups.filter((g) => g.items.length);
+  const nodes = [];
+  if (!active.length) {
+    return { svg: `<svg viewBox="0 0 ${size} ${size}"><text x="${cx}" y="${cy}" font-size="${size / 20}" fill="#5c6860" text-anchor="middle">尚无记忆</text></svg>`, nodes, hidden: 0 };
   }
+  const hubR = size * 0.23, leafRa = size * 0.36, leafRb = size * 0.44;
+  const leafSize = size > 400 ? 5.5 : 3.6;
+  let edges = "", hubs = "", dots = "", labels = "";
+  let hidden = 0;
+  active.forEach((g, gi) => {
+    const a0 = (-90 + (gi * 360) / active.length) * (Math.PI / 180);
+    const hx = cx + Math.cos(a0) * hubR, hy = cy + Math.sin(a0) * hubR;
+    edges += `<line x1="${cx}" y1="${cy}" x2="${hx.toFixed(1)}" y2="${hy.toFixed(1)}" stroke="#cbd7cd" stroke-width="1.2"/>`;
+    const shown = g.items.slice(0, maxLeaves);
+    hidden += g.items.length - shown.length;
+    const span = ((Math.PI * 2) / active.length) * 0.8;
+    shown.forEach((item, li) => {
+      const t = shown.length === 1 ? 0.5 : li / (shown.length - 1);
+      const a = a0 - span / 2 + span * t;
+      const r = li % 2 ? leafRb : leafRa;
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      const idx = nodes.length;
+      nodes.push({ title: item.title, text: item.text, group: g.label, color: g.color });
+      edges += `<line x1="${hx.toFixed(1)}" y1="${hy.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#e0e8e0" stroke-width="1"/>`;
+      dots += `<circle class="mem-node" data-node="${idx}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${leafSize}" fill="${g.color}"><title>${esc(item.title)}</title></circle>`;
+    });
+    hubs += `<circle class="mem-hub" cx="${hx.toFixed(1)}" cy="${hy.toFixed(1)}" r="${leafSize * 1.7}" fill="#fff" stroke="${g.color}" stroke-width="2"/>`;
+    // Label rides the clear band between the hub and its leaves, with a white
+    // halo so it stays legible where it crosses a spoke.
+    const lr = (hubR + leafRa) / 2;
+    labels += `<text x="${(cx + Math.cos(a0) * lr).toFixed(1)}" y="${(cy + Math.sin(a0) * lr).toFixed(1)}" font-size="${size / 26}" fill="${g.color}" text-anchor="middle" stroke="#fff" stroke-width="3" paint-order="stroke">${g.label} ${g.items.length}</text>`;
+  });
+  const centre = `<circle cx="${cx}" cy="${cy}" r="${leafSize * 1.3}" fill="#17211d"/>`;
+  return {
+    svg: `<svg viewBox="0 0 ${size} ${size}" class="mem-graph">${edges}${dots}${hubs}${centre}${labels}</svg>`,
+    nodes,
+    hidden,
+  };
+}
+
+function memoryNodeInfo(node) {
+  if (!node) return `<p class="section-note">点击图谱节点查看该条记忆的完整内容。</p>`;
+  return `<span class="chip" style="border-color:${node.color};color:${node.color}">${esc(node.group)}</span>
+    <p class="mem-node-text">${esc(node.text)}</p>`;
+}
+
+function memoryListCard(title, count, rowsHTML, emptyNote) {
+  return `<div class="card"><h3>${title} <span class="tag">${count}</span></h3>
+    ${count ? `<div class="mem-list">${rowsHTML}</div>` : `<p class="section-note">${emptyNote}</p>`}</div>`;
+}
+
+function stepMemory() {
+  const d = store.detail || {};
+  const c = d.memory_counts || { long_term: 0, habits: 0, intentions: 0, schedule: 0 };
+  const mem = d.memory || {};
+  const total = c.long_term + c.habits + c.intentions + c.schedule;
+  const groups = memoryGroups();
+  store.memGraph = memoryGraphSVG(groups, 260, 10);
+  const pick = store.memPick == null ? null : store.memGraph.nodes[store.memPick];
+
+  const longRows = (mem.long_term || []).slice().reverse().map((item) =>
+    `<div class="mem-row${item.rag ? " is-rag" : ""}"><span class="mem-idx">#${item.index}</span>
+      <span class="mem-text">${esc(memoryBody(item.text) || item.text)}</span></div>`).join("");
+  const habitRows = (mem.habits || []).map((h) =>
+    `<div class="bar-row"><div class="bl"><b>${esc(h.activity || h.key)} <span class="tag">${PHASE_LABELS[h.phase] || esc(h.phase)}</span></b>
+      <small>${esc(h.preferred_action || "—")}${h.last_updated_day == null ? "" : ` · 第 ${h.last_updated_day} 天更新`}</small></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.round(clamp01(h.strength) * 100)}%"></div></div></div>`).join("");
+  const intentRows = Object.keys(mem.intentions || {}).map((key) => {
+    const value = mem.intentions[key];
+    const list = (Array.isArray(value) ? value : [value]).filter(Boolean);
+    if (!list.length) return "";
+    return `<div class="mem-row"><span class="mem-idx">${esc(INTENT_LABELS[key] || key)}</span>
+      <span class="mem-text">${list.map((v) => esc(String(v))).join("、")}</span></div>`;
+  }).join("");
+  const schedRows = (mem.schedule || []).map((s) =>
+    `<div class="mem-row"><span class="mem-idx">${esc(s.time)}</span><span class="mem-text">${esc(s.activity)}</span></div>`).join("");
+
   return `
     <h2 class="section-title">记忆</h2>
-    <p class="section-note">分层记忆：情节 / 语义 / 程序。计数来自 output/memory，随仿真积累。</p>
+    <p class="section-note">分层记忆：长期记忆 / 习惯 / 意图 / 日程，读自 output/memory，随仿真积累，也可在此手动补写。</p>
     <div class="cols side">
       <div class="card">
         <div class="stat-grid">
           <div class="stat"><div class="n">${c.long_term}</div><div class="l">长期记忆</div></div>
           <div class="stat"><div class="n">${c.habits}</div><div class="l">习惯</div></div>
-          <div class="stat"><div class="n">${c.intentions}</div><div class="l">意图</div></div>
+          <div class="stat"><div class="n">${Object.keys(mem.intentions || {}).length || c.intentions}</div><div class="l">意图</div></div>
           <div class="stat"><div class="n">${c.schedule}</div><div class="l">日程</div></div>
         </div>
-        <p class="section-note" style="margin-top:14px">${total ? "该居民已有记忆痕迹。" : "尚无记忆——运行仿真后此处填充。"}</p>
+        <p class="section-note" style="margin-top:14px">${total ? "该居民已有记忆痕迹。" : "尚无记忆——运行仿真后此处填充，或在下方手动添加。"}</p>
       </div>
-      <div class="card"><h3>记忆图谱</h3><div class="viz-wrap"><svg viewBox="0 0 240 240">${dots}</svg></div></div>
+      <div class="card"><h3>记忆图谱
+          <button type="button" id="memZoomBtn" class="mini-btn" title="放大查看">⤢ 放大</button></h3>
+        <div class="viz-wrap" id="memGraphBox">${store.memGraph.svg}</div>
+        ${store.memGraph.hidden ? `<p class="section-note">图中每类最多显示 10 个节点，另有 ${store.memGraph.hidden} 个在放大视图中查看。</p>` : ""}
+        <div class="mem-node-info" id="memNodeInfo">${memoryNodeInfo(pick)}</div>
+      </div>
     </div>
-    ${ragCard(store.detail && store.detail.rag)}`;
+    <div class="card">
+      <h3>手动添加记忆 / RAG</h3>
+      ${field("类型", `<select id="memKind"><option value="memory">长期记忆</option><option value="rag">外部 RAG 知识</option></select>`)}
+      <label class="field"><span>内容</span>
+        <textarea id="memText" placeholder="例如：上个月在武林街道租房被中介多收了一笔费用，之后对中介很警惕。"></textarea></label>
+      <div class="confirm-bar">
+        <span class="confirm-hint">长期记忆直接写入 agent_${store.currentId == null ? "N" : store.currentId}.json；RAG 会加上 [额外信息 | 来源:manual] 前缀，并在向量库已建立时同步索引。</span>
+        <button type="button" id="addMemBtn" class="button primary"${store.creating ? " disabled" : ""}>写入记忆</button>
+      </div>
+    </div>
+    ${memoryListCard("长期记忆", (mem.long_term || []).length, longRows, "尚无长期记忆。")}
+    ${memoryListCard("习惯", (mem.habits || []).length, habitRows, "尚无习惯——仿真中由重复行为固化。")}
+    ${memoryListCard("意图", Object.keys(mem.intentions || {}).length, intentRows, "尚无意图档案。")}
+    ${memoryListCard("日程", (mem.schedule || []).length, schedRows, "尚无日程。")}
+    ${ragCard(d.rag)}`;
+}
+
+function openMemoryModal() {
+  const built = memoryGraphSVG(memoryGroups(), 640, 30);
+  store.memGraphBig = built;
+  const box = document.createElement("div");
+  box.className = "mem-modal";
+  box.id = "memModal";
+  box.innerHTML = `<div class="mem-modal-box">
+      <div class="mem-modal-head"><h3>记忆图谱</h3>
+        <button type="button" class="mini-btn" id="memModalClose" aria-label="关闭">✕</button></div>
+      <div class="mem-modal-body">
+        <div class="mem-modal-graph">${built.svg}</div>
+        <div class="mem-modal-info" id="memModalInfo">${memoryNodeInfo(null)}</div>
+      </div></div>`;
+  box.addEventListener("click", (ev) => {
+    if (ev.target === box || ev.target.closest("#memModalClose")) { closeMemoryModal(); return; }
+    const dot = ev.target.closest("[data-node]");
+    if (dot) $("#memModalInfo").innerHTML = memoryNodeInfo(built.nodes[Number(dot.dataset.node)]);
+  });
+  document.body.appendChild(box);
+  document.addEventListener("keydown", memoryModalKeys);
+}
+
+function memoryModalKeys(ev) {
+  if (ev.key === "Escape") closeMemoryModal();
+}
+
+function closeMemoryModal() {
+  const box = $("#memModal");
+  if (box) box.remove();
+  document.removeEventListener("keydown", memoryModalKeys);
+}
+
+async function addMemory() {
+  if (store.creating || store.currentId == null) { foot("请先保存居民再添加记忆", "err"); return; }
+  const kind = $("#memKind").value;
+  const text = ($("#memText").value || "").trim();
+  if (!text) { foot("请输入记忆内容", "err"); return; }
+  try {
+    foot("写入记忆…");
+    const res = await api(`/api/agents/${store.currentId}/memory`, {
+      method: "POST", body: JSON.stringify({ kind, text }),
+    });
+    store.detail.memory = Object.assign({}, store.detail.memory, { long_term: res.long_term || [] });
+    store.detail.rag = res.rag;
+    store.detail.memory_counts = Object.assign({}, store.detail.memory_counts, { long_term: res.count });
+    store.memPick = null;
+    renderStep();
+    foot(kind === "rag" ? "已写入外部 RAG 知识" : "已写入长期记忆", "ok");
+  } catch (err) {
+    foot("写入失败：" + err.message, "err");
+  }
 }
 
 function ragCard(rag) {
@@ -343,58 +572,114 @@ const ROLE_LABELS = {
 };
 const roleLabel = (r) => ROLE_LABELS[r] || r || "关系";
 
-function stepSocial() {
-  const social = store.detail && store.detail.social;
-  const tiers = [
-    { key: "inner", r: 34, cap: 5, c: "#13795b" },
-    { key: "close", r: 58, cap: 15, c: "#385866" },
-    { key: "acquaintance", r: 84, cap: 50, c: "#d6a81e" },
-    { key: "weak", r: 110, cap: 150, c: "#cbd7cd" },
-  ];
-  const counts = (social && social.tier_counts) || {};
+const TIER_RINGS = [
+  { key: "inner", r: 34, cap: 5, c: "#13795b" },
+  { key: "close", r: 58, cap: 15, c: "#385866" },
+  { key: "acquaintance", r: 84, cap: 50, c: "#d6a81e" },
+  { key: "weak", r: 110, cap: 150, c: "#cbd7cd" },
+];
+
+function cloneRelations(social) {
+  return ((social && social.relations) || []).map((r) => ({
+    id: r.id, name: r.name, role: r.role, kind: r.kind, tier: r.tier,
+    closeness: clamp01(r.closeness), trust: clamp01(r.trust),
+  }));
+}
+
+function relationRef(el) {
+  const arr = store.socialDraft;
+  return Array.isArray(arr) ? arr[Number(el.dataset.idx)] : null;
+}
+
+function dunbarSVG(relations) {
+  const counts = { inner: 0, close: 0, acquaintance: 0, weak: 0 };
+  relations.forEach((r) => { if (counts[r.tier] != null) counts[r.tier] += 1; });
   let rings = "", labels = "";
-  tiers.slice().reverse().forEach((t) => { rings += `<circle cx="130" cy="130" r="${t.r}" fill="none" stroke="${t.c}" stroke-width="1.4"/>`; });
-  tiers.forEach((t) => {
-    const label = social ? `${TIER_LABELS[t.key]} · ${counts[t.key] || 0}/${t.cap}` : `${TIER_LABELS[t.key]} · ${t.cap}`;
-    labels += `<text x="130" y="${130 - t.r + 12}" font-size="9" fill="#5c6860" text-anchor="middle">${label}</text>`;
+  TIER_RINGS.slice().reverse().forEach((t) => {
+    rings += `<circle cx="130" cy="130" r="${t.r}" fill="none" stroke="${t.c}" stroke-width="1.4"/>`;
+  });
+  TIER_RINGS.forEach((t) => {
+    labels += `<text x="130" y="${130 - t.r + 12}" font-size="9" fill="#5c6860" text-anchor="middle">${TIER_LABELS[t.key]} · ${counts[t.key]}/${t.cap}</text>`;
   });
   let people = `<circle cx="130" cy="130" r="6" fill="#17211d"/>`;
-  if (social) {
-    // place real ties on their tier ring, evenly spaced
-    const byTier = {}; tiers.forEach((t) => (byTier[t.key] = []));
-    social.relations.forEach((r) => { if (byTier[r.tier]) byTier[r.tier].push(r); });
-    tiers.forEach((t) => {
-      const arr = byTier[t.key].slice(0, 24);
-      arr.forEach((r, j) => {
-        const a = (j / Math.max(1, arr.length)) * Math.PI * 2;
-        people += `<circle cx="${(130 + Math.cos(a) * t.r).toFixed(1)}" cy="${(130 + Math.sin(a) * t.r).toFixed(1)}" r="2.8" fill="${t.c}"><title>${esc(r.name)} · ${esc(roleLabel(r.role))}</title></circle>`;
-      });
+  TIER_RINGS.forEach((t) => {
+    const arr = relations.filter((r) => r.tier === t.key).slice(0, 24);
+    arr.forEach((r, j) => {
+      const a = (j / Math.max(1, arr.length)) * Math.PI * 2;
+      people += `<circle cx="${(130 + Math.cos(a) * t.r).toFixed(1)}" cy="${(130 + Math.sin(a) * t.r).toFixed(1)}" r="2.8" fill="${t.c}"><title>${esc(r.name)} · ${esc(roleLabel(r.role))}</title></circle>`;
     });
-  } else {
-    let seed = (store.currentId || 3) * 51 + 7;
-    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
-    tiers.forEach((t, ti) => { const k = [4, 6, 8, 10][ti]; for (let j = 0; j < k; j++) { const a = rnd() * Math.PI * 2; people += `<circle cx="${(130 + Math.cos(a) * t.r).toFixed(1)}" cy="${(130 + Math.sin(a) * t.r).toFixed(1)}" r="2.6" fill="${t.c}" opacity="0.5"/>`; } });
-  }
-  const note = social
-    ? `已加载 ${social.count} 条真实关系边（output/memory）。`
-    : `真实关系边在仿真运行后生成——下方为占位示意。`;
-  const rightCard = social && social.relations.length
-    ? `<div class="card"><h3>亲密度排序 <span class="tag">${social.count}</span></h3>${
-        social.relations.slice(0, 12).map((r) => `
-          <div class="bar-row"><div class="bl"><b>${esc(r.name)}</b><small>${esc(roleLabel(r.role))} · ${TIER_LABELS[r.tier] || r.tier}${r.kind === "ghost" ? " · 场外" : ""}</small></div>
-          <div class="bar-track"><div class="bar-fill" style="width:${Math.round(r.closeness * 100)}%"></div></div></div>`).join("")
-      }</div>`
-    : `<div class="card"><h3>影响倾向</h3>${["voice_propensity", "platform_dependence"].map((key) => {
-        const v = STATE_VARS.find((x) => x.key === key), val = store.draft.state[key];
-        return `<div class="bar-row"><div class="bl"><b>${v.cn}</b><small>${v.lo} → ${v.hi}</small></div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(val * 100)}%"></div></div></div>`;
-      }).join("")}<p class="section-note" style="margin-top:10px">社交网络密度、同质性等在仿真中演化。</p></div>`;
+  });
+  return `<svg viewBox="0 0 260 260">${rings}${people}${labels}</svg>`;
+}
+
+function relationEditorRow(r, idx) {
+  const attrs = `data-idx="${idx}"`;
+  const roleOptions = Object.keys(ROLE_LABELS).map((k) =>
+    `<option value="${k}"${r.role === k ? " selected" : ""}>${ROLE_LABELS[k]}</option>`).join("");
+  const unknownRole = r.role && !ROLE_LABELS[r.role]
+    ? `<option value="${esc(r.role)}" selected>${esc(r.role)}</option>` : "";
+  const tierOptions = TIER_RINGS.map((t) =>
+    `<option value="${t.key}"${r.tier === t.key ? " selected" : ""}>${TIER_LABELS[t.key]}</option>`).join("");
+  const bar = (field, label) => `<label class="goal-mini goal-prog"><span>${label} <b class="val">${r[field].toFixed(2)}</b></span>
+    <input type="range" min="0" max="1" step="0.01" value="${r[field]}" data-rel-${field} ${attrs}></label>`;
+  return `<div class="goal-edit">
+    <div class="goal-edit-head">
+      <input class="goal-title-input" data-rel-name ${attrs} value="${esc(r.name)}" placeholder="姓名">
+      <button type="button" class="goal-remove" data-rel-remove ${attrs} title="删除此关系" aria-label="删除">✕</button>
+    </div>
+    <div class="goal-edit-controls">
+      <label class="goal-mini"><span>关系</span><select data-rel-role ${attrs}>${unknownRole}${roleOptions}</select></label>
+      <label class="goal-mini"><span>圈层</span><select data-rel-tier ${attrs}>${tierOptions}</select></label>
+      ${bar("closeness", "亲密度")}
+      ${bar("trust", "信任")}
+    </div>
+  </div>`;
+}
+
+function stepSocial() {
+  const social = store.detail && store.detail.social;
+  const relations = store.socialDraft || [];
+  const note = store.creating
+    ? "新建居民保存并运行仿真后生成关系边。"
+    : (social
+      ? `已加载 ${social.count} 条真实关系边（output/memory），可直接编辑。`
+      : "尚无关系文件——在此新增的关系会创建 agent_" + store.currentId + "_relationships.json。");
+  const editor = store.creating
+    ? `<p class="section-note">新建模式下暂不能编辑关系。</p>`
+    : `${relations.map(relationEditorRow).join("")}
+       <button type="button" class="goal-add" id="addRelBtn">+ 新增关系</button>
+       <div class="goals-save"><button type="button" id="saveRelBtn" class="button primary">保存关系</button></div>`;
   return `
     <h2 class="section-title">社交 · 关系</h2>
     <p class="section-note">Dunbar 分层社交圈（inner/close/acquaintance/weak）。${note}</p>
     <div class="cols side">
-      <div class="card"><h3>关系分层</h3><div class="viz-wrap"><svg viewBox="0 0 260 260">${rings}${people}${labels}</svg></div></div>
-      ${rightCard}
-    </div>`;
+      <div class="card"><h3>关系分层</h3><div class="viz-wrap" id="dunbarViz">${dunbarSVG(relations)}</div></div>
+      <div class="card"><h3>影响倾向</h3>${["voice_propensity", "platform_dependence"].map((key) => {
+        const v = STATE_VARS.find((x) => x.key === key), val = store.draft.state[key];
+        return `<div class="bar-row"><div class="bl"><b>${v.cn}</b><small>${v.lo} → ${v.hi}</small></div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(val * 100)}%"></div></div></div>`;
+      }).join("")}<p class="section-note" style="margin-top:10px">社交网络密度、同质性等在仿真中演化。</p></div>
+    </div>
+    <div class="card"><h3>关系与亲密度 <span class="tag">${relations.length}</span></h3>${editor}</div>`;
+}
+
+async function saveRelations() {
+  if (store.creating || store.currentId == null || !store.socialDraft) return;
+  const blank = store.socialDraft.find((r) => !String(r.name || "").trim());
+  if (blank) { foot("请先填写每条关系的姓名", "err"); return; }
+  try {
+    foot("保存关系…");
+    const saved = await api(`/api/agents/${store.currentId}/relationships`, {
+      method: "POST",
+      body: JSON.stringify({ relations: store.socialDraft, removed: store.socialRemoved }),
+    });
+    store.detail.social = saved;
+    store.socialDraft = cloneRelations(saved);
+    store.socialRemoved = [];
+    renderStep();
+    foot("关系已保存到 relationships.json", "ok");
+  } catch (err) {
+    foot("关系保存失败：" + err.message, "err");
+  }
 }
 
 const GOAL_STATUS_LABELS = { active: "进行中", completed: "已完成", abandoned: "已放弃", paused: "已暂停" };
@@ -521,19 +806,91 @@ function stepBehavior() {
     </div>`;
 }
 
+/* ---------- finance (step 7) ---------- */
+const FINANCE_ACCOUNTS = [
+  { key: "checking", label: "活期 / 现金" },
+  { key: "savings", label: "存款" },
+  { key: "investment", label: "投资" },
+  { key: "housing_fund", label: "公积金" },
+];
+const FINANCE_AMOUNTS = [
+  { key: "gross_monthly_salary", label: "税前月薪" },
+  { key: "net_monthly_salary", label: "税后月薪" },
+  { key: "monthly_rent", label: "月租" },
+  { key: "debt", label: "负债" },
+];
+const FINANCE_RATES = [
+  { key: "engel_coefficient", label: "恩格尔系数" },
+  { key: "savings_rate", label: "储蓄率" },
+];
+// Liquid accounts only — mirrors _total_balance in gaworld/economy/finance.py.
+const FINANCE_LIQUID = ["checking", "savings", "investment"];
+
+function cloneFinance(fin) {
+  if (!fin) return null;
+  const accounts = fin.accounts || {};
+  const out = { accounts: {} };
+  FINANCE_ACCOUNTS.forEach((a) => (out.accounts[a.key] = Number(accounts[a.key]) || 0));
+  FINANCE_AMOUNTS.concat(FINANCE_RATES).forEach((f) => (out[f.key] = Number(fin[f.key]) || 0));
+  return out;
+}
+
+function financeBalance(draft) {
+  return FINANCE_LIQUID.reduce((sum, key) => sum + (Number(draft.accounts[key]) || 0), 0);
+}
+
+function financeCard() {
+  const fin = store.detail && store.detail.finance_state;
+  if (!fin) {
+    return `<div class="card"><h3>财务</h3><p class="section-note">运行仿真后从 output/memory 的 economy 状态生成，届时可在此修改存款等。</p></div>`;
+  }
+  if (!fin.editable || !store.financeDraft) {
+    return `<div class="card"><h3>财务快照（run 产出，只读）</h3><div class="review-list">
+        <div><span class="k">余额</span><span class="v">${fin.balance}</span></div>
+        <div><span class="k">净月薪</span><span class="v">${fin.net_monthly_salary}</span></div>
+        <div><span class="k">恩格尔系数</span><span class="v">${fin.engel_coefficient}</span></div>
+        <div><span class="k">储蓄率</span><span class="v">${fin.savings_rate}</span></div></div>
+      <p class="section-note">该居民尚无 agent_${store.currentId}_economy.json 活状态，跑一次仿真后即可编辑。</p></div>`;
+  }
+  const d = store.financeDraft;
+  const money = (list) => list.map((f) => `<label class="field"><span>${f.label}（${esc(fin.currency)}）</span>
+    <input type="number" step="0.01" min="0" value="${(f.key in d ? d[f.key] : d.accounts[f.key])}" data-fin="${f.key}"></label>`).join("");
+  const rates = FINANCE_RATES.map((f) => `<label class="field"><span>${f.label} <b class="val">${d[f.key].toFixed(2)}</b></span>
+    <input type="range" min="0" max="1" step="0.01" value="${d[f.key]}" data-fin-rate="${f.key}"></label>`).join("");
+  return `<div class="card">
+    <h3>财务 <span class="tag">可编辑</span></h3>
+    <p class="section-note">写入 agent_${store.currentId}_economy.json —— 仿真下次以有状态模式启动时读取。余额 = 活期 + 存款 + 投资（不含公积金）。</p>
+    <div class="grid2">${money(FINANCE_ACCOUNTS)}</div>
+    <div class="grid2">${money(FINANCE_AMOUNTS)}</div>
+    <div class="grid2">${rates}</div>
+    <div class="confirm-bar">
+      <span class="confirm-hint">合计余额 <b id="finBalance">${financeBalance(d).toFixed(2)}</b> ${esc(fin.currency)}</span>
+      <button type="button" id="saveFinBtn" class="button primary">保存财务</button>
+    </div></div>`;
+}
+
+async function saveFinance() {
+  if (store.creating || store.currentId == null || !store.financeDraft) return;
+  try {
+    foot("保存财务…");
+    const saved = await api(`/api/agents/${store.currentId}/finance`, {
+      method: "POST", body: JSON.stringify(store.financeDraft),
+    });
+    store.detail.finance_state = saved;
+    store.financeDraft = cloneFinance(saved);
+    renderStep();
+    foot("财务已保存到 economy 状态", "ok");
+  } catch (err) {
+    foot("财务保存失败：" + err.message, "err");
+  }
+}
+
 function stepReview() {
   const i = store.draft.identity, st = store.draft.state;
-  const fin = store.detail && store.detail.finance;
   const idRows = [["姓名", i.name], ["性别", i.gender], ["年龄", i.age], ["户籍", i.hukou], ["居住地", i.residence]]
     .map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join("");
   const stRows = STATE_VARS.map((v) => `<div><span class="k">${v.cn}</span><span class="v">${st[v.key].toFixed(2)}</span></div>`).join("");
-  const finCard = fin
-    ? `<div class="card"><h3>财务快照（仿真产出）</h3><div class="review-list">
-        <div><span class="k">余额</span><span class="v">${esc(fin.balance)}</span></div>
-        <div><span class="k">净月薪</span><span class="v">${esc(fin.net_monthly_salary)}</span></div>
-        <div><span class="k">恩格尔系数</span><span class="v">${esc(fin.engel_coefficient)}</span></div>
-        <div><span class="k">储蓄率</span><span class="v">${esc(fin.savings_rate)}</span></div></div></div>`
-    : `<div class="card"><h3>财务快照</h3><p class="section-note">运行仿真后从 output/economy 生成。</p></div>`;
+  const finCard = financeCard();
   return `
     <h2 class="section-title">复核 · 部署</h2>
     <p class="section-note">${store.creating ? "确认后创建新居民（写入 CSV + profile）。" : "确认后保存改动并可直接投入仿真。"}</p>
@@ -600,8 +957,10 @@ function bindStep() {
       if (row) row.querySelector(".val").textContent = store.draft.state[key].toFixed(2);
       const big = $("#bigRadar"); if (big) big.innerHTML = radarSVG(store.draft.state, true);
       renderSubject();
+      markStateDirty();
     });
   });
+  const cs = $("#confirmStateBtn"); if (cs) cs.addEventListener("click", confirmState);
   $("#stepBody").querySelectorAll("[data-goal-title]").forEach((el) => {
     el.addEventListener("input", () => { const g = goalRef(el); if (g) g.title = el.value; });
   });
@@ -629,14 +988,97 @@ function bindStep() {
     el.addEventListener("click", () => { addGoal(el.dataset.tier); renderStep(); });
   });
   const sg = $("#saveGoalsBtn"); if (sg) sg.addEventListener("click", saveGoals);
+  bindMemoryStep();
+  bindSocialStep();
+  bindFinanceStep();
   const iBtn = $("#interviewBtn"); if (iBtn) iBtn.addEventListener("click", runInterview);
   const s2 = $("#saveBtn2"); if (s2) s2.addEventListener("click", save);
   const r2 = $("#runBtn2"); if (r2) r2.addEventListener("click", runSim);
 }
 
+function bindMemoryStep() {
+  const zoom = $("#memZoomBtn"); if (zoom) zoom.addEventListener("click", openMemoryModal);
+  const add = $("#addMemBtn"); if (add) add.addEventListener("click", addMemory);
+  const box = $("#memGraphBox");
+  if (box) box.addEventListener("click", (ev) => {
+    const dot = ev.target.closest("[data-node]");
+    if (!dot) return;
+    store.memPick = Number(dot.dataset.node);
+    $("#memNodeInfo").innerHTML = memoryNodeInfo(store.memGraph.nodes[store.memPick]);
+  });
+}
+
+function bindSocialStep() {
+  const redrawRings = () => {
+    const viz = $("#dunbarViz");
+    if (viz) viz.innerHTML = dunbarSVG(store.socialDraft || []);
+  };
+  $("#stepBody").querySelectorAll("[data-rel-name]").forEach((el) => {
+    el.addEventListener("input", () => { const r = relationRef(el); if (r) { r.name = el.value; redrawRings(); } });
+  });
+  $("#stepBody").querySelectorAll("[data-rel-role]").forEach((el) => {
+    el.addEventListener("change", () => { const r = relationRef(el); if (r) { r.role = el.value; redrawRings(); } });
+  });
+  $("#stepBody").querySelectorAll("[data-rel-tier]").forEach((el) => {
+    el.addEventListener("change", () => { const r = relationRef(el); if (r) { r.tier = el.value; redrawRings(); } });
+  });
+  ["closeness", "trust"].forEach((fieldName) => {
+    $("#stepBody").querySelectorAll(`[data-rel-${fieldName}]`).forEach((el) => {
+      el.addEventListener("input", () => {
+        const r = relationRef(el); if (!r) return;
+        r[fieldName] = clamp01(el.value);
+        const val = el.closest(".goal-prog").querySelector(".val");
+        if (val) val.textContent = r[fieldName].toFixed(2);
+      });
+    });
+  });
+  $("#stepBody").querySelectorAll("[data-rel-remove]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const idx = Number(el.dataset.idx);
+      const removed = (store.socialDraft || []).splice(idx, 1)[0];
+      if (removed && removed.id) store.socialRemoved.push(removed.id);
+      renderStep();
+    });
+  });
+  const addRel = $("#addRelBtn");
+  if (addRel) addRel.addEventListener("click", () => {
+    (store.socialDraft = store.socialDraft || []).push({
+      id: "", name: "", role: "friend", kind: "ghost", tier: "acquaintance", closeness: 0.3, trust: 0.3,
+    });
+    renderStep();
+  });
+  const saveRel = $("#saveRelBtn"); if (saveRel) saveRel.addEventListener("click", saveRelations);
+}
+
+function bindFinanceStep() {
+  const refreshBalance = () => {
+    const box = $("#finBalance");
+    if (box) box.textContent = financeBalance(store.financeDraft).toFixed(2);
+  };
+  $("#stepBody").querySelectorAll("[data-fin]").forEach((el) => {
+    el.addEventListener("input", () => {
+      const key = el.dataset.fin;
+      const value = Math.max(0, Number(el.value) || 0);
+      if (key in store.financeDraft.accounts) store.financeDraft.accounts[key] = value;
+      else store.financeDraft[key] = value;
+      refreshBalance();
+    });
+  });
+  $("#stepBody").querySelectorAll("[data-fin-rate]").forEach((el) => {
+    el.addEventListener("input", () => {
+      const key = el.dataset.finRate;
+      store.financeDraft[key] = clamp01(el.value);
+      const val = el.closest(".field").querySelector(".val");
+      if (val) val.textContent = store.financeDraft[key].toFixed(2);
+    });
+  });
+  const saveFin = $("#saveFinBtn"); if (saveFin) saveFin.addEventListener("click", saveFinance);
+}
+
 /* ---------- actions ---------- */
+/** Persist identity + state (and profile text). Returns true when it stuck. */
 async function save() {
-  if (!store.draft) return;
+  if (!store.draft) return false;
   const i = store.draft.identity;
   try {
     foot("保存中…");
@@ -649,7 +1091,7 @@ async function save() {
       await loadAgents();
       $("#agentSelect").value = String(res.id);
       await selectAgent(res.id);
-      return;
+      return true;
     }
     await api(`/api/agents/${store.currentId}/state`, { method: "POST", body: JSON.stringify({
       name: i.name, gender: i.gender, age: i.age, hukou: i.hukou, residence: i.residence, state: store.draft.state }) });
@@ -661,8 +1103,10 @@ async function save() {
     // refresh options label in case name changed
     await loadAgents();
     $("#agentSelect").value = String(store.currentId);
+    return true;
   } catch (err) {
     foot("保存失败：" + err.message, "err");
+    return false;
   }
 }
 

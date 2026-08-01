@@ -17,6 +17,16 @@ def simulation_settings() -> dict[str, Any]:
         # Time step for simulation timeline (minutes). None/0 uses schedule times only.
         # "time_step_minutes": "2 hours",
         "time_step_minutes": None,
+        # Snap every agent's daily schedule onto the ``time_step_minutes`` grid.
+        # Without this, the master timeline is the *union* of the grid and every
+        # agent's LLM-authored times, so tick count — and therefore total LLM
+        # cost — grows super-linearly with the agent count. Snapping pins the
+        # tick count at ``1440 / time_step_minutes`` regardless of population
+        # size, which is what makes 100+ agent runs affordable.
+        # OFF by default: it changes intra-day timing, so existing runs and
+        # same-seed traces stay bit-comparable until you opt in. Requires
+        # ``time_step_minutes`` to be set; ignored otherwise.
+        "time_grid_snap": False,
         # Long-horizon fast-forward mode. When enabled, each day is compressed
         # into a single per-agent "daily brief" (one LLM call/agent/day) instead
         # of the intra-day tick megaloop, so 60/600-day horizons stay tractable.

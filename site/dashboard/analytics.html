@@ -6,7 +6,7 @@
   <title>GAWorld · 结果分析</title>
   <meta name="description" content="GAWorld 仿真结果可视化：状态变化、经济轨迹、社交网络、行为分布与事件时间线" />
   <link rel="stylesheet" href="/site/dashboard/styles.css?v=4" />
-  <link rel="stylesheet" href="/site/dashboard/analytics.css?v=1" />
+  <link rel="stylesheet" href="/site/dashboard/analytics.css?v=3" />
 </head>
 <body>
   <main class="shell">
@@ -19,6 +19,15 @@
       <div class="hero-status">
         <span id="anStatus" class="an-status is-busy">加载中…</span>
         <button id="anRefreshBtn" class="button small">刷新数据</button>
+        <details class="an-export" id="anExport">
+          <summary class="button small">导出结果</summary>
+          <div class="an-export-menu">
+            <button type="button" data-export="html">HTML 报告<em>含全部图表，可离线打开 / 打印成 PDF</em></button>
+            <button type="button" data-export="json">原始数据 JSON<em>接口原样返回，便于二次分析</em></button>
+            <button type="button" data-export="csv">CSV 数据包（.zip）<em>逐表拆分，可导入 Excel / pandas</em></button>
+            <button type="button" data-export="md">Markdown 摘要<em>文字版结论，可贴进论文 / 周报</em></button>
+          </div>
+        </details>
       </div>
     </header>
 
@@ -178,6 +187,7 @@
     </section>
   </main>
   <script src="/site/dashboard/help.js?v=1"></script>
-  <script src="/site/dashboard/analytics.js?v=1"></script>
+  <script src="/site/dashboard/analytics-export.js?v=2"></script>
+  <script src="/site/dashboard/analytics.js?v=4"></script>
 </body>
 </html>

@@ -58,8 +58,9 @@ def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
 
 
-def _retrying(call: Callable[[], Any], *, attempts: int = 3, backoff: float = 1.5,
-              provider: str = "", task: str = "") -> Any:
+def _retrying(
+    call: Callable[[], Any], *, attempts: int = 3, backoff: float = 1.5, provider: str = "", task: str = ""
+) -> Any:
     """Run ``call`` with bounded exponential backoff on transient errors."""
     delay = 0.6
     last_exc: BaseException | None = None
@@ -72,7 +73,12 @@ def _retrying(call: Callable[[], Any], *, attempts: int = 3, backoff: float = 1.
                 raise
             _LOG.warning(
                 "LLM call failed (attempt %d/%d, provider=%s, task=%s): %s — retrying in %.1fs",
-                attempt, attempts, provider, task, exc, delay,
+                attempt,
+                attempts,
+                provider,
+                task,
+                exc,
+                delay,
             )
             time.sleep(delay)
             delay *= backoff
@@ -386,9 +392,7 @@ class AnthropicProvider:
                         f"anthropic:{self.model}",
                         stop_reason=data.get("stop_reason"),
                         block_types=[
-                            block.get("type")
-                            for block in data.get("content", [])
-                            if isinstance(block, dict)
+                            block.get("type") for block in data.get("content", []) if isinstance(block, dict)
                         ],
                         max_tokens=self.max_tokens,
                     )
@@ -396,12 +400,14 @@ class AnthropicProvider:
             except requests.exceptions.HTTPError as exc:
                 last_response = r
                 last_exc = exc
-                attempts.append({
-                    "scheme": scheme or "none",
-                    "status": r.status_code,
-                    "authorization_sent": "Authorization" in headers,
-                    "x_api_key_sent": "x-api-key" in headers,
-                })
+                attempts.append(
+                    {
+                        "scheme": scheme or "none",
+                        "status": r.status_code,
+                        "authorization_sent": "Authorization" in headers,
+                        "x_api_key_sent": "x-api-key" in headers,
+                    }
+                )
                 if r.status_code != 401:
                     break
                 continue
@@ -483,7 +489,7 @@ class LLMRouter:
             return agents[str(agent_id)]
         return self.routing.get("default") or next(iter(self.providers))
 
-    def _resolve_chain(self, task=None, agent_id=None):
+    def _resolve_chain(self, task=None, agent_id=None, provider=None):
         """Return an ordered list of provider names to try for a single call.
 
         Resolution order:
@@ -497,7 +503,11 @@ class LLMRouter:
         included), so callers don't have to special-case fallback being
         absent.
         """
-        primary = self._select_provider(task=task, agent_id=agent_id)
+        # An explicit provider wins over task/agent routing. Used by callers
+        # that let a human pick the backend for one run (the Population Studio
+        # panel), where silently honouring the config's routing instead would
+        # make the UI's model selector a lie.
+        primary = provider or self._select_provider(task=task, agent_id=agent_id)
         chain: list[str] = [primary]
         fallback = self.routing.get("fallback", [])
         if isinstance(fallback, str):
@@ -511,8 +521,8 @@ class LLMRouter:
                     chain.append(name)
         return chain
 
-    def call(self, prompt, task=None, agent_id=None):
-        chain = self._resolve_chain(task=task, agent_id=agent_id)
+    def call(self, prompt, task=None, agent_id=None, provider=None):
+        chain = self._resolve_chain(task=task, agent_id=agent_id, provider=provider)
         if not chain or chain[0] not in self.providers:
             raise ValueError(f"Provider '{chain[0] if chain else ''}' not found in config.")
 
@@ -530,9 +540,14 @@ class LLMRouter:
                 log.debug(
                     "llm.call ok id=%s provider=%s fallback_index=%d task=%s agent=%s "
                     "prompt_chars=%d completion_chars=%d latency_ms=%d",
-                    call_id, provider_name, index, task or "",
+                    call_id,
+                    provider_name,
+                    index,
+                    task or "",
                     agent_id if agent_id is not None else "",
-                    prompt_chars, len(result or ""), elapsed_ms,
+                    prompt_chars,
+                    len(result or ""),
+                    elapsed_ms,
                 )
                 return result
             except Exception as exc:
@@ -540,9 +555,14 @@ class LLMRouter:
                 log.warning(
                     "llm.call err id=%s provider=%s fallback_index=%d task=%s agent=%s "
                     "prompt_chars=%d latency_ms=%d error=%s",
-                    call_id, provider_name, index, task or "",
+                    call_id,
+                    provider_name,
+                    index,
+                    task or "",
                     agent_id if agent_id is not None else "",
-                    prompt_chars, elapsed_ms, exc,
+                    prompt_chars,
+                    elapsed_ms,
+                    exc,
                 )
                 last_exc = exc
                 # Only fall through to the next provider if there is one
@@ -556,7 +576,10 @@ class LLMRouter:
 
         log.error(
             "llm.call failed across %d providers id=%s task=%s agent=%s",
-            len(chain), call_id, task or "", agent_id if agent_id is not None else "",
+            len(chain),
+            call_id,
+            task or "",
+            agent_id if agent_id is not None else "",
         )
         assert last_exc is not None
         raise last_exc
@@ -565,7 +588,26 @@ class LLMRouter:
 LLM_ROUTER = LLMRouter(CONFIG)
 
 
-def call_llm(prompt, task=None, agent_id=None):
+def available_providers():
+    """Configured provider names with their type and model, for UI pickers."""
+    llm_cfg = CONFIG.get("llm", {}) if isinstance(CONFIG, dict) else {}
+    out = []
+    for name, cfg in (llm_cfg.get("providers", {}) or {}).items():
+        if not isinstance(cfg, dict):
+            continue
+        out.append(
+            {
+                "name": name,
+                "type": str(cfg.get("type", "")),
+                "model": str(cfg.get("model", "")),
+                "base_url": str(cfg.get("base_url") or cfg.get("url") or ""),
+                "is_default": name == (llm_cfg.get("routing", {}) or {}).get("default"),
+            }
+        )
+    return out
+
+
+def call_llm(prompt, task=None, agent_id=None, provider=None):
     """Public helper for model calls used across the simulator.
 
     Each invocation:
@@ -574,7 +616,7 @@ def call_llm(prompt, task=None, agent_id=None):
     * is logged with provider, task, agent, prompt size, and latency,
     * raises the original :class:`requests` exception on hard failure.
     """
-    return LLM_ROUTER.call(prompt, task=task, agent_id=agent_id)
+    return LLM_ROUTER.call(prompt, task=task, agent_id=agent_id, provider=provider)
 
 
 # ---------------------------------------------------------------------
@@ -595,6 +637,7 @@ def call_llm(prompt, task=None, agent_id=None):
 #   }
 # Plus the global toggle ``vector_db_embedding_provider`` in
 # runtime settings selects "hash" (default) or "llm".
+
 
 def _embedding_provider_name() -> str | None:
     return (CONFIG.get("llm", {}).get("embedding", {}) or {}).get("provider")

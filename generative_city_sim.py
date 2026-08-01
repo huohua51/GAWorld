@@ -163,6 +163,7 @@ from gaworld.sim._utils import (  # noqa: E402
     _stable_json_marker,
     _time_str_to_minutes,
     _weekday_to_index,
+    snap_schedule_to_grid,
 )
 
 # --------------------------------------------------------------------
@@ -449,6 +450,10 @@ INTERVENTION_OUTPUT_DIR = CONFIG.get("intervention", {}).get("output_dir", "outp
 SIMULATE_REALTIME = bool(CONFIG.get("simulate_realtime", False))
 RANDOM_SEED = CONFIG.get("random_seed")
 TIME_STEP_MINUTES = _parse_step_minutes(CONFIG.get("time_step_minutes"))
+# Opt-in: align every agent's schedule onto the TIME_STEP_MINUTES grid so the
+# master timeline stays a fixed 1440/step ticks instead of growing with the
+# population. See gaworld/settings/runtime.py for the rationale.
+TIME_GRID_SNAP = bool(CONFIG.get("time_grid_snap", False)) and bool(TIME_STEP_MINUTES)
 # Long-horizon fast-forward mode (see gaworld/sim/_fastforward.py). Read
 # inline here — this runs at import time, before the staged `# noqa: E402`
 # import of the fast-forward helpers further down the file.
@@ -2825,6 +2830,7 @@ def run_simulation():
                 "seconds_per_day": SECONDS_PER_DAY,
                 "simulate_realtime": SIMULATE_REALTIME,
                 "time_step_minutes": TIME_STEP_MINUTES,
+                "time_grid_snap": TIME_GRID_SNAP,
                 "map_path": MAP_PATH,
                 "agent_ids": [a["id"] for a in agents],
             },
@@ -4158,6 +4164,12 @@ def run_simulation():
                 day=day,
                 day_context=day_context,
             )
+            if TIME_GRID_SNAP:
+                # Pin the schedule to the shared time grid before anything
+                # downstream (routine text, wake time, autoregressive base,
+                # schedule map, master timeline) reads it, so all of them stay
+                # consistent and the timeline cannot grow with the population.
+                daily_schedule = snap_schedule_to_grid(daily_schedule, TIME_STEP_MINUTES)
             updated = False
             new_actions = actions[agent_id]
             for _, activity in daily_schedule:
@@ -5449,8 +5461,25 @@ def _cli_serve_viz(host="127.0.0.1", port=8000):
     from functools import partial
     from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+    from gaworld.apps import replay_runs
+
     repo_root = os.path.dirname(os.path.abspath(__file__))
-    handler = partial(SimpleHTTPRequestHandler, directory=repo_root)
+
+    class VizHandler(SimpleHTTPRequestHandler):
+        """Static files plus the one API the replay page needs: the run list."""
+
+        def do_GET(self):
+            if self.path.split("?")[0] != "/api/replay/runs":
+                return super().do_GET()
+            payload = {"runs": replay_runs.list_runs(repo_root, VISUALIZATION_OUTPUT_DIR)}
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    handler = partial(VizHandler, directory=repo_root)
     page_url = f"http://{host}:{int(port)}/{VISUALIZATION_SITE_PATH}"
     print(f"可视化页面: {page_url}")
     print("按 Ctrl+C 停止服务。")
