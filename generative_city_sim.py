@@ -23,6 +23,7 @@ from gaworld.core.runner import parallel_map, resolve_max_workers
 from gaworld.logging_setup import get_logger, LOG_MODE
 from gaworld.personal_twin.state import apply_daily_twin_update, build_initial_twin_state
 from gaworld.personal_twin.what_if import write_personal_what_if_report as _write_personal_what_if_report
+from gaworld.social.runtime import initialize_agent_social_state
 
 _LOG = get_logger("gaworld.sim")
 
@@ -5509,29 +5510,33 @@ def run_simulation():
         if seeded:
             print(f"🧱 {agent['name']} 初始化 RAG 条目：{len(seeded)}")
 
-    # === 构建社交网络 ===
-    social_net = build_social_network(agents)
-    for a in agents:
-        a["social_neighbors"] = social_net[a["id"]]
-        if HUMAN_REALISM_ENABLED:
-            rel = a.setdefault("relationships", {})
-            for n in a["social_neighbors"]:
-                key = str(n)
-                rel.setdefault(
-                    key,
-                    {
-                        "closeness": 0.5,
-                        "trust": 0.5,
-                        "obligation": 0.5,
-                        "friction": 0.5,
-                        "last_interaction_day": 0,
-                    },
-                )
-                rel[key].setdefault("closeness", 0.5)
-                rel[key].setdefault("trust", 0.5)
-                rel[key].setdefault("obligation", 0.5)
-                rel[key].setdefault("friction", 0.5)
-                rel[key].setdefault("last_interaction_day", 0)
+    # Canonical social network: the gaworld.social graph owns topology and
+    # demographic default weights; persisted agent relationships overlay history.
+    if CONFIG.get("social_interactions", {}).get("enabled", False):
+        initialize_agent_social_state(agents, CONFIG.get("social_interactions", {}))
+    else:
+        social_net = build_social_network(agents)
+        for a in agents:
+            a["social_neighbors"] = social_net[a["id"]]
+            if HUMAN_REALISM_ENABLED:
+                rel = a.setdefault("relationships", {})
+                for n in a["social_neighbors"]:
+                    key = str(n)
+                    rel.setdefault(
+                        key,
+                        {
+                            "closeness": 0.5,
+                            "trust": 0.5,
+                            "obligation": 0.5,
+                            "friction": 0.5,
+                            "last_interaction_day": 0,
+                        },
+                    )
+                    rel[key].setdefault("closeness", 0.5)
+                    rel[key].setdefault("trust", 0.5)
+                    rel[key].setdefault("obligation", 0.5)
+                    rel[key].setdefault("friction", 0.5)
+                    rel[key].setdefault("last_interaction_day", 0)
 
     for a in agents:
         if not a.get("locations"):

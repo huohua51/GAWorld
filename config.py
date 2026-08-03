@@ -50,6 +50,24 @@ CONFIG = {
                 "api_key_env": "OPENAI_API_KEY",
                 "timeout": 120,
             },
+            "deepseek": {
+                "type": "openai",
+                "base_url": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+                "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "timeout": 120,
+                "max_tokens": 700,
+                "temperature": 0.35,
+            },
+            "minimax_openai": {
+                "type": "openai",
+                "base_url": os.environ.get("MINIMAX_BASE_URL", "https://api.minimaxi.com/v1"),
+                "model": os.environ.get("MINIMAX_MODEL", "MiniMax-M3"),
+                "api_key_env": "MINIMAX_API_KEY",
+                "timeout": 120,
+                "max_tokens": 700,
+                "temperature": 0.35,
+            },
             "minimax": {
                 "type": "anthropic",
                 "base_url": os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
@@ -66,15 +84,18 @@ CONFIG = {
             },
         },
         "routing": {
-            "default": "minimax",
+            "default": "deepseek",
             "tasks": {
-                "schedule": "minimax",
+                "schedule": "deepseek",
+                "daily_routine": "deepseek",
+                "daily_intentions": "deepseek",
+                "social_interaction": "minimax_openai",
             },
         },
     },
     # Simulation
-    "agent_ids": [2],
-    "sim_days": 2,
+    "agent_ids": list(range(1, 11)),
+    "sim_days": 1,
     "seconds_per_day": 10,
     # When False, simulation runs as fast as the CPU/LLM backend allows.
     "simulate_realtime": False,
@@ -364,6 +385,31 @@ CONFIG = {
             },
         },
     },
+    "social_interactions": {
+        "enabled": True,
+        # "mock" keeps the main simulation runnable without API keys.
+        # Set SOCIAL_INTERACTION_LLM=minimax after exporting MINIMAX_API_KEY.
+        "llm": os.environ.get("SOCIAL_INTERACTION_LLM", "mock"),
+        "seed": 20260602,
+        "network_seed": 42,
+        "avg_degree": 6,
+        "weak_tie_probability": 0.12,
+        "max_events_per_tick": 2,
+        "max_diffusion_targets": 1,
+        "pair_cooldown_minutes": 180,
+        "agent_daily_budget": 6,
+        "agent_daily_budget_extrovert_bonus": 2,
+        "agent_daily_budget_low_energy_penalty": 2,
+        "hard_block_activity_keywords": ["睡", "考试", "手术", "面试", "高考", "住院", "急诊"],
+        "soft_block_activity_keywords": ["深度工作", "专注", "会议", "上课", "通勤", "赶路", "汇报"],
+        "social_activity_keywords": ["吃饭", "午餐", "晚餐", "咖啡", "散步", "休息", "聊天", "聚会", "社区"],
+        "print_events": True,
+        "output_jsonl": "output/social_interactions/events.jsonl",
+        "summary_md": "output/social_interactions/daily_summary.md",
+        "timeline_md": "output/social_interactions/social_timeline.md",
+        "relationship_changes_csv": "output/social_interactions/relationship_changes.csv",
+        "dashboard_html": "output/social_interactions/dashboard.html",
+    },
     # Dynamic behaviour system — makes agent daily schedules feel human
     # by injecting spontaneous urges, social encounters, need-based
     # interrupts, and environment-triggered activity changes.
@@ -521,12 +567,21 @@ CONFIG = {
     "extensions": {
         "strict": False,
         "hooks": {
-            "on_simulation_start": ["economy_module:on_simulation_start"],
+            "on_simulation_start": [
+                "economy_module:on_simulation_start",
+                "gaworld.social.hooks:on_simulation_start",
+            ],
             "on_day_start": ["economy_module:on_day_start"],
-            "on_time_tick": [],
-            "on_agent_pre_step": ["economy_module:on_agent_pre_step"],
+            "on_time_tick": ["gaworld.social.hooks:on_time_tick"],
+            "on_agent_pre_step": [
+                "economy_module:on_agent_pre_step",
+                "gaworld.social.hooks:on_agent_pre_step",
+            ],
             "on_agent_post_step": ["economy_module:on_agent_post_step"],
-            "on_day_end": ["economy_module:on_day_end"],
+            "on_day_end": [
+                "economy_module:on_day_end",
+                "gaworld.social.hooks:on_day_end",
+            ],
             "on_simulation_end": ["economy_module:on_simulation_end"],
         },
     },
