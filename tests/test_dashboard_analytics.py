@@ -23,6 +23,11 @@ CONSOLE = ROOT / "site" / "console"
 NAMES = {40: "邓思琦", 33: "钱福生"}
 
 
+def _out(root, *parts):
+    """The artifact dir a reader takes, inside a seeded temp tree."""
+    return os.path.join(root, "output", *parts)
+
+
 def _write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -142,7 +147,7 @@ class AnalyticsReadersTest(unittest.TestCase):
         cls._tmp.cleanup()
 
     def test_state_history_orders_series_and_computes_deltas(self):
-        payload = analytics.state_history(self.root, NAMES)
+        payload = analytics.state_history(_out(self.root), NAMES)
         self.assertTrue(payload["available"])
         self.assertEqual(payload["metrics"], ["emotion", "stress"])
         self.assertEqual(payload["steps"], 3)
@@ -164,7 +169,7 @@ class AnalyticsReadersTest(unittest.TestCase):
         for step in range(total):
             rows.append(f"7,{step},emotion,{step / total:.4f}")
         _write(os.path.join(root, "output", "state", "agent_state_history.csv"), "\n".join(rows))
-        payload = analytics.state_history(root)
+        payload = analytics.state_history(_out(root))
         series = payload["series"]["emotion"]["7"]
         self.assertEqual(len(series), analytics.MAX_SERIES_POINTS)
         self.assertTrue(payload["sampled"])
@@ -174,7 +179,7 @@ class AnalyticsReadersTest(unittest.TestCase):
         self.assertEqual(payload["deltas"]["emotion"]["7"]["first"], 0.0)
 
     def test_economy_groups_by_agent_and_reads_macro(self):
-        payload = analytics.economy(self.root, NAMES)
+        payload = analytics.economy(_out(self.root), NAMES)
         self.assertTrue(payload["available"])
         ledger = {item["id"]: item for item in payload["ledger"]}
         self.assertEqual(ledger[40]["days"], [1, 2])
@@ -188,7 +193,7 @@ class AnalyticsReadersTest(unittest.TestCase):
         self.assertEqual(payload["macro_timeline"][0], {"day": 1, "phase": "expansion"})
 
     def test_social_collapses_reciprocal_agent_ties(self):
-        payload = analytics.social(self.root, "output/memory", NAMES)
+        payload = analytics.social(_out(self.root, "memory"), NAMES)
         self.assertTrue(payload["available"])
         edges = {(link["source"], link["target"]) for link in payload["links"]}
         self.assertIn(("33", "40"), edges)
@@ -204,7 +209,7 @@ class AnalyticsReadersTest(unittest.TestCase):
         self.assertEqual(payload["tier_counts"]["close"], 2)
 
     def test_behavior_aggregates_places_modes_and_habits(self):
-        payload = analytics.behavior(self.root, "output/memory", NAMES)
+        payload = analytics.behavior(_out(self.root, "memory"), NAMES)
         self.assertTrue(payload["available"])
         self.assertEqual(payload["places"][0], {"name": "西溪街道", "visits": 5})
         self.assertEqual({item["mode"] for item in payload["modes"]}, {"bike", "metro"})
@@ -219,7 +224,7 @@ class AnalyticsReadersTest(unittest.TestCase):
         self.assertEqual(hours[3], 0)
 
     def test_events_deduplicates_by_id(self):
-        payload = analytics.events(self.root, "output/visualization")
+        payload = analytics.events(_out(self.root, "visualization"))
         self.assertTrue(payload["available"])
         # "e1" spans both frames but is counted once.
         self.assertEqual(payload["type_counts"], {"natural": 1, "policy": 1})
@@ -229,7 +234,11 @@ class AnalyticsReadersTest(unittest.TestCase):
 
     def test_overview_summarizes_run(self):
         payload = analytics.overview(
-            self.root, "output/memory", "output/visualization", "output/diaries", NAMES
+            _out(self.root),
+            _out(self.root, "memory"),
+            _out(self.root, "visualization"),
+            _out(self.root, "diaries"),
+            NAMES,
         )
         self.assertEqual(payload["agent_count"], 2)
         self.assertEqual(payload["metric_count"], 2)
@@ -257,13 +266,16 @@ class AnalyticsEmptyTreeTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_every_reader_degrades_to_empty(self):
-        self.assertFalse(analytics.state_history(self.root)["available"])
-        self.assertFalse(analytics.economy(self.root)["available"])
-        self.assertFalse(analytics.social(self.root, "output/memory")["available"])
-        self.assertFalse(analytics.behavior(self.root, "output/memory")["available"])
-        self.assertFalse(analytics.events(self.root, "output/visualization")["available"])
+        self.assertFalse(analytics.state_history(_out(self.root))["available"])
+        self.assertFalse(analytics.economy(_out(self.root))["available"])
+        self.assertFalse(analytics.social(_out(self.root, "memory"))["available"])
+        self.assertFalse(analytics.behavior(_out(self.root, "memory"))["available"])
+        self.assertFalse(analytics.events(_out(self.root, "visualization"))["available"])
         overview = analytics.overview(
-            self.root, "output/memory", "output/visualization", "output/diaries"
+            _out(self.root),
+            _out(self.root, "memory"),
+            _out(self.root, "visualization"),
+            _out(self.root, "diaries"),
         )
         self.assertEqual(overview["agent_count"], 0)
         self.assertIsNone(overview["day_span"])
@@ -274,8 +286,8 @@ class AnalyticsEmptyTreeTest(unittest.TestCase):
             "agent_id,step,metric,value\nx,0,emotion,0.5\n40,0,emotion,oops\n40,0,,0.5\n",
         )
         _write(os.path.join(self.root, "output", "visualization", "simulation_trace.json"), "{not json")
-        self.assertFalse(analytics.state_history(self.root)["available"])
-        self.assertFalse(analytics.events(self.root, "output/visualization")["available"])
+        self.assertFalse(analytics.state_history(_out(self.root))["available"])
+        self.assertFalse(analytics.events(_out(self.root, "visualization"))["available"])
 
 
 class AnalyticsRoutingTest(unittest.TestCase):
@@ -288,6 +300,80 @@ class AnalyticsRoutingTest(unittest.TestCase):
         self.assertIsNone(ds._analytics_payload("nope"))
 
 
+class AnalyticsRunSelectionTest(unittest.TestCase):
+    """Past runs are analysable, and each is read from its own artifacts."""
+
+    def setUp(self):
+        import gaworld.apps.dashboard_server as ds
+
+        self.ds = ds
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        _seed(self.root)  # the live tree
+        # A scenario run with its own, different artifacts.
+        self.scenario = os.path.join(self.root, "output", "comparisons", "限行", "with_event")
+        _write(
+            os.path.join(self.scenario, "state", "agent_state_history.csv"),
+            "agent_id,step,metric,value\n33,0,emotion,0.10\n33,1,emotion,0.90\n",
+        )
+        _write_json(
+            os.path.join(self.scenario, "visualization", "simulation_trace.json"),
+            {"meta": {"finished": True}, "frames": []},
+        )
+        # An archived run: the visualizer copies the trace and nothing else.
+        _write_json(
+            os.path.join(self.root, "output", "visualization", "runs", "r1", "simulation_trace.json"),
+            {"meta": {"finished": True}, "frames": []},
+        )
+        self._real_root = ds.REPO_ROOT
+        ds.REPO_ROOT = self.root
+
+    def tearDown(self):
+        self.ds.REPO_ROOT = self._real_root
+        self._tmp.cleanup()
+
+    def _run(self, kind):
+        return next(item for item in self.ds._analytics_runs() if item["kind"] == kind)
+
+    def test_runs_are_listed_with_their_available_sections(self):
+        runs = self.ds._analytics_runs()
+        self.assertEqual(runs[0]["kind"], "live")  # the current run stays first
+        self.assertTrue(all(run["sections"]["events"] for run in runs))
+        live = self._run("live")
+        self.assertTrue(live["sections"]["economy"])
+        self.assertTrue(live["sections"]["social"])
+        scenario = self._run("scenario")
+        self.assertTrue(scenario["sections"]["state-history"])
+        self.assertFalse(scenario["sections"]["economy"])  # that run had none
+        # An archive holds only its trace; its siblings belong to a later run.
+        archive = self._run("archive")
+        self.assertEqual(
+            [key for key, ok in archive["sections"].items() if ok], ["events"]
+        )
+
+    def test_a_past_run_is_read_from_its_own_tree(self):
+        paths = self.ds._analytics_run_paths(self._run("scenario")["id"])
+        self.assertEqual(paths["output_dir"], self.scenario)
+        payload = self.ds._analytics_payload("state-history", paths)
+        # The scenario's own CSV, not the live tree's.
+        self.assertEqual(payload["series"]["emotion"]["33"], [0.1, 0.9])
+        self.assertNotIn("40", payload["series"]["emotion"])
+
+    def test_an_archived_run_does_not_borrow_the_live_artifacts(self):
+        paths = self.ds._analytics_run_paths(self._run("archive")["id"])
+        self.assertFalse(self.ds._analytics_payload("state-history", paths)["available"])
+        self.assertFalse(self.ds._analytics_payload("social", paths)["available"])
+
+    def test_no_run_id_means_the_current_run(self):
+        self.assertEqual(
+            self.ds._analytics_run_paths(""), self.ds._analytics_run_paths(self._run("live")["id"])
+        )
+
+    def test_an_unlisted_run_id_is_refused(self):
+        self.assertIsNone(self.ds._analytics_run_paths("output/../../etc"))
+        self.assertIsNone(self.ds._analytics_run_paths("output/visualization/runs/nope"))
+
+
 class AnalyticsFrontendTest(unittest.TestCase):
     def test_page_mounts_its_assets(self):
         html = (DASHBOARD / "analytics.html").read_text(encoding="utf-8")
@@ -297,6 +383,16 @@ class AnalyticsFrontendTest(unittest.TestCase):
         script = (DASHBOARD / "analytics.js").read_text(encoding="utf-8")
         for target in sorted(set(re.findall(r'\$\("(an[A-Za-z]+)"\)', script))):
             self.assertIn('id="' + target + '"', html, f"missing #{target} in analytics.html")
+
+    def test_page_offers_the_run_picker(self):
+        html = (DASHBOARD / "analytics.html").read_text(encoding="utf-8")
+        script = (DASHBOARD / "analytics.js").read_text(encoding="utf-8")
+        self.assertIn('<select id="anRunSelect">', html)
+        self.assertIn("/api/analytics/runs", script)
+        # Every section has to follow the picked run, not just the first one.
+        self.assertIn('api("/api/analytics/" + name, state.runId ? { run: state.runId } : null)', script)
+        for name in ("overview", "state-history", "economy", "social", "behavior", "events"):
+            self.assertIn('section("' + name + '")', script)
 
     def test_rendered_text_is_escaped(self):
         # Agent names, place names and event titles are model-authored, so every

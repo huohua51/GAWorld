@@ -70,6 +70,7 @@ Across days, the simulator accumulates:
 - Group (cohort) simulation for large populations: partitions residents into cohorts that carry both mean **and** dispersion, spends one LLM call per cohort per day, materialises a budgeted set of individuals at full fidelity (focal / event / tail / audit), and keeps a mean-zero social-graph coupling term so network-mediated co-movement survives aggregation. ~25× cheaper than per-agent simulation at a 20-person daily materialisation budget
 - Group-mode validation gate (L1–L4): a paired experiment that measures what the cohort approximation costs — distributional distance, network co-movement, tail retention, and causal response to a policy shock — with thresholds set relative to the reference tier's own cross-seed noise rather than arbitrary constants. Exits non-zero when a dividing-line layer fails, so it can gate CI
 - Population Studio: a 5-step dashboard panel for generating a population, running group mode over it, and reading the validation verdict, with live feasibility prechecks that name the conflicting knob
+- External Systems panel: observe and edit the world itself — the money system (macro cycle, sector pools, the daily money-conservation audit, wealth distribution and Gini), the external-environment generator, and the outward service connections. Config forms are generated from the config's own JSON shape (~150 knobs, and adding a knob needs no panel code), and a monetary intervention can be queued against a **running** simulation for it to consume at the next day boundary; injecting into a sector pool moves the conservation baseline with it, so the audit records a deliberate injection as an injection rather than as a leak
 - Distributed multi-machine mode with relay-based communication
 
 ## Architecture: Microkernel + Plugins
@@ -133,7 +134,7 @@ code.
 - `gaworld/work/`: real-work task system (runtime, worker pool, queue, market, router, adapters)
 - `gaworld/population/`: parameterised population synthesis — `schema` (knob contract + feasibility precheck), `synth` (IPF + conditional sampling + income rank-transform), `network` (households, workplaces, homophily social graph), `report` (validation gate + review charts), `writer` (state CSV + profile Markdown + manifest)
 - `gaworld/group/`: cohort (group) simulation — `cohort` (partition, centroid **and** dispersion, mean-zero network coupling), `cohort_day` (one LLM call per cohort per day), `materialize` (focal / event / tail / audit selection, audit residual), `driver` (day loop + cost accounting), `metrics` + `validate` (the L1–L4 gate), `plugin` (observational cohort telemetry)
-- `gaworld/apps/`: local servers (dashboard, external-environment, distributed-comm) and `population_api` (Population Studio backend)
+- `gaworld/apps/`: local servers (dashboard, external-environment, distributed-comm) and the delegated panel backends `population_api` (Population Studio) and `external_systems_api` (External Systems)
 - `gaworld/io/`: HTTP guard with retry/backoff and HTML extraction
 - `gaworld/sim/`: extracted simulator sub-modules — `_utils`, `agents_loader`, `_schedule`, `_location`, `_cognition`, `_rag`, `_diary` (more slices coming as the legacy file shrinks)
 - `simulation_visualizer.py`, `avatar_generator.py`, `generate_agent_rag_seed.py`, `analyze_wellbeing.py`: standalone CLI tools (not imported by the runtime)
@@ -142,7 +143,7 @@ code.
 - `data/citymap.md`: city map data
 - `scripts/`: launch and developer utilities
 - `docs/`: tutorials, integration notes, design docs, refactor history (`REFACTOR_PLAN.md`, `REFACTOR_BASELINE.md`, `PROJECT_STRUCTURE.md`)
-- `site/dashboard/`: local dashboard frontend (console `index.html` + Agent Studio `studio.html`)
+- `site/dashboard/`: local dashboard frontend (console `index.html` + Agent Studio `studio.html` + Population Studio `population.html` + External Systems `external.html`)
 - `site/simviz/`: playback viewer
 - `output/`: generated artifacts
 
@@ -387,6 +388,46 @@ Backend API (delegated from `dashboard_server.py` to `gaworld/apps/population_ap
 | POST | `/api/population/validate` | run the L1–L4 validation gate |
 
 Generation and simulation are asynchronous jobs, so a 500-person town does not block the browser.
+
+### External Systems
+
+The first two panels face the agents; this one faces **the world itself**. Console tab
+(**外部系统 / External**) or directly at `http://127.0.0.1:8766/site/dashboard/external.html`.
+Three sub-panels, each pairing observation on the left with editing on the right:
+
+- **Money system** — cycle phase, inflation, unemployment, the cumulative price index, the
+  firms / government / bank sector pools, the money-conservation curve and its drift, wealth
+  distribution and Gini, and aggregate daily income vs expense. Edits the whole
+  `CONFIG["economy"]` tree, and can also queue an intervention against a **running** simulation
+- **External environment** — the recent days of generated natural / economic / political /
+  technology events from `timeline.jsonl`, with severity bars and impact tags. Edits the
+  generator's parameters, the weather pool, and the `policy_events` shock schedule
+- **Outward services** — an on-demand health probe of the external-environment service and the
+  distributed relay, plus LLM routing and the news cache. The provider list is read-only
+  (credentials are never exposed); the routing table is editable
+
+**The config forms are grown from the config itself.** The `economy` subtree alone has ~120
+leaves; the panel renders controls from the JSON shape and the backend coerces an incoming patch
+against the type already in the effective config (`"0.09"` → `0.09`), dropping unknown keys and
+reporting them. ~150 knobs are editable, and adding a knob needs no panel code.
+
+**Two kinds of "edit", and the difference matters.** Config is written to
+`dashboard_config.json` and takes effect on the **next** run — that is the one to use for
+controlled experiments. An intervention is written to `output/economy/interventions.json` and the
+running simulation consumes it at the **next day boundary**. Interventions deliberately do *not*
+write `macro_state.json`: that file is an *output*, rebuilt from config at
+`on_simulation_start` and never read back, so editing it would look like it worked and change
+nothing. Injecting into a sector pool moves the conservation baseline by the same amount, so the
+daily audit records a deliberate injection as an injection rather than as money leaking.
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/external-systems/overview` | config + runtime for all three subsystems |
+| GET | `/api/external-systems/health` | probe the outward service endpoints |
+| GET/POST | `/api/external-systems/interventions` | read / queue a monetary intervention |
+| POST | `/api/external-systems/config` | save a config patch (whitelisted subtrees, type-coerced) |
+
+Full walkthrough: [External Systems Tutorial](./docs/EXTERNAL_SYSTEMS_TUTORIAL.md) (in Chinese).
 
 ## Configuration
 
@@ -809,6 +850,7 @@ Generated artifacts are written under `output/`, including:
 - [Physical Environment Perception & Reactive Replanning](./docs/physical_env_perception_changelog.md)
 - [Social Network — Design](./docs/SOCIAL_NETWORK_DESIGN.md) · [Tutorial](./docs/SOCIAL_NETWORK_TUTORIAL.md)
 - [Group Simulation — Tutorial](./docs/GROUP_SIMULATION_TUTORIAL.md) · [Design](./docs/GROUP_AGENT_DESIGN.md) (population synthesis, cohort mode, the L1–L4 validation gate)
+- [External Systems — Tutorial](./docs/EXTERNAL_SYSTEMS_TUTORIAL.md) (in Chinese; observing and editing the money system, the external environment and outward services, plus runtime intervention)
 - [Project Structure](./docs/PROJECT_STRUCTURE.md)
 - [Repository Guidelines](./AGENTS.md)
 - [Changelog](./CHANGELOG.md)

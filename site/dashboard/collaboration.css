@@ -653,6 +653,15 @@ select,
   letter-spacing: 0.04em;
 }
 
+.activity-round {
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: #98b7c1;
+  font: 10px ui-monospace, monospace;
+  letter-spacing: 0.04em;
+}
+
 .activity-detail {
   color: #98b7c1;
   font-size: 11px;
@@ -667,6 +676,35 @@ select,
   color: #c8dadd;
   font-size: 11px;
   letter-spacing: 0.04em;
+}
+
+.activity-event[data-event-type="turn_started"] .activity-action {
+  color: #8eabb5;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.activity-event[data-event-type="turn_started"] time::after {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #7fd1c2;
+  animation: turn-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes turn-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-event[data-event-type="turn_started"] time::after {
+    animation: none;
+    opacity: 0.8;
+  }
 }
 
 .artifact-count {

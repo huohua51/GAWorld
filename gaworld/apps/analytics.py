@@ -3,6 +3,10 @@
 Every reader here degrades to an empty payload when its artifact is missing or
 malformed, so a half-finished (or never-started) run still renders a page
 instead of a stack trace. Nothing in this module writes to disk.
+
+Each reader takes the directory its artifacts live in rather than the repo
+root, so the same code serves the live ``output/`` tree and any past run's tree
+(a scenario run, an archived trace) — the caller decides which run to read.
 """
 
 from __future__ import annotations
@@ -129,9 +133,9 @@ def _agent_label(agent_id: int, names: dict[int, str] | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def state_history(root: str, names: dict[int, str] | None = None) -> dict[str, Any]:
+def state_history(output_dir: str, names: dict[int, str] | None = None) -> dict[str, Any]:
     """Per-agent trajectories of the normalized [0,1] state variables."""
-    rows = _read_csv(os.path.join(root, "output", "state", "agent_state_history.csv"))
+    rows = _read_csv(os.path.join(output_dir, "state", "agent_state_history.csv"))
     # metric -> agent_id -> step -> value
     buckets: dict[str, dict[int, dict[int, float]]] = defaultdict(lambda: defaultdict(dict))
     for row in rows:
@@ -173,9 +177,9 @@ def state_history(root: str, names: dict[int, str] | None = None) -> dict[str, A
     }
 
 
-def economy(root: str, names: dict[int, str] | None = None) -> dict[str, Any]:
+def economy(output_dir: str, names: dict[int, str] | None = None) -> dict[str, Any]:
     """Daily ledger trajectories, final wealth snapshot and macro cycle state."""
-    econ_dir = os.path.join(root, "output", "economy")
+    econ_dir = os.path.join(output_dir, "economy")
     ledger_rows = _read_csv(os.path.join(econ_dir, "daily_ledger.csv"))
 
     per_agent: dict[int, dict[str, list[Any]]] = {}
@@ -271,20 +275,19 @@ def _relationship_files(memory_dir: str) -> list[tuple[int, str]]:
     return found
 
 
-def social(root: str, memory_dir: str, names: dict[int, str] | None = None) -> dict[str, Any]:
+def social(memory_dir: str, names: dict[int, str] | None = None) -> dict[str, Any]:
     """Relationship graph across every agent that has a persisted memory file.
 
     Agent-to-agent ties are keyed by the peer's numeric id and are reciprocal,
     so they collapse into a single undirected link; ``g_*`` ghost ties are
     private to their owner and stay as leaf nodes.
     """
-    memory_path = os.path.join(root, memory_dir)
     nodes: dict[str, dict[str, Any]] = {}
     links: dict[tuple[str, str], dict[str, Any]] = {}
     tier_counts: Counter[str] = Counter()
     role_counts: Counter[str] = Counter()
 
-    owners = _relationship_files(memory_path)
+    owners = _relationship_files(memory_dir)
     for owner, _path in owners:
         nodes[str(owner)] = {
             "id": str(owner),
@@ -357,9 +360,8 @@ def social(root: str, memory_dir: str, names: dict[int, str] | None = None) -> d
     }
 
 
-def behavior(root: str, memory_dir: str, names: dict[int, str] | None = None) -> dict[str, Any]:
+def behavior(memory_dir: str, names: dict[int, str] | None = None) -> dict[str, Any]:
     """Where agents went, how they travelled, and which habits they formed."""
-    memory_path = os.path.join(root, memory_dir)
     places: Counter[str] = Counter()
     modes: Counter[str] = Counter()
     contexts: Counter[str] = Counter()
@@ -369,7 +371,7 @@ def behavior(root: str, memory_dir: str, names: dict[int, str] | None = None) ->
     schedule_hours: Counter[int] = Counter()
     per_agent: list[dict[str, Any]] = []
 
-    if not os.path.isdir(memory_path):
+    if not os.path.isdir(memory_dir):
         return {
             "available": False,
             "places": [],
@@ -380,13 +382,13 @@ def behavior(root: str, memory_dir: str, names: dict[int, str] | None = None) ->
             "agents": [],
         }
 
-    for filename in sorted(os.listdir(memory_path)):
+    for filename in sorted(os.listdir(memory_dir)):
         if not (filename.startswith("agent_") and filename.endswith("_locations.json")):
             continue
         agent_id = _i(filename[len("agent_") : -len("_locations.json")])
         if agent_id is None:
             continue
-        payload = _read_json(os.path.join(memory_path, filename), {}) or {}
+        payload = _read_json(os.path.join(memory_dir, filename), {}) or {}
         frequent = payload.get("frequent_places")
         if isinstance(frequent, dict):
             for place, count in frequent.items():
@@ -413,10 +415,10 @@ def behavior(root: str, memory_dir: str, names: dict[int, str] | None = None) ->
             }
         )
 
-    for filename in sorted(os.listdir(memory_path)):
+    for filename in sorted(os.listdir(memory_dir)):
         if filename.startswith("agent_") and filename.endswith("_habits.json"):
             agent_id = _i(filename[len("agent_") : -len("_habits.json")])
-            payload = _read_json(os.path.join(memory_path, filename), {}) or {}
+            payload = _read_json(os.path.join(memory_dir, filename), {}) or {}
             if not isinstance(payload, dict):
                 continue
             for key, item in payload.items():
@@ -444,7 +446,7 @@ def behavior(root: str, memory_dir: str, names: dict[int, str] | None = None) ->
                     }
                 )
         elif filename.startswith("agent_") and filename.endswith("_schedule.json"):
-            payload = _read_json(os.path.join(memory_path, filename), []) or []
+            payload = _read_json(os.path.join(memory_dir, filename), []) or []
             if not isinstance(payload, list):
                 continue
             for slot in payload:
@@ -474,9 +476,9 @@ def behavior(root: str, memory_dir: str, names: dict[int, str] | None = None) ->
     }
 
 
-def events(root: str, visualization_dir: str) -> dict[str, Any]:
+def events(visualization_dir: str) -> dict[str, Any]:
     """Environment / policy events per simulated day, from the replay trace."""
-    trace = _read_json(os.path.join(root, visualization_dir, "simulation_trace.json"), {}) or {}
+    trace = _read_json(os.path.join(visualization_dir, "simulation_trace.json"), {}) or {}
     frames = trace.get("frames") if isinstance(trace, dict) else None
     if not isinstance(frames, list):
         frames = []
@@ -538,15 +540,15 @@ def events(root: str, visualization_dir: str) -> dict[str, Any]:
 
 
 def overview(
-    root: str,
+    output_dir: str,
     memory_dir: str,
     visualization_dir: str,
     diary_dir: str,
     names: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """Headline numbers for the KPI strip, cheap enough to poll."""
-    history = state_history(root, names)
-    trace = _read_json(os.path.join(root, visualization_dir, "simulation_trace.json"), {}) or {}
+    history = state_history(output_dir, names)
+    trace = _read_json(os.path.join(visualization_dir, "simulation_trace.json"), {}) or {}
     meta = trace.get("meta") if isinstance(trace, dict) else {}
     meta = meta if isinstance(meta, dict) else {}
     frames = trace.get("frames") if isinstance(trace, dict) else []
@@ -558,17 +560,15 @@ def overview(
         len(frame.get("env_events") or []) for frame in frames if isinstance(frame, dict)
     )
 
-    diary_root = os.path.join(root, diary_dir)
     diary_count = 0
-    if os.path.isdir(diary_root):
-        for entry in os.listdir(diary_root):
-            agent_dir = os.path.join(diary_root, entry)
+    if os.path.isdir(diary_dir):
+        for entry in os.listdir(diary_dir):
+            agent_dir = os.path.join(diary_dir, entry)
             if os.path.isdir(agent_dir):
                 diary_count += len([f for f in os.listdir(agent_dir) if f.endswith(".md")])
 
-    memory_path = os.path.join(root, memory_dir)
     relationship_total = 0
-    for _owner, path in _relationship_files(memory_path):
+    for _owner, path in _relationship_files(memory_dir):
         payload = _read_json(path, {}) or {}
         if isinstance(payload, dict):
             relationship_total += len(payload)

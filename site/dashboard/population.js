@@ -23,6 +23,7 @@
     groupRun: null,
     verdict: null,
     written: [],
+    roster: { query: "", limit: 20, open: null },
     run: {
       days: 7,
       budget: 20,
@@ -358,7 +359,7 @@
         (state.population ? "已生成。改动上面的滑块后需要重新生成。" : "生成大约需要 1–3 秒，不消耗任何模型费用。") +
         "</span>"
       ) +
-      "</div>" + (state.population ? achievedCard() : "")
+      "</div>" + (state.population ? achievedCard() + rosterCard() : "")
     );
   }
 
@@ -381,9 +382,9 @@
       : "";
 
     return (
-      '<div class="pop-card"><h2>生成结果：你要的 vs 实际拿到的</h2>' +
-      '<p class="pop-lede">生成器不会假装每个参数都达成了。达不到的会在这里显示偏差。</p>' + gapNote +
-      '<table class="pop-table"><thead><tr><th>指标 Metric</th><th class="num">你要的 Target</th>' +
+      '<div class="pop-card"><h2>生成结果：目标值与实际值对比</h2>' +
+      '<p class="pop-lede">下表逐项列出你设定的目标值、生成人口的实际值，以及两者的相对偏差。</p>' + gapNote +
+      '<table class="pop-table"><thead><tr><th>指标 Metric</th><th class="num">目标值 Target</th>' +
       '<th class="num">实际 Achieved</th><th class="num">偏差 Error</th></tr></thead><tbody>' + rows + "</tbody></table>" +
       '<div class="pop-charts">' +
       '<div class="pop-chart"><h4>年龄金字塔</h4>' + agePyramid(rep.charts.age_pyramid) +
@@ -401,6 +402,144 @@
       rep.network.mean_path_length.toFixed(1) + " 层关系。</p></div>" +
       "</div></div>"
     );
+  }
+
+  /* ------------------------------------------------- step 2 · 居民名册 */
+
+  /** The generated agents themselves, previewable and downloadable right here.
+   *
+   *  Aggregate charts answer "did the generator hit my targets"; they do not
+   *  answer "who are these people". Making the user run a simulation (or hunt
+   *  for a written file in step 5) before they can look at a single resident
+   *  is why the population felt like a black box.
+   *
+   *  The table body is rendered by :func:`renderRoster` rather than inlined
+   *  here: filtering must not re-render the whole panel, or the search box
+   *  loses focus on every keystroke. */
+  function rosterCard() {
+    var total = (state.population.people || []).length;
+    return (
+      '<div class="pop-card"><h2>居民名册：这 ' + total + " 个智能体</h2>" +
+      '<p class="pop-lede">每一行是一个将要参与模拟的智能体。点任意一行可以展开他的九个状态变量。' +
+      "下面三个文件就是仿真器实际读取的内容，可以直接下载到本地。</p>" +
+      '<div class="pop-rostertools">' +
+      '<input type="search" id="popRosterQ" placeholder="按姓名 / 职业 / 住处 / 户籍筛选" value="' +
+      esc(state.roster.query) + '" />' +
+      '<span class="pop-hint" id="popRosterCount"></span></div>' +
+      '<table class="pop-table pop-roster"><thead><tr>' +
+      "<th>编号</th><th>姓名</th><th>性别</th><th class=\"num\">年龄</th><th>户籍</th>" +
+      "<th>住处</th><th>职业</th><th class=\"num\">月收入</th><th>家庭</th>" +
+      '</tr></thead><tbody id="popRosterBody"></tbody></table>' +
+      '<div id="popRosterMore" class="pop-roster-more"></div>' +
+      actionBar(
+        '<button class="btn" data-export="csv">⬇ 状态表 CSV</button>' +
+        '<button class="btn" data-export="md">⬇ 人物志 Markdown</button>' +
+        '<button class="btn ghost" data-export="json">⬇ 完整记录 JSON</button>' +
+        '<span class="pop-actionhint">直接下载到本地，不写入仓库。' +
+        "前两个就是 <code>CONFIG[\"csv_path\"]</code> 和 <code>CONFIG[\"md_path\"]</code> 要的文件。</span>"
+      ) +
+      "</div>"
+    );
+  }
+
+  function householdLabel(type) {
+    var labels = (state.schema && state.schema.household_type_labels) || {};
+    return labels[type] || type || "—";
+  }
+
+  function stateBars(personState) {
+    var keys = (state.schema && state.schema.state_var_keys) || [];
+    return '<div class="pop-statebars">' + keys.map(function (k) {
+      var v = Number((personState || {})[k] || 0);
+      return '<div class="pop-statebar" title="' + esc(STATE_HELP[k] || "") + '">' +
+        "<span>" + esc(label(k, "zh")) + "</span>" +
+        '<i><b style="width:' + Math.round(v * 100) + '%"></b></i>' +
+        "<em>" + v.toFixed(2) + "</em></div>";
+    }).join("") + "</div>";
+  }
+
+  function rosterRow(p) {
+    var open = state.roster.open === p.id;
+    var row =
+      '<tr class="pop-roster-row' + (open ? " is-open" : "") + '" data-person="' + p.id + '">' +
+      '<td class="num">' + p.id + "</td><td>" + esc(p.name) + "</td><td>" + esc(p.gender) + "</td>" +
+      '<td class="num">' + p.age + "</td><td>" + esc(p.hukou) + "</td><td>" + esc(p.residence) + "</td>" +
+      "<td>" + esc(p.job) + "</td>" +
+      '<td class="num">' + (p.income_monthly > 0 ? money(p.income_monthly) : "—") + "</td>" +
+      "<td>" + esc(householdLabel(p.household_type)) + "</td></tr>";
+    if (!open) return row;
+    return row + '<tr class="pop-roster-detail"><td colspan="9">' + stateBars(p.state) + "</td></tr>";
+  }
+
+  var ROSTER_PAGE = 20;
+
+  function renderRoster() {
+    var body = $("popRosterBody");
+    if (!body || !state.population) return;
+    var all = state.population.people || [];
+    var q = state.roster.query.trim().toLowerCase();
+    var matched = !q ? all : all.filter(function (p) {
+      return [p.id, p.name, p.job, p.residence, p.hukou, p.gender]
+        .join(" ").toLowerCase().indexOf(q) >= 0;
+    });
+    var shown = matched.slice(0, state.roster.limit);
+
+    body.innerHTML = shown.length
+      ? shown.map(rosterRow).join("")
+      : '<tr><td colspan="9" class="pop-hint">没有匹配的居民。</td></tr>';
+
+    var count = $("popRosterCount");
+    if (count) {
+      count.textContent = q
+        ? "匹配 " + matched.length + " 人，显示 " + shown.length + " 人"
+        : "共 " + all.length + " 人，显示前 " + shown.length + " 人";
+    }
+
+    var more = $("popRosterMore");
+    if (more) {
+      more.innerHTML = matched.length > shown.length
+        ? '<button class="btn small ghost" id="popRosterMoreBtn">再显示 ' + ROSTER_PAGE +
+          " 人（还有 " + (matched.length - shown.length) + " 人）</button>"
+        : "";
+      bind("popRosterMoreBtn", function () {
+        state.roster.limit += ROSTER_PAGE;
+        renderRoster();
+      });
+    }
+
+    Array.prototype.forEach.call(body.querySelectorAll(".pop-roster-row"), function (tr) {
+      tr.addEventListener("click", function () {
+        var id = Number(tr.dataset.person);
+        state.roster.open = state.roster.open === id ? null : id;
+        renderRoster();
+      });
+    });
+  }
+
+  /** Downloads are rendered by the backend (`/api/population/export`) so the
+   *  CSV column order and the profile template stay declared once, in
+   *  `gaworld/population/writer.py`. */
+  function downloadExport(fmt) {
+    setProgress("正在准备下载…", 0.5);
+    api("GET", "/api/population/export?format=" + encodeURIComponent(fmt)).then(function (res) {
+      if (res.error) return fail(res.error);
+      saveFile(res.filename, res.content, res.content_type, res.bom);
+      setProgress("✅ 已下载 " + res.filename, 1);
+    });
+  }
+
+  function saveFile(filename, text, contentType, bom) {
+    // The BOM is not decoration: the simulator reads the state CSV with a
+    // BOM-aware codec, and Excel needs it to show Chinese names correctly.
+    var blob = new Blob(bom ? ["\ufeff", text] : [text], { type: contentType });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 0);
   }
 
   /* --------------------------------------------------------------- step 3 */
@@ -803,6 +942,7 @@
     renderIssues();
     renderSummary();
     bindPanel();
+    renderRoster();
   }
 
   function setProgress(text, fraction, isError) {
@@ -888,6 +1028,23 @@
       });
     });
 
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-export]"), function (btn) {
+      btn.addEventListener("click", function () {
+        downloadExport(btn.dataset.export);
+      });
+    });
+
+    // Filtering redraws only the table body: a full render() would rebuild the
+    // input and drop the caret on every keystroke.
+    var search = $("popRosterQ");
+    if (search) {
+      search.addEventListener("input", function () {
+        state.roster.query = search.value;
+        state.roster.limit = ROSTER_PAGE;
+        renderRoster();
+      });
+    }
+
     bind("popGenerate", generate);
     bind("popRegen", generate);
     bind("popRunGroup", runGroup);
@@ -933,6 +1090,7 @@
         state.population = result;
         state.groupRun = null;
         state.verdict = null;
+        state.roster = { query: "", limit: ROSTER_PAGE, open: null };
         render();
         if (typeof after === "function") after();
       });
@@ -1055,6 +1213,7 @@
   if (typeof global !== "undefined") {
     global.__POP_TEST__ = {
       setVerdict: function (v) { state.verdict = v; },
+      setPopulation: function (p) { state.population = p; },
       setWritten: function (w) { state.written = w; },
       setStep: function (n) { state.step = n; },
       render: render,

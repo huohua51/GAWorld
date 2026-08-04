@@ -14,6 +14,11 @@ from gaworld.collaboration.store import SessionStore
 
 _FILENAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.[A-Za-z0-9]{1,8}")
 
+# The observatory feed shows what each member actually wrote, not just the
+# filename it landed in. Full deliverables would bloat events.jsonl, so a
+# collapsed opening excerpt travels with the event instead.
+_EXCERPT_LIMIT = 320
+
 
 class CooperationRunner:
     def __init__(
@@ -59,6 +64,50 @@ class CooperationRunner:
         if not _FILENAME_RE.fullmatch(filename):
             return fallback
         return filename
+
+    @staticmethod
+    def _excerpt(text: str) -> str:
+        collapsed = " ".join(str(text or "").split())
+        if len(collapsed) <= _EXCERPT_LIMIT:
+            return collapsed
+        return collapsed[:_EXCERPT_LIMIT].rstrip() + "…"
+
+    def _announce_turn(
+        self,
+        session_id: str,
+        phase: str,
+        agent_id: int,
+        content: str = "",
+        *,
+        step_index: int | None = None,
+    ) -> None:
+        """Record that a member has picked up a turn, before the LLM runs.
+
+        Without this the feed stays silent for the whole duration of a call
+        and then emits a burst, so an observer cannot tell who is currently
+        acting. Emission is idempotent per (phase, step) so resuming an
+        interrupted session does not replay the marker.
+        """
+        with self.store.session_guard(session_id):
+            if self.store.get(session_id).status is not SessionStatus.RUNNING:
+                return
+            if any(
+                event.type == "turn_started"
+                and event.metadata.get("phase") == phase
+                and event.metadata.get("step_index") == step_index
+                for event in self.store.events(session_id)
+            ):
+                return
+            metadata: dict[str, Any] = {"phase": phase, "agent_id": agent_id}
+            if step_index is not None:
+                metadata["step_index"] = step_index
+            self.store.append_event(
+                session_id,
+                "turn_started",
+                content,
+                agent_id=agent_id,
+                metadata=metadata,
+            )
 
     def _persona(self, agent_id: int) -> dict[str, Any]:
         return persona(self.agent_loader(agent_id))
@@ -358,6 +407,13 @@ class CooperationRunner:
         events = self.store.events(session_id)
         artifact_event = self._step_event(events, "artifact", step_index)
         if artifact_event is None:
+            self._announce_turn(
+                session_id,
+                "execute",
+                author_id,
+                str(step.get("title") or ""),
+                step_index=step_index,
+            )
             delivery = self._call(
                 json.dumps(
                     {
@@ -399,6 +455,7 @@ class CooperationRunner:
                     )
                     metadata = dict(artifact)
                     metadata["step_index"] = step_index
+                    metadata["excerpt"] = self._excerpt(delivery)
                     artifact_event = self.store.append_event(
                         session_id,
                         "artifact",
@@ -417,6 +474,13 @@ class CooperationRunner:
         if review_event is None:
             reviewer_id = next(
                 member_id for member_id in session.member_ids if member_id != author_id
+            )
+            self._announce_turn(
+                session_id,
+                "review",
+                reviewer_id,
+                artifact_event.content,
+                step_index=step_index,
             )
             review_raw = self._call(
                 json.dumps(
@@ -477,6 +541,13 @@ class CooperationRunner:
             step_index,
         )
         if not approved and revision_event is None:
+            self._announce_turn(
+                session_id,
+                "revision",
+                author_id,
+                artifact_event.content,
+                step_index=step_index,
+            )
             revised = self._call(
                 json.dumps(
                     {
@@ -523,6 +594,7 @@ class CooperationRunner:
                         metadata={
                             "artifact": artifact_event.content,
                             "step_index": step_index,
+                            "excerpt": self._excerpt(revised),
                         },
                     )
                 status = self.store.get(session_id).status
@@ -553,6 +625,7 @@ class CooperationRunner:
             None,
         )
         if final_event is None:
+            self._announce_turn(session_id, "synthesis", session.leader_id, "final.md")
             final_text = self._call(
                 json.dumps(
                     {
@@ -597,6 +670,7 @@ class CooperationRunner:
                     )
                     metadata = dict(final)
                     metadata["final"] = True
+                    metadata["excerpt"] = self._excerpt(final_text)
                     self.store.append_event(
                         session_id,
                         "artifact",

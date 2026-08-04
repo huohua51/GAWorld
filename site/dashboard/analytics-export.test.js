@@ -27,6 +27,8 @@ function fixture() {
     metrics: ["emotion", "stress"],
     agents: ["40"],
     econSeries: ["balance"],
+    runInfo: { id: "output/comparisons/限行/with_event/visualization", kind: "scenario",
+               label: "comparisons/限行/with_event" },
     overview: {
       agent_count: 2, metric_count: 2, step_count: 3, frame_count: 4,
       day_span: { first: 1, last: 2 }, event_total: 1, diary_count: 5,
@@ -176,6 +178,18 @@ test("json export carries only the selected metrics and agents", () => {
   assert.equal(payload.events.timeline.length, 1);
   // Round-trips as JSON, which is the only contract the file has.
   assert.deepEqual(JSON.parse(JSON.stringify(payload)).scope, payload.scope);
+});
+
+test("exports name the run they came from", () => {
+  const state = fixture();
+  const json = exporter.buildJson(state, LABELS, STAMP);
+  assert.equal(json.run.id, state.runInfo.id);
+  assert.equal(json.scope.run, "comparisons/限行/with_event");
+  assert.match(exporter.buildMarkdown(state, LABELS, STAMP), /运行：comparisons\/限行\/with_event/);
+  // The picker lives in the chrome the report strips, so the banner carries it.
+  assert.match(exporter.buildHtmlReport(state, LABELS, STAMP, "", ""), /运行<\/b>comparisons/);
+  // Without a picked run the export is of the current one.
+  assert.equal(exporter.buildJson({ ...state, runInfo: null }, LABELS, STAMP).scope.run, "当前运行");
 });
 
 test("json export survives an empty run", () => {

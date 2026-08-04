@@ -6,6 +6,9 @@ const state = {
   lifeEvents: [],
   trace: null,
   traceGeneratedAt: null,
+  memoryPayload: null,
+  profileText: "",
+  rawSourceKey: "long_term",
   // Frames captured live from latest_frame.json between trace flushes
   // (the simulator only rewrites simulation_trace.json every N frames).
   liveFrames: new Map(),
@@ -46,10 +49,8 @@ const els = {
   selectedAgentAvatar: document.getElementById("selectedAgentAvatar"),
   agentSelect: document.getElementById("agentSelect"),
   profileView: document.getElementById("profileView"),
-  profileEditor: document.getElementById("profileEditor"),
-  editProfileBtn: document.getElementById("editProfileBtn"),
-  cancelProfileBtn: document.getElementById("cancelProfileBtn"),
-  saveProfileBtn: document.getElementById("saveProfileBtn"),
+  simRosterList: document.getElementById("simRosterList"),
+  simRosterCount: document.getElementById("simRosterCount"),
   toggleSimBtn: document.getElementById("toggleSimBtn"),
   refreshAgentBtn: document.getElementById("refreshAgentBtn"),
   interviewContext: document.getElementById("interviewContext"),
@@ -72,12 +73,20 @@ const els = {
   fosEnglishCheckbox: document.getElementById("fosEnglishCheckbox"),
   fosExportBtn: document.getElementById("fosExportBtn"),
   fosCopyBtn: document.getElementById("fosCopyBtn"),
+  fosDownloadBtn: document.getElementById("fosDownloadBtn"),
   fosOutputBox: document.getElementById("fosOutputBox"),
   reloadMemoryBtn: document.getElementById("reloadMemoryBtn"),
-  memoryBox: document.getElementById("memoryBox"),
-  stateMemoryBox: document.getElementById("stateMemoryBox"),
-  episodesBox: document.getElementById("episodesBox"),
-  agentLogBox: document.getElementById("agentLogBox"),
+  rawMemoryBtn: document.getElementById("rawMemoryBtn"),
+  memoryView: document.getElementById("memoryView"),
+  stateMemoryView: document.getElementById("stateMemoryView"),
+  episodesView: document.getElementById("episodesView"),
+  agentLogView: document.getElementById("agentLogView"),
+  rawModal: document.getElementById("rawModal"),
+  rawModalTabs: document.getElementById("rawModalTabs"),
+  rawModalBody: document.getElementById("rawModalBody"),
+  rawModalMeta: document.getElementById("rawModalMeta"),
+  rawCopyBtn: document.getElementById("rawCopyBtn"),
+  rawDownloadBtn: document.getElementById("rawDownloadBtn"),
   reloadStatusBtn: document.getElementById("reloadStatusBtn"),
   runLogBox: document.getElementById("runLogBox"),
 };
@@ -304,6 +313,63 @@ function refreshAgentOptionLabels() {
     option.textContent = `${inSim ? "▶ " : ""}${String(agent.id).padStart(2, "0")} · ${agent.name}${inSim ? "（仿真中）" : ""}`;
   });
   updateToggleSimBtn();
+  renderSimRoster();
+}
+
+// Avatar strip of the residents on the current run roster (the toolbar
+// "Agent IDs" list). Clicking a face selects that resident.
+function renderSimRoster() {
+  if (!els.simRosterList) return;
+  const ids = Array.from(configuredIdSet()).sort((a, b) => a - b);
+  if (els.simRosterCount) els.simRosterCount.textContent = ids.length ? String(ids.length) : "";
+  els.simRosterList.innerHTML = "";
+  ids.forEach((id) => {
+    const agent = state.agents.find((item) => Number(item.id) === id);
+    const name = agent ? agent.name : `Agent ${id}`;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "roster-chip";
+    chip.dataset.agentId = String(id);
+    chip.disabled = !agent;
+    chip.title = `${String(id).padStart(2, "0")} · ${name}`;
+    chip.classList.toggle("is-active", id === Number(state.selectedAgentId));
+
+    const face = document.createElement("span");
+    face.className = "roster-face";
+    face.textContent = String(name).trim().slice(0, 1).toUpperCase();
+    const img = document.createElement("img");
+    img.alt = "";
+    // No avatar file for this resident yet — fall back to the initial
+    // rendered underneath.
+    img.addEventListener("error", () => img.remove());
+    img.src = getAgentAvatarPath(id);
+    face.appendChild(img);
+
+    const label = document.createElement("span");
+    label.className = "roster-name";
+    label.textContent = name;
+
+    chip.append(face, label);
+    els.simRosterList.appendChild(chip);
+  });
+}
+
+// Switch the profile / memory / map focus to another resident.
+async function selectAgent(agentId) {
+  const id = Number(agentId);
+  if (!id || id === Number(state.selectedAgentId)) return;
+  state.selectedAgentId = id;
+  els.agentSelect.value = String(id);
+  renderSelectedAgentAvatar();
+  updateToggleSimBtn();
+  renderSimRoster();
+  renderTrace();
+  try {
+    await loadProfile();
+    await loadMemory();
+  } catch (error) {
+    message(error.message, "error");
+  }
 }
 
 function updateToggleSimBtn() {
@@ -456,50 +522,355 @@ function renderMarkdown(md) {
 
 function renderProfileView() {
   if (!els.profileView) return;
-  els.profileView.innerHTML = renderMarkdown(els.profileEditor.value);
+  els.profileView.innerHTML = renderMarkdown(state.profileText);
 }
 
-function setProfileEditing(editing) {
-  if (els.profileView) els.profileView.hidden = editing;
-  if (els.profileEditor) els.profileEditor.hidden = !editing;
-  if (els.editProfileBtn) els.editProfileBtn.hidden = editing;
-  if (els.saveProfileBtn) els.saveProfileBtn.hidden = !editing;
-  if (els.cancelProfileBtn) els.cancelProfileBtn.hidden = !editing;
-}
-
+// The homepage shows profiles read-only; editing lives in Agent Studio.
 async function loadProfile() {
   if (!state.selectedAgentId) return;
   const profile = await api(`/api/agents/${state.selectedAgentId}/profile`);
-  els.profileEditor.value = profile.text || "";
-  state.profileOriginal = els.profileEditor.value;
+  state.profileText = profile.text || "";
   renderProfileView();
-  setProfileEditing(false);
-}
-
-async function saveProfile() {
-  if (!state.selectedAgentId) return;
-  await api(`/api/agents/${state.selectedAgentId}/profile`, {
-    method: "POST",
-    body: JSON.stringify({ text: els.profileEditor.value }),
-  });
-  state.profileOriginal = els.profileEditor.value;
-  renderProfileView();
-  setProfileEditing(false);
-  await loadAgents();
-  message(__("common.saved"));
 }
 
 async function loadMemory() {
   if (!state.selectedAgentId) return;
   const payload = await api(`/api/agents/${state.selectedAgentId}/memory`);
-  els.memoryBox.textContent = JSON.stringify(payload.memory || [], null, 2);
-  els.stateMemoryBox.textContent = JSON.stringify({
-    schedule: payload.schedule || {},
-    habits: payload.habits || {},
-    intentions: payload.intentions || {},
-  }, null, 2);
-  els.episodesBox.textContent = payload.episodes_tail || __("memory.no_episodes");
-  els.agentLogBox.textContent = payload.log_tail || __("memory.no_agent_log");
+  state.memoryPayload = payload;
+  renderMemory();
+}
+
+// ------------------------------------------------------------ memory views
+//
+// The memory endpoint hands back raw simulator artefacts (JSON arrays, keyed
+// habit tables, an episode JSONL tail and a plain-text log). The panel shows a
+// human-readable rendering of each; the untouched originals stay reachable
+// through the raw-data modal below.
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Translate with an explicit fallback, since __() echoes unknown keys back.
+function tr(key, fallback) {
+  const text = __(key);
+  return text === key ? fallback : text;
+}
+
+function textOf(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
+function emptyHtml(text) {
+  return `<p class="mem-empty">${escapeHtml(text)}</p>`;
+}
+
+function memBlock(title, bodyHtml) {
+  if (!bodyHtml) return "";
+  return `<section class="mem-block"><p class="mem-block-title">${escapeHtml(title)}</p>${bodyHtml}</section>`;
+}
+
+function memRow(label, valueHtml) {
+  if (!valueHtml) return "";
+  return `<div class="mem-row"><span class="mem-label">${escapeHtml(label)}</span><span class="mem-value">${valueHtml}</span></div>`;
+}
+
+function memChips(values, cls) {
+  const list = (Array.isArray(values) ? values : [values]).map(textOf).filter(Boolean);
+  if (!list.length) return "";
+  const klass = cls ? ` ${cls}` : "";
+  return list.map((v) => `<span class="mem-chip${klass}">${escapeHtml(v)}</span>`).join("");
+}
+
+function memBar(value) {
+  const pct = Math.max(0, Math.min(1, Number(value) || 0)) * 100;
+  return `<span class="mem-bar"><i style="width:${pct.toFixed(0)}%"></i></span>`
+    + `<span class="mem-strength">${(Number(value) || 0).toFixed(2)}</span>`;
+}
+
+function renderMemory() {
+  const payload = state.memoryPayload || {};
+  renderLongTermMemory(payload.memory);
+  renderStateMemory(payload);
+  renderEpisodes(payload.episodes_tail);
+  renderAgentLog(payload.log_tail);
+}
+
+function renderLongTermMemory(memory) {
+  const items = Array.isArray(memory) ? memory : [];
+  if (!items.length) {
+    els.memoryView.innerHTML = emptyHtml(tr("memory.no_long_term", "暂无长期记忆。"));
+    return;
+  }
+  els.memoryView.innerHTML = items.map((entry) => {
+    const text = textOf(entry);
+    // Entries are written as "[Day 2 12:00 MemoryReview] <text>".
+    const match = text.match(/^\[([^\]]{1,80})\]\s*([\s\S]*)$/);
+    const tag = match ? match[1] : "";
+    const body = match ? match[2] : text;
+    return `<div class="mem-item">${tag ? `<span class="mem-chip time">${escapeHtml(tag)}</span>` : ""}`
+      + `<p>${escapeHtml(body)}</p></div>`;
+  }).join("");
+}
+
+function scheduleEntries(schedule) {
+  if (Array.isArray(schedule)) {
+    return schedule.map((item) => (item && typeof item === "object")
+      ? { time: textOf(item.time), activity: textOf(item.activity) }
+      : { time: "", activity: textOf(item) });
+  }
+  if (schedule && typeof schedule === "object") {
+    return Object.entries(schedule).map(([time, activity]) => ({ time, activity: textOf(activity) }));
+  }
+  return [];
+}
+
+const INTENTION_LABELS = {
+  priorities: "优先事项",
+  avoidances: "回避",
+  growth_focus: "成长方向",
+  target_social: "社交目标",
+  target_recovery: "恢复目标",
+};
+
+function renderStateMemory(payload) {
+  const slots = scheduleEntries(payload.schedule);
+  const scheduleHtml = slots.length
+    ? `<div class="mem-timeline">${slots.map((slot) => `<div class="mem-slot">`
+      + `<span class="mem-slot-time">${escapeHtml(slot.time || "—")}</span>`
+      + `<span class="mem-slot-activity">${escapeHtml(slot.activity)}</span></div>`).join("")}</div>`
+    : "";
+
+  const habits = (payload.habits && typeof payload.habits === "object") ? payload.habits : {};
+  const habitRows = Object.entries(habits)
+    .filter(([, v]) => v && typeof v === "object")
+    .sort((a, b) => (Number(b[1].strength) || 0) - (Number(a[1].strength) || 0));
+  const habitsHtml = habitRows.length
+    ? habitRows.map(([key, habit]) => {
+      const context = String(key).split("|").filter(Boolean);
+      const day = habit.last_updated_day;
+      return `<div class="mem-item">${memChips(context, "neutral")}`
+        + `<p>${escapeHtml(textOf(habit.preferred_action))}</p>`
+        + `<div class="mem-row"><span class="mem-label">${escapeHtml(tr("memory.habit_strength", "强度"))}</span>`
+        + `<span class="mem-value">${memBar(habit.strength)}`
+        + (day == null ? "" : `<span class="mem-strength">· ${escapeHtml(tr("memory.habit_updated", "更新于 Day"))} ${escapeHtml(day)}</span>`)
+        + `</span></div></div>`;
+    }).join("")
+    : "";
+
+  const intentions = (payload.intentions && typeof payload.intentions === "object") ? payload.intentions : {};
+  const intentionRows = Object.entries(intentions).map(([key, value]) => {
+    const label = INTENTION_LABELS[key] ? tr(`memory.intent.${key}`, INTENTION_LABELS[key]) : key;
+    if (Array.isArray(value)) return memRow(label, memChips(value, key === "avoidances" ? "warn" : ""));
+    const text = textOf(value);
+    return text ? memRow(label, escapeHtml(text)) : "";
+  }).join("");
+
+  const html = memBlock(tr("memory.block_schedule", "日程"), scheduleHtml)
+    + memBlock(tr("memory.block_habits", "习惯"), habitsHtml)
+    + memBlock(tr("memory.block_intentions", "意图"), intentionRows);
+  els.stateMemoryView.innerHTML = html || emptyHtml(tr("memory.no_state", "暂无日程 / 习惯 / 意图。"));
+}
+
+// The episodes endpoint returns a byte tail of a JSONL file, so the first line
+// is often truncated mid-object — unparseable lines are simply skipped.
+function parseEpisodes(text) {
+  const out = [];
+  String(text || "").split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object") out.push(parsed);
+    } catch (_) { /* partial line from the tail cut */ }
+  });
+  return out;
+}
+
+const PLAN_LABELS = {
+  goal: "目标", constraint: "顾虑", urge: "冲动", plan: "打算", expected_outcome: "预期",
+};
+const REFLECTION_LABELS = {
+  result: "结果", feeling: "感受", lesson: "教训", next_bias: "后续倾向",
+};
+
+function structRows(struct, labels) {
+  if (!struct || typeof struct !== "object") return "";
+  return Object.entries(struct)
+    .map(([key, value]) => memRow(labels[key] || key, escapeHtml(textOf(value))))
+    .join("");
+}
+
+function travelHtml(travel) {
+  if (!travel || typeof travel !== "object") return "";
+  const bits = [];
+  if (travel.mode) bits.push(textOf(travel.mode));
+  if (Number(travel.distance_km)) bits.push(`${Number(travel.distance_km).toFixed(2)} km`);
+  if (Number(travel.minutes)) bits.push(`${Number(travel.minutes)} min`);
+  if (Number(travel.cost)) bits.push(`¥${Number(travel.cost).toFixed(2)}`);
+  if (travel.status) bits.push(textOf(travel.status));
+  return bits.length ? memChips(bits, "neutral") : "";
+}
+
+function deltaChips(delta) {
+  if (!delta || typeof delta !== "object") return "";
+  const entries = Object.entries(delta)
+    .filter(([, v]) => typeof v === "number" && Math.abs(v) >= 0.005)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .slice(0, 8);
+  return entries.map(([key, value]) => `<span class="mem-chip ${value >= 0 ? "up" : "down"}">`
+    + `${escapeHtml(key)} ${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}</span>`).join("");
+}
+
+function renderEpisodes(tailText) {
+  const episodes = parseEpisodes(tailText);
+  if (!episodes.length) {
+    els.episodesView.innerHTML = emptyHtml(__("memory.no_episodes"));
+    return;
+  }
+  // Newest first: the tail is chronological.
+  els.episodesView.innerHTML = episodes.slice().reverse().map((ep) => {
+    const when = `D${textOf(ep.day) || "?"} · ${textOf(ep.time) || "--:--"}`;
+    const valence = typeof ep.valence === "number" ? ep.valence : null;
+    const summary = `<summary><span class="mem-chip time">${escapeHtml(when)}</span>`
+      + `<span class="ep-title">${escapeHtml(textOf(ep.final_activity) || textOf(ep.scheduled_activity))}</span>`
+      + (ep.location ? `<span class="mem-chip neutral">${escapeHtml(textOf(ep.location))}</span>` : "")
+      + (valence == null ? "" : `<span class="mem-chip ${valence >= 0 ? "up" : "down"}">${valence >= 0 ? "+" : "−"}${Math.abs(valence).toFixed(2)}</span>`)
+      + `</summary>`;
+    const body = memRow(tr("memory.ep.scheduled", "计划"), escapeHtml(textOf(ep.scheduled_activity)))
+      + memRow(tr("memory.ep.action", "行动"), escapeHtml(textOf(ep.action)))
+      + memRow(tr("memory.ep.travel", "移动"), travelHtml(ep.travel))
+      + memRow(tr("memory.ep.env_events", "环境事件"), memChips(ep.env_events, "warn"))
+      + memRow(tr("memory.ep.life_events", "人生事件"), memChips(ep.life_events, "warn"))
+      + memRow(tr("memory.ep.partners", "社交对象"), memChips(ep.social_partners, "neutral"))
+      + memRow(tr("memory.ep.perception", "感知"), escapeHtml(textOf(ep.perception)))
+      + structRows(ep.plan_struct, PLAN_LABELS)
+      + memRow(tr("memory.ep.outcome", "结果"), escapeHtml(textOf(ep.outcome)))
+      + structRows(ep.reflection_struct, REFLECTION_LABELS)
+      + memRow(tr("memory.ep.delta", "状态变化"), deltaChips(ep.delta))
+      + memRow(tr("memory.ep.tags", "标签"), memChips(ep.tags, "neutral"));
+    return `<details class="ep-card">${summary}<div class="ep-body">${body}</div></details>`;
+  }).join("");
+}
+
+function renderAgentLog(logText) {
+  const lines = String(logText || "").split("\n").filter((line) => line.trim());
+  if (!lines.length) {
+    els.agentLogView.innerHTML = emptyHtml(__("memory.no_agent_log"));
+    return;
+  }
+  const nearBottom = els.agentLogView.scrollTop + els.agentLogView.clientHeight
+    >= els.agentLogView.scrollHeight - 30;
+  els.agentLogView.innerHTML = lines.map((line) => {
+    // Simulator log lines are either "[Tag ...] body" or "Label: body".
+    const bracket = line.match(/^\s*\[([^\]]{1,60})\]\s*([\s\S]*)$/);
+    const labelled = bracket ? null : line.match(/^\s*([A-Za-z]{1,12}):\s*([\s\S]*)$/);
+    const match = bracket || labelled;
+    if (!match) return `<div class="log-line plain"><span class="log-text">${escapeHtml(line)}</span></div>`;
+    return `<div class="log-line"><span class="log-tag">${escapeHtml(match[1])}</span>`
+      + `<span class="log-text">${escapeHtml(match[2])}</span></div>`;
+  }).join("");
+  if (nearBottom) els.agentLogView.scrollTop = els.agentLogView.scrollHeight;
+}
+
+// ------------------------------------------------------------- raw data modal
+
+function memoryRawSources() {
+  const payload = state.memoryPayload || {};
+  const id = state.selectedAgentId || 0;
+  return [
+    {
+      key: "long_term",
+      label: __("memory.long_term"),
+      format: "JSON",
+      filename: `agent_${id}.json`,
+      mime: "application/json;charset=utf-8",
+      text: JSON.stringify(payload.memory || [], null, 2),
+    },
+    {
+      key: "state",
+      label: __("memory.schedule"),
+      format: "JSON",
+      filename: `agent_${id}_state_memory.json`,
+      mime: "application/json;charset=utf-8",
+      text: JSON.stringify({
+        schedule: payload.schedule || {},
+        habits: payload.habits || {},
+        intentions: payload.intentions || {},
+      }, null, 2),
+    },
+    {
+      key: "episodes",
+      label: __("memory.recent_episodes"),
+      format: "JSONL",
+      filename: `agent_${id}_episodes.jsonl`,
+      mime: "application/x-ndjson;charset=utf-8",
+      text: payload.episodes_tail || "",
+    },
+    {
+      key: "log",
+      label: __("memory.agent_log"),
+      format: "TEXT",
+      filename: `agent_${id}.log`,
+      mime: "text/plain;charset=utf-8",
+      text: payload.log_tail || "",
+    },
+    {
+      key: "all",
+      label: tr("raw.all", "全部（含 goals）"),
+      format: "JSON",
+      filename: `agent_${id}_memory_payload.json`,
+      mime: "application/json;charset=utf-8",
+      text: JSON.stringify(payload, null, 2),
+    },
+  ];
+}
+
+function currentRawSource() {
+  const sources = memoryRawSources();
+  return sources.find((s) => s.key === state.rawSourceKey) || sources[0];
+}
+
+function renderRawModal() {
+  const sources = memoryRawSources();
+  els.rawModalTabs.innerHTML = sources.map((source) => `<button type="button" class="raw-modal-tab`
+    + `${source.key === state.rawSourceKey ? " active" : ""}" data-raw-tab="${source.key}">`
+    + `${escapeHtml(source.label)}</button>`).join("");
+  const active = currentRawSource();
+  els.rawModalBody.textContent = active.text || tr("raw.empty", "（无内容）");
+  const chars = (active.text || "").length;
+  els.rawModalMeta.textContent = `${active.filename} · ${active.format} · ${chars.toLocaleString()} chars`;
+  els.rawDownloadBtn.disabled = !chars;
+  els.rawCopyBtn.disabled = !chars;
+}
+
+function openRawModal(sourceKey) {
+  if (!state.memoryPayload) {
+    message(tr("raw.no_data", "请先选择居民并加载记忆。"), "error");
+    return;
+  }
+  if (sourceKey) state.rawSourceKey = sourceKey;
+  renderRawModal();
+  els.rawModal.hidden = false;
+}
+
+function closeRawModal() {
+  els.rawModal.hidden = true;
+}
+
+function downloadText(filename, text, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime || "text/plain;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function runSimulation(reset = false) {
@@ -554,6 +925,10 @@ async function loadTrace(showErrors = true) {
       state.frameIndex = 0;
       state.follow = true;
       state.avatarCache.clear();
+      state.trace = trace;
+      // Avatar paths come from the trace, so refresh the roster faces once
+      // per run rather than on every poll.
+      renderSimRoster();
     }
     state.trace = trace;
   } catch (error) {
@@ -735,18 +1110,13 @@ function bindEvents() {
     await refreshStatus();
     message("运行状态已刷新");
   }));
-  els.agentSelect.addEventListener("change", async () => {
-    state.selectedAgentId = Number(els.agentSelect.value);
-    renderSelectedAgentAvatar();
-    updateToggleSimBtn();
-    renderTrace();
-    try {
-      await loadProfile();
-      await loadMemory();
-    } catch (error) {
-      message(error.message, "error");
-    }
-  });
+  els.agentSelect.addEventListener("change", () => selectAgent(els.agentSelect.value));
+  if (els.simRosterList) {
+    els.simRosterList.addEventListener("click", (event) => {
+      const chip = event.target.closest(".roster-chip");
+      if (chip) selectAgent(chip.dataset.agentId);
+    });
+  }
   els.agentIdsInput.addEventListener("input", refreshAgentOptionLabels);
   els.randomnessInput.addEventListener("input", () => {
     els.randomnessValue.textContent = Number(els.randomnessInput.value).toFixed(2);
@@ -755,25 +1125,43 @@ function bindEvents() {
     els.routineRandomnessValue.textContent = Number(els.routineRandomnessInput.value).toFixed(2);
   });
   if (els.toggleSimBtn) els.toggleSimBtn.addEventListener("click", toggleSelectedAgentInSim);
-  if (els.editProfileBtn) els.editProfileBtn.addEventListener("click", () => {
-    state.profileOriginal = els.profileEditor.value;
-    setProfileEditing(true);
-    els.profileEditor.focus();
-  });
-  if (els.cancelProfileBtn) els.cancelProfileBtn.addEventListener("click", () => {
-    els.profileEditor.value = state.profileOriginal || "";
-    renderProfileView();
-    setProfileEditing(false);
-  });
-  els.saveProfileBtn.addEventListener("click", withBusy(els.saveProfileBtn, saveProfile));
   els.refreshAgentBtn.addEventListener("click", withBusy(els.refreshAgentBtn, async () => {
     await loadProfile();
     message("Profile 已刷新");
   }));
   els.reloadMemoryBtn.addEventListener("click", withBusy(els.reloadMemoryBtn, async () => {
     await loadMemory();
+    if (!els.rawModal.hidden) renderRawModal();
     message("记忆已刷新");
   }));
+  els.rawMemoryBtn.addEventListener("click", () => openRawModal(state.rawSourceKey));
+  document.querySelectorAll("[data-raw-open]").forEach((btn) => {
+    btn.addEventListener("click", () => openRawModal(btn.getAttribute("data-raw-open")));
+  });
+  els.rawModal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-raw-close]")) { closeRawModal(); return; }
+    const tab = event.target.closest("[data-raw-tab]");
+    if (tab) {
+      state.rawSourceKey = tab.getAttribute("data-raw-tab");
+      renderRawModal();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.rawModal.hidden) closeRawModal();
+  });
+  els.rawCopyBtn.addEventListener("click", () => {
+    const source = currentRawSource();
+    if (!source.text) return;
+    navigator.clipboard.writeText(source.text)
+      .then(() => message(tr("raw.copied", "已复制原始内容")))
+      .catch(() => message(tr("raw.copy_failed", "复制失败"), "error"));
+  });
+  els.rawDownloadBtn.addEventListener("click", () => {
+    const source = currentRawSource();
+    if (!source.text) return;
+    downloadText(source.filename, source.text, source.mime);
+    message(`${source.filename} ${tr("raw.downloaded", "已下载")}`);
+  });
   els.interviewBtn.addEventListener("click", withBusy(els.interviewBtn, () => interview().catch((error) => {
     els.interviewOutput.textContent = `采访失败：${error.message}`;
   })));
@@ -799,6 +1187,19 @@ function bindEvents() {
     if (text && text !== window.__("fos_export.no_output")) {
       navigator.clipboard.writeText(text).then(() => message("Copied!")).catch(() => message("Copy failed"));
     }
+  });
+  els.fosDownloadBtn.addEventListener("click", () => {
+    const text = els.fosOutputBox.textContent;
+    if (!text || text === window.__("fos_export.no_output")) return;
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/-/g, "").replace("T", "-").replace(/:/g, "");
+    link.download = `fos-prompt-${stamp}.md`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    message(window.__("fos_export.downloaded"));
   });
   els.timelineSlider.addEventListener("input", () => {
     state.frameIndex = Number(els.timelineSlider.value || 0);
@@ -852,12 +1253,21 @@ async function init() {
   }, 2500);
 }
 
+// i18n.js fires locale-changed on `document` with bubbles:false, so re-render
+// the memory views (whose labels are baked in at render time) from the cached
+// payload — no refetch needed.
+document.addEventListener("locale-changed", function () {
+  if (!state.memoryPayload) return;
+  renderMemory();
+  if (!els.rawModal.hidden) renderRawModal();
+});
+
 // Re-render dynamic UI when language changes
 window.addEventListener("locale-changed", function () {
   refreshStatus().catch(() => {});
   loadTrace(false).catch(() => {});
   loadLifeEvents().catch(() => {});
-  loadMemory().catch(() => {});
+  loadMemory().then(() => { if (!els.rawModal.hidden) renderRawModal(); }).catch(() => {});
   renderTrace();
 });
 

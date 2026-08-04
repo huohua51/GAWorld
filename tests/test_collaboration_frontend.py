@@ -475,15 +475,16 @@ def test_cooperation_activity_entries_attribute_each_speaker():
           type: "artifact",
           agent_id: 4,
           content: "member_4.md",
-          metadata: {{step_index: 0}},
+          metadata: {{step_index: 0, excerpt: "本区共有三处闲置空地。"}},
         }},
         context,
       );
       assert.equal(artifact.speaker, "李明");
       assert.equal(artifact.role, "研究员 · 负责人");
+      assert.equal(artifact.round, "第 1 轮");
       assert.equal(artifact.action, "提交了子任务产物");
       assert.equal(artifact.detail, "步骤 1 · 整理资料 · member_4.md");
-      assert.equal(artifact.speech, "");
+      assert.equal(artifact.speech, "本区共有三处闲置空地。");
 
       const review = page.activityEntry(
         {{
@@ -531,6 +532,32 @@ def test_cooperation_activity_entries_attribute_each_speaker():
       );
       assert.equal(unknown.speaker, "居民 9");
       assert.equal(unknown.action, "按审阅意见完成修订");
+
+      const turn = page.activityEntry(
+        {{
+          type: "turn_started",
+          agent_id: 5,
+          content: "member_4.md",
+          metadata: {{phase: "review", step_index: 0}},
+        }},
+        context,
+      );
+      assert.equal(turn.speaker, "陈静");
+      assert.equal(turn.round, "第 1 轮");
+      assert.equal(turn.action, "开始审阅成果");
+      assert.equal(turn.detail, "步骤 1 · 整理资料 · member_4.md");
+
+      const synthesis = page.activityEntry(
+        {{
+          type: "turn_started",
+          agent_id: 4,
+          content: "final.md",
+          metadata: {{phase: "synthesis"}},
+        }},
+        context,
+      );
+      assert.equal(synthesis.round, "统稿");
+      assert.equal(synthesis.action, "开始统稿最终成果");
     """
     result = subprocess.run(
         ["node", "-e", script],

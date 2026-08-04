@@ -91,6 +91,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 群体（cohort）模拟：把居民划分成同时携带**均值与离散度**的群体，每群每天只花 1 次 LLM 调用，并按预算把一小批个体（focal / event / tail / audit）提升到完整保真度；群内零均值的社交图耦合项让邻居共变在聚合后依然存在。实体化预算 20 人/天时约比逐个体模拟省 25 倍
 - 群体模式验证门（L1–L4）：配对实验，量化 cohort 近似的代价——分布距离、网络共变、尾部保留、政策冲击下的因果响应；判定阈值来自参照层自身的跨种子噪声，而不是拍脑袋的常数。分水岭层不通过时退出码非零，可直接进 CI
 - Population Studio：5 步 dashboard 面板，生成人口 → 群体模拟 → 阅读验证结论，并带实时可行性预检（参数冲突时直接指出该动哪个旋钮）
+- 外部系统观测台：观察并编辑世界本身——货币系统（宏观周期、部门池、每日货币守恒审计、财富分布与基尼）、外部环境生成器、对外服务连接。配置表单按配置自身的 JSON 形状生成（约 150 个旋钮，加旋钮不用改面板），并可对**跑着的**仿真排一次货币干预，由仿真在下一个日边界消费；给部门池注资会同步移动守恒基准，因此审计把有意的注资记成注资而不是漏钱
 - 多机分布式 relay 通信模式
 
 ## 项目结构
@@ -146,8 +147,8 @@ GAWorld/
 - `gaworld/work/`：real-work 任务系统（runtime、worker pool、queue、market）
 - `gaworld/population/`：参数化人口合成——`schema`（旋钮契约 + 可行性预检）、`synth`（IPF + 条件采样 + 收入秩变换）、`network`（家庭、工作单位、同质性社交图）、`report`（校验门 + 复核图表）、`writer`（状态 CSV + profile MD + manifest）
 - `gaworld/group/`：群体（cohort）模拟——`cohort`（划分、均值**与**离散度、群内零均值网络耦合）、`cohort_day`（每群每天 1 次 LLM 调用）、`materialize`（focal/event/tail/audit 选取与审计残差）、`driver`（日循环 + 成本核算）、`metrics` + `validate`（L1–L4 验证门）、`plugin`（观测型 cohort 遥测）
-- `gaworld/apps/`：dashboard、外部环境服务器、分布式 relay，以及 `population_api`（Population Studio 后端）
-- `site/dashboard/`：dashboard 前端（控制台 `index.html` + Agent Studio `studio.html` + Population Studio `population.html`）
+- `gaworld/apps/`：dashboard、外部环境服务器、分布式 relay，以及两个面板后端 `population_api`（Population Studio）与 `external_systems_api`（外部系统观测台）
+- `site/dashboard/`：dashboard 前端（控制台 `index.html` + Agent Studio `studio.html` + Population Studio `population.html` + 外部系统 `external.html`）
 - `site/simviz/`：轨迹回放页面
 - `output/`：生成结果
 
@@ -385,6 +386,38 @@ Population Studio 是 Agent Studio 的群体版：Agent Studio 造一个居民�
 | POST | `/api/population/validate` | 跑 L1–L4 验证门 |
 
 生成与模拟都是异步 job，500 人的生成不会把浏览器卡住。
+
+### 外部系统观测台
+
+前两个面板对着 agent，这个面板对着**世界本身**。控制台 tab（**外部系统**）或
+`http://127.0.0.1:8766/site/dashboard/external.html`。三个子面板，各自左边观察、右边编辑：
+
+- **货币系统** —— 周期阶段、通胀、失业、累计物价指数、企业/政府/银行三个部门池、
+  货币守恒曲线与漂移、财富分布与基尼、全体日收支；可改整棵 `CONFIG["economy"]`，
+  也可对**跑着的**仿真排一次干预
+- **外部环境** —— `timeline.jsonl` 里最近若干天的自然/经济/政策/科技事件（带严重度与影响标签）；
+  可改生成器参数、天气池，以及 `policy_events` 里排定的政策冲击
+- **对外服务** —— 外部环境服务与分布式中继的即时连通性探测、LLM 路由、新闻缓存；
+  模型清单只读（密钥不暴露），路由可改
+
+**配置表单是从配置自身长出来的**：`economy` 一棵子树就有约 120 个叶子，面板按 JSON 形状
+渲染控件，后端按现有配置的类型把补丁强制成形（`"0.09"` → `0.09`），不认识的键丢弃并回报。
+约 150 个旋钮因此可编辑，加新旋钮不需要动面板代码。
+
+**两种"改"是不同的东西**：配置写进 `dashboard_config.json`，**下一次**运行生效，适合做
+对照实验；干预写进 `output/economy/interventions.json`，跑着的仿真在**下一个日边界**消费它。
+干预不去写 `macro_state.json` —— 那是 run 的*产物*，仿真从配置重建宏观状态、从不回读它，
+改它会看起来生效而实际无效。给部门池注资会同步移动守恒基准，所以每日审计把有意的注资记成
+注资，而不是报成漏钱。
+
+| 方法 | 端点 | 用途 |
+|------|------|------|
+| GET | `/api/external-systems/overview` | 三个子系统的 config + runtime |
+| GET | `/api/external-systems/health` | 对外服务连通性探测 |
+| GET/POST | `/api/external-systems/interventions` | 读 / 排队货币干预 |
+| POST | `/api/external-systems/config` | 保存配置补丁（白名单子树 + 类型强制） |
+
+完整教程见 [外部系统教程](./docs/EXTERNAL_SYSTEMS_TUTORIAL.md)。
 
 ## 配置说明
 
@@ -740,6 +773,7 @@ LLM 调用之前完成决策。
 - [物理环境感知与反应式重规划](./docs/physical_env_perception_changelog.md)
 - [社交网络 — 设计](./docs/SOCIAL_NETWORK_DESIGN.md) · [教程](./docs/SOCIAL_NETWORK_TUTORIAL.md)
 - [群体模拟 — 教程](./docs/GROUP_SIMULATION_TUTORIAL.md) · [设计](./docs/GROUP_AGENT_DESIGN.md)（人口合成、cohort 模式、L1–L4 验证门）
+- [外部系统 — 教程](./docs/EXTERNAL_SYSTEMS_TUTORIAL.md)（货币系统、外部环境、对外服务的观察与编辑，以及运行时干预）
 - [项目结构](./docs/PROJECT_STRUCTURE.md)
 - [仓库规范](./AGENTS.md)
 - [更新日志](./CHANGELOG.md)

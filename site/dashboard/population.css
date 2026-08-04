@@ -674,3 +674,90 @@
 .pop-layer-fact b {
   font-weight: 600;
 }
+
+/* --------------------------------------------------------- 居民名册（第 2 步）
+   The generated agents themselves: filterable, expandable, downloadable. */
+
+.pop-rostertools {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.pop-rostertools input[type="search"] {
+  flex: 0 1 280px;
+  padding: 6px 10px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.pop-rostertools .pop-hint {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.pop-roster {
+  table-layout: auto;
+}
+
+.pop-roster-row {
+  cursor: pointer;
+}
+
+.pop-roster-row.is-open {
+  background: rgba(37, 99, 235, 0.07);
+  font-weight: 600;
+}
+
+.pop-roster-detail td {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 10px 12px;
+}
+
+.pop-roster-more {
+  margin-top: 8px;
+}
+
+.pop-roster-more .btn.small {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.pop-statebars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 4px 18px;
+}
+
+.pop-statebar {
+  display: grid;
+  grid-template-columns: 84px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+}
+
+.pop-statebar i {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line, #e5e7eb);
+  overflow: hidden;
+}
+
+.pop-statebar i b {
+  display: block;
+  height: 100%;
+  background: var(--accent, #2563eb);
+  opacity: 0.75;
+}
+
+.pop-statebar em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--ink, #111827);
+}

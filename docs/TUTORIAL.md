@@ -186,7 +186,22 @@ python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7
 Dashboard 里对应「人口与群体」页签。完整教程见
 [群体模拟教程](GROUP_SIMULATION_TUTORIAL.md)。
 
-## 12. 想扩展 GAWorld？
+## 12. 想改的不是某个人，是整个世界？
+
+通胀几个点、政府池有没有钱、今天下不下雨、外部信息从哪来——这些都不属于任何一个 agent，
+但往往正是实验里你要操纵的东西。
+
+```bash
+python generative_city_sim.py dashboard --port 8766
+# http://127.0.0.1:8766/console → 「外部系统」页签
+```
+
+三个子面板（货币系统 / 外部环境 / 对外服务）都是左边观察、右边编辑。要分清两种"改"：
+改**配置**下一次运行才生效，适合做对照实验；排一条**干预**则由跑着的仿真在下一个日边界
+消费，适合临时制造一次衰退或财政刺激。完整教程见
+[外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)。
+
+## 13. 想扩展 GAWorld？
 
 所有子系统都运行在微内核插件接口上：写一个 `gaworld.kernel.Plugin`
 子类 + `CONFIG["plugins"]` 一行声明即可加新子系统，不用改核心代码；

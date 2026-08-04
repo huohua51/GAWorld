@@ -174,6 +174,9 @@ def human_realism_settings() -> dict[str, Any]:
             },
             "behavior": {
                 "habit_learning_rate": 0.08,
+                # A context must recur this many times before it counts as a
+                # habit — keeps one-off interrupts out of the habit table.
+                "habit_min_occurrences": 3,
                 "inertia_weight": 0.25,
                 "decision_noise": 0.18,
                 "fatigue_work_gain": 0.035,

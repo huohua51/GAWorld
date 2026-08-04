@@ -408,6 +408,7 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx, goals_co
 def update_habits_from_episode(agent, episode, cfg):
     behavior_cfg = (cfg or {}).get("behavior", {})
     learning_rate = float(behavior_cfg.get("habit_learning_rate", 0.08))
+    min_occurrences = int(behavior_cfg.get("habit_min_occurrences", 3))
     habits = agent.setdefault("habits", {})
     ctx = build_context_key(episode.get("time", ""), episode.get("location", ""), episode.get("final_activity", ""))
     action = str(episode.get("action", "")).strip()
@@ -427,6 +428,12 @@ def update_habits_from_episode(agent, episode, cfg):
     preferred = max(counts.items(), key=lambda x: x[1])[0]
     item["preferred_action"] = preferred
     item["last_updated_day"] = int(episode.get("day", 0))
+    if sum(counts.values()) < min_occurrences:
+        # A context seen once or twice — typically a one-off interrupt such
+        # as 找地方避雨 — is not a habit yet. Keep counting, but leave the
+        # strength at zero so it exerts no pull on action choice.
+        item["strength"] = 0.0
+        return habits
     if preferred == action:
         item["strength"] = _clamp(float(item.get("strength", 0.1)) + learning_rate * (1 - float(item.get("strength", 0.1))))
     else:

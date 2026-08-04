@@ -33,6 +33,10 @@ var SCHEMA = {
   hukou_labels: ["本地", "省内", "外省", "外国"],
   cohort_axes: ["age_band", "district", "employment", "gender", "hukou", "industry"],
   cohort_axis_labels: { age_band: "年龄段", industry: "行业", hukou: "户籍" },
+  household_type_labels: {
+    single: "独居", couple: "夫妻二人", nuclear: "核心家庭",
+    single_parent: "单亲家庭", multigen: "三代同堂", shared_rental: "合租",
+  },
   preset_descriptions: {
     cn_county_town: { title: "中国县城 / 普通城区", summary: "最接近平均的一座小城。", use_when: "不确定时就用它。" },
     aging_community: { title: "老龄化社区", summary: "65 岁以上占 34%。", use_when: "研究养老。" },
@@ -84,6 +88,58 @@ var PREVIEW = {
     household_mean_size: { min: 1.75, max: 4.75 },
     median_age: { min: 26.26, max: 59.86 },
   },
+};
+
+/* A generated population, trimmed from a real
+ * ``/api/population/generate`` result (size 24, seed 7). Step 2 renders the
+ * roster straight off these fields, so a renamed field in the Python payload
+ * has to show up here as a failing check rather than as an empty table. */
+var POPULATION = {
+  report: {
+    size: 24,
+    achieved: {
+      median_age: { target: 36.0, achieved: 29.5, delta: -6.5 },
+      share_over_65: { target: 0.14, achieved: 0.25, delta: 0.11 },
+      employment_rate: { target: 0.68, achieved: 0.6875, delta: 0.0075 },
+      income_median: { target: 6500, achieved: 6500, delta: 0 },
+      income_gini: { target: 0.42, achieved: 0.4074, delta: -0.0126 },
+      household_mean_size: { target: 2.6, achieved: 2.6667, delta: 0.0667 },
+      mean_degree: { target: 12, achieved: 11.5, delta: -0.5 },
+    },
+    charts: {
+      age_pyramid: [{ age_from: 5, age_to: 9, male: 1, female: 1 }],
+      lorenz: [{ population_share: 0.0, income_share: 0.0 }, { population_share: 0.1, income_share: 0.0497 }],
+      household_sizes: [{ size: 1, count: 2 }, { size: 2, count: 2 }],
+      state_distribution: {},
+    },
+    network: {
+      degree_histogram: [{ degree: 5, count: 1 }],
+      clustering: 0.6568, random_clustering: 0.5, mean_path_length: 1.4818,
+    },
+  },
+  worst_gaps: [{ knob: "share_over_65", target: 0.14, achieved: 0.25, relative_error: 0.7857 }],
+  people: [
+    {
+      id: 1, name: "黄萱", gender: "女", age: 50, hukou: "本地", residence: "滨江·老小区",
+      job: "无业，家庭照料为主", industry: "none", employment: "not_in_labor_force",
+      income_monthly: 0.0, household_type: "multigen",
+      state: {
+        emotion: 0.6295, stress: 0.5319, econ_security: 0.382, city_identity: 0.5393,
+        policy_sensitivity: 0.6197, platform_dependence: 0.5616, risk_preference: 0.4211,
+        voice_propensity: 0.466, mobility_intent: 0.4867,
+      },
+    },
+    {
+      id: 3, name: "谭颖露", gender: "女", age: 28, hukou: "外省", residence: "西湖·青年公寓",
+      job: "网约车司机", industry: "service", employment: "employed",
+      income_monthly: 3981.83, household_type: "shared_rental",
+      state: {
+        emotion: 0.6788, stress: 0.6419, econ_security: 0.4765, city_identity: 0.2699,
+        policy_sensitivity: 0.5119, platform_dependence: 0.538, risk_preference: 0.5103,
+        voice_propensity: 0.3757, mobility_intent: 0.5633,
+      },
+    },
+  ],
 };
 
 /* ------------------------------------------------------------------ stubs */
@@ -169,6 +225,33 @@ realSetTimeout(function () {
     ["header lists localized cohort axes", meta.indexOf("年龄段") >= 0],
     ["summary tells the user where to generate", summary.indexOf("第 2 步") >= 0 || els.popSummary.innerHTML.indexOf("第 2 步") >= 0],
   ];
+
+  /* Step 2 with a population in hand: the generated agents must be
+     previewable and downloadable without running a simulation first. */
+  var hook = global.__POP_TEST__;
+  hook.setPopulation(POPULATION);
+  hook.setStep(2);
+  hook.render();
+  var step2 = els.popPanel.innerHTML;
+  var roster = els.popRosterBody.innerHTML;
+  hook.state.roster.open = 1;
+  hook.render();
+  var expanded = els.popRosterBody.innerHTML;
+
+  checks = checks.concat([
+    ["roster card renders after generation", step2.indexOf("居民名册") >= 0],
+    ["roster lists the generated residents", roster.indexOf("黄萱") >= 0 && roster.indexOf("网约车司机") >= 0],
+    ["household type is localized, not an identifier",
+      roster.indexOf("三代同堂") >= 0 && roster.indexOf("multigen") < 0],
+    ["people with no wage income are not shown as 0", roster.indexOf("—") >= 0],
+    ["roster says how many of how many are shown", els.popRosterCount.textContent.indexOf("共 2 人") >= 0],
+    ["a row expands into the nine state variables",
+      (expanded.match(/pop-statebar"/g) || []).length === 9],
+    ["all three downloads are offered",
+      step2.indexOf('data-export="csv"') >= 0 && step2.indexOf('data-export="md"') >= 0 &&
+      step2.indexOf('data-export="json"') >= 0],
+    ["step 2 leaks no undefined", step2.indexOf("undefined") < 0 && expanded.indexOf("undefined") < 0],
+  ]);
 
   var failed = 0;
   checks.forEach(function (pair) {

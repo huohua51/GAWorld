@@ -88,6 +88,9 @@
     cycle_phase_duration_days: "阶段时长区间（天）", phases: "阶段顺序", phase_effects: "各阶段效应",
     income_mult: "收入乘数", expense_mult: "支出乘数", layoff_risk: "裁员概率", raise_chance: "涨薪概率",
     industry_conditions: "行业景气度",
+    expansion: "扩张期 expansion", peak: "顶峰期 peak",
+    contraction: "收缩期 contraction", trough: "谷底期 trough",
+    conservative: "保守型", moderate: "稳健型", aggressive: "激进型",
     shocks: "冲击事件", layoff_base_prob: "裁员基准概率", raise_base_prob: "涨薪基准概率",
     medical_emergency_prob: "医疗急症概率", medical_cost_range: "医疗支出区间",
     year_end_bonus_enabled: "年终奖", year_end_bonus_months: "年终奖月数",
@@ -151,6 +154,201 @@
 
   function label(key) {
     return LABELS[key] || key;
+  }
+
+  /* ------------------------------------------------------------------- help */
+
+  /* 说明文字的写法约定：说**改了会怎样**，不要复述标题。
+   * "通胀率：通货膨胀的比率" 等于没说；"物价每年涨多少，只作用在支出侧、工资不跟涨"
+   * 才是用户真正需要知道的那句。
+   *
+   * 查表先试完整路径、再退回末段键名：`unemployment_rate` 在社保里是缴费比例、
+   * 在宏观里是失业率，`routing` 在 economy 里是支付路由、在 llm 里是模型路由——
+   * 只按末段查会把两件事说成一件。 */
+  var HELP = {
+    /* ---- 面板与页签 ---- */
+    "tab.currency": "钱在这个世界里怎么流：宏观形势、企业/政府/银行三个资金池、总量守不守恒、财富分布。也可以在这里改经济规则，或对正在跑的仿真做一次干预。",
+    "tab.environment": "世界每天发生了什么：天气、经济新闻、政策、科技。这些事件会进入每个居民的当天情境，影响他们的心情和日程。",
+    "tab.services": "仿真要往外拨号的地方：外部环境服务、多机中继、新闻源、用哪个大模型。这里可以看通不通，也可以改。",
+
+    /* ---- 货币系统 · 指标 ---- */
+    "tile.phase": "经济的四季：扩张 → 顶峰 → 收缩 → 谷底，循环往复。不同阶段里居民涨薪和被裁的概率不一样。",
+    "tile.inflation": "物价每年涨多少。注意它只作用在支出那一侧——工资不会跟着涨，所以长期跑下来居民会越来越买不起东西。",
+    "tile.unemployment": "一个宏观景气指标。它并不会真的让谁丢工作——真正决定裁员的是各阶段的「裁员概率」。把它当作新闻里报的那个数字。",
+    "tile.price_index": "累计物价指数：从 1.0 开始按每天的通胀往上乘。1.05 就是「现在的东西比开局贵了 5%」。",
+    "tile.money_total": "这个世界里的钱的总量：所有居民的账户加上三个资金池。除非你人为注资，它应该一直不变。",
+    "tile.drift": "守恒漂移：今天的钱总量和开局差了多少。这个数不是 0 就是程序出问题了——钱应该只会转手，不会凭空出现或消失。",
+    "tile.gini": "贫富差距，0 = 人人一样，1 = 钱全在一个人手里。中国大概 0.47 左右。只有 1 个居民时算不出来，显示「—」。",
+    "tile.indebted": "有多少人欠着钱（银行信用卡或朋友借款）没还。",
+
+    /* ---- 货币系统 · 区块 ---- */
+    "block.sectors": "居民花钱、赚钱，钱总得有个对手方。企业池发工资、收营业额；政府池收税、付医保；银行池管存贷和投资盈亏。池子为负是正常的——企业池为负就等于居民整体在存钱。",
+    "block.conservation": "把每天的钱总量画出来。理想情况是一条水平直线：钱只是在居民和三个池子之间转手，总量不变。",
+    "block.ledger": "全体居民每天挣了多少、花了多少。支出长期高于收入，说明大家在吃老本。",
+    "block.wealth": "只算能马上花的钱（活期 + 储蓄 + 投资），公积金另算——它取不出来，不该混进「有多少钱」里。",
+    "block.queue": "你排的干预会写进一个文件，正在跑的仿真每过一天就来取一次。仿真没在跑的话，它会一直等到下次开跑。",
+
+    /* ---- 干预表单 ---- */
+    "iv.form": "改的是正在跑的这一轮。留空的字段不动。想改下一轮的初始条件，用下面的「配置」。",
+    "iv.phase": "直接把经济切到某个阶段，比如立刻进入衰退。",
+    "iv.inflation": "直接设成这个值（不是加减）。太离谱的数会被拉回合理范围（0.1%–15%）。",
+    "iv.unemployment": "直接设成这个值（不是加减），范围 2%–20%。",
+    "iv.sector": "填的是「加减多少钱」，不是「改成多少钱」。填 50000 就是往这个池子里打 5 万；填 -50000 是抽走 5 万。相当于凭空印钱/销毁钱，系统会如实记账，不会当成漏钱。",
+    "iv.day": "第几天生效。留空就是最近的下一天。",
+    "iv.note": "只是给你自己看的备注，会记进历史里，方便回头知道这条是干嘛的。",
+    "cfg.card": "这里改的是下一次运行的规则，不影响正在跑的这一轮。保存后会告诉你实际写进去了什么。",
+
+    /* ---- 外部环境 ---- */
+    "env.latest_day": "环境已经生成到第几天了。",
+    "env.day_count": "一共生成了多少天的环境。",
+    "env.ticks": "除了每天开头的整体环境，日内临时冒出来的突发事件条数。",
+    "env.severity": "所有事件严重度的平均值，0–1。整体偏高说明这个世界最近不太平。",
+    "env.sev_bar": "这件事有多严重，0–1。超过 0.6 变红。严重的事件会明显提高居民当天临时改计划的概率。",
+    "env.tags": "这件事影响居民的哪些方面，比如出行、压力、就业。",
+    "env.type": "事件的四个来源：自然（天气）、经济、政策、科技。",
+
+    /* ---- 对外服务 ---- */
+    "svc.probe": "点一下会真的去请求一次那个地址，看它活着没有。平时不会后台一直探测。",
+    "svc.status": "「通」= 正常；「不通」= 连不上；「异常」= 连上了但返回不对；「未启用」= 配置里关着，压根没发请求。",
+    "svc.llm": "模型清单是只读的（里面带密钥，不在网页上暴露）。可以改的是「谁干什么活」——比如把排日程这种简单任务派给便宜的本地模型。",
+    "svc.news": "居民会去读的外部新闻。缓存是为了不用每次都联网抓。",
+
+    /* ---- 配置树：完整路径优先 ---- */
+    "economy.routing": "居民在店里花的钱，有一部分会经企业池转给在那儿上班的居民当收入；房租转给房东类居民。这条打通了钱才能在居民之间循环，贫富差距才会自己演化出来。",
+    "economy.social_insurance.unemployment_rate": "失业保险的个人缴费比例，从工资里扣。默认 0.5%。",
+    "economy.macro.enabled": "关掉就没有经济周期了：不会有扩张衰退，通胀也不再变化。",
+    "llm.routing": "哪个任务用哪个模型。「默认模型」兜底，「按任务指定」可以给个别任务单独派模型。",
+
+    /* ---- 配置树：按末段键名 ---- */
+    enabled: "关掉后这个子系统就不参与仿真了。",
+    economy: "整个经济系统的规则。改这里等于改这个世界的经济制度，下次运行生效。",
+    currency: "币种，只影响显示。",
+    output_dir: "这个模块把结果文件写到哪个目录。",
+    tax: "个人所得税。中国 2024 年的真实规则：超过起征点的部分按 7 档累进征收。",
+    monthly_exemption: "月收入低于这个数不交税。中国现行 5000 元。调高 = 给所有人减税。",
+    default_special_deduction: "专项附加扣除（房贷、子女教育、赡养老人这些）的默认额度，在计税前先减掉。",
+    brackets: "税率表，每行是 [这一档的上限, 税率, 速算扣除数]。最后一行的上限是 Infinity（无上限）。改错会让所有人的税算错，建议照着现有格式改数字。",
+    social_insurance: "五险一金里个人要交的那部分，每月从工资里扣。调高 = 到手工资变少。",
+    pension_rate: "养老保险个人缴费比例，默认 8%。",
+    medical_rate: "医疗保险个人缴费比例，默认 2%。",
+    housing_fund_rate: "公积金个人缴费比例。这笔钱没消失，进了公积金账户，但平时取不出来花。",
+    housing_fund_employer_rate: "单位替你交的公积金，也进你的公积金账户，相当于隐性收入。",
+    base_cap: "缴费基数上限：工资再高，社保也只按这个数算。",
+    base_floor: "缴费基数下限：工资再低，社保也按这个数算。",
+    spending: "居民怎么花钱：花多少、花在哪几类上。",
+    engel_curve: "恩格尔曲线，每行是 [月收入, 食品占比, 储蓄率]。穷人吃饭占开销的比重大、存不下钱；富人反过来。这是经济学里被反复验证的规律。",
+    budget_template: "把每月预算分给八大类（吃、住、行、穿、玩、学、医、杂）的比例，加起来应该是 1。",
+    income_elasticity: "收入涨了，哪类开销跟着涨得更快。大于 1 = 奢侈品（收入翻倍，这项开销涨更多），小于 1 = 必需品。",
+    daily_variance: "每天开销的随机波动幅度，让日子不至于一模一样。",
+    investment: "居民的钱怎么理财，以及市场怎么涨跌。",
+    asset_returns: "三类资产的 [年均收益, 波动]。存款稳但少，股票多但晃。",
+    portfolio_profiles: "保守/稳健/激进三种人分别把钱怎么分配到存款、基金、股票。",
+    market_correlation: "股灾会不会同时砸到所有人。0 = 各炒各的，1 = 完全同涨同跌。调低了就再也不会出现全市场崩盘。",
+    auto_save_enabled: "活期钱多到超过缓冲月数时，自动转进储蓄和投资。",
+    checking_buffer_months: "活期上要留几个月的开销当应急钱，超出的才拿去投资。",
+    credit: "居民钱不够时能借多少、多贵。",
+    credit_limit_months: "信用额度是几倍月薪。调大 = 大家更能透支。",
+    annual_interest_rate: "透支的年利率，默认 18%（接近真实信用卡）。",
+    hardship_liquidity_months: "手上的钱撑不到这么多个月时，居民开始砍非必需开销。",
+    min_spend_factor: "再省也要花的底线比例，防止把人饿死。",
+    macro: "经济大环境：周期怎么转、通胀失业多少、各行业景气如何。",
+    initial_inflation_rate: "开局的通胀率。想模拟高通胀社会就调高它。",
+    initial_unemployment_rate: "开局的失业率（只是个景气指标）。",
+    cycle_phase_duration_days: "每个阶段持续多少天，[最短, 最长] 之间随机。调小 = 经济周期更频繁。",
+    phases: "四个阶段的轮转顺序。",
+    phase_effects: "每个阶段对居民的实际影响：收入、开销、被裁和涨薪的概率。真正让人失业的是这里的 layoff_risk。",
+    income_mult: "这个阶段收入乘几。0.9 = 普遍减薪 10%。",
+    expense_mult: "这个阶段开销乘几。",
+    layoff_risk: "这个阶段每人每天被裁的概率。0.025 看着小，但连着几十天就很可观了。",
+    raise_chance: "这个阶段每人每天涨薪的概率。",
+    industry_conditions: "各行业的景气度，1.0 是正常。调到 0.7 就是这个行业不景气，从业者收入受影响。",
+    expansion: "经济向好：收入涨、裁员少、涨薪机会多。",
+    peak: "过热期：收入最高，但物价也最高，裁员开始抬头。",
+    contraction: "衰退期：收入下滑、开销还在涨、裁员明显变多。",
+    trough: "谷底：收入最低、裁员最凶，但物价回落。熬过去就重新扩张。",
+    conservative: "保守型的人怎么分配存款/基金/股票。三项加起来应该是 1。",
+    moderate: "稳健型的人怎么分配存款/基金/股票。三项加起来应该是 1。",
+    aggressive: "激进型的人怎么分配存款/基金/股票。三项加起来应该是 1。",
+    inheritance_hukou_bonus: "不同户籍能拿到家里资助的概率差异。正数 = 更容易有家底，负数 = 更难。",
+    shocks: "砸到个人头上的意外：裁员、涨薪、大病、年终奖。",
+    layoff_base_prob: "与周期无关的裁员底噪概率。",
+    raise_base_prob: "与周期无关的涨薪底噪概率。",
+    medical_emergency_prob: "每人每天生一场大病的概率。医保会报销大部分，剩下的自己掏。",
+    medical_cost_range: "大病花费的区间 [最少, 最多]。",
+    year_end_bonus_enabled: "发不发年终奖。",
+    year_end_bonus_months: "年终奖是几个月工资。",
+    merchant_labor_share: "居民在店里消费的钱，有多大比例转给在那儿上班的人当收入。调高 = 钱在居民之间转得更快。",
+    landlord_share: "房租有多大比例真的进了房东居民的口袋。",
+    landlord_keywords: "靠职业描述里的这些词来认出谁是房东。",
+    friend_loans: "钱不够时向熟人借钱。走社交网络，越亲近越借得到。",
+    max_outstanding_months: "最多能欠朋友几个月的开销。",
+    lender_buffer_months: "出借方自己要先留够几个月开销才肯借人。",
+    willingness_factor: "整体的出借意愿，调低了大家就都不太肯借。",
+    sectors: "三个资金池的开局余额。默认都是 0，钱全在居民手里。",
+    initial_firms_balance: "企业池开局有多少钱。",
+    initial_government_balance: "政府池开局有多少钱。调高相当于财政有家底。",
+    initial_bank_balance: "银行池开局有多少钱。",
+    inheritance_enabled: "开局时有些人会有家底（继承/父母资助），这是造成初始贫富差距的主要来源之一。",
+    inheritance_base_probability: "有多大比例的人能得到家里的资助。",
+    income_volatility: "每天收入的随机波动幅度。",
+    min_hourly_income: "时薪的地板，再怎么样也不会低于这个数。",
+    daily_utilities_cost: "每天固定的水电煤开销。",
+    expense_ranges: "各类行为触发时的花费区间 [最少, 最多]。",
+
+    external_environment: "每天生成天气、经济、政策、科技四类事件的那个模块。",
+    seed: "随机种子。同一个数字跑出同一个世界；换个数字就是另一段历史。",
+    max_events_per_tick: "一次最多抛出几件事，防止刷屏。",
+    generator: "事件是让大模型写，还是按规则从预设文案里挑。",
+    mode: "`llm` = 让模型现编，有文采但要花钱；其它值 = 用下面的预设文案池，免费。",
+    history_days: "让模型写今天的事件时，回看前几天，好让剧情连贯。",
+    description: "这座城市的背景设定，喂给模型当写作依据。",
+    natural: "天气类事件。",
+    daily_weather_chance: "每天有多大概率生成一条天气。",
+    extreme_chance: "极端天气（暴雨、雷暴之类）的概率。",
+    weather_states: "各种天气出现的权重，数越大越常见。",
+    extreme_events: "极端天气的文案池。",
+    economic: "经济新闻类事件。",
+    daily_market_volatility: "市场每天的波动幅度。",
+    market_news_threshold_pct: "涨跌超过这个百分比才播报，避免天天报废话。",
+    macro_event_chance: "每天出一条宏观经济新闻的概率。",
+    macro_events: "宏观新闻的文案池。",
+    political: "政策类事件。",
+    daily_policy_chance: "每天出一条政策的概率。",
+    technology: "科技类事件。",
+    daily_tech_chance: "每天出一条科技新闻的概率。",
+    intraday: "白天临时冒出来的突发事件（区别于每天开头定好的那批）。",
+    environment: "老版本的环境事件，保留兼容，一般不用动。",
+    policy_events: "排好期的政策冲击：写明第几天几点发生什么，到点必然触发。做政策实验就用它，比调概率靠谱。",
+
+    external_environment_service: "把环境生成挪到另一个进程/另一台机器上跑。关着就在本进程里生成。",
+    base_url: "对方的地址。",
+    timeout: "等多少秒还没回应就放弃。",
+    fallback_to_empty: "对方挂了的时候，是当作今天没有环境事件继续跑（推荐），还是直接报错。",
+    environment_server: "本机作为环境服务端时的监听设置。改完要自己重启那个服务进程。",
+    host: "监听哪个网卡。0.0.0.0 = 允许别的机器连进来。",
+    port: "监听端口。",
+    external_rag: "把外部真实信息喂进居民记忆里的机制。",
+    top_k: "每次检索取几条最相关的。",
+    bootstrap: "开局时先给每个居民注入一批背景信息。",
+    runtime_absorb: "跑的过程中每天继续吸收新信息（默认关，开了会更慢更贵）。",
+    news: "居民会去读的真实新闻源。",
+    use_cache_first: "优先用本地缓存，别老是联网抓（省时间也省得被网站封）。",
+    daily_chance: "每人每天读新闻的概率。",
+    max_reads_per_day: "每人每天最多读几条，防止读一整天。",
+    info_seek: "居民自己上网搜东西（区别于被动读新闻）。压力大或好奇心强的人搜得更勤。",
+    distributed: "多台机器一起跑一个世界，各管一部分居民。",
+    relay: "本机作为客户端时，中继服务器在哪。",
+    server: "本机作为中继服务端时的监听设置。",
+    send_probability: "每步有多大概率往对端发一条消息。",
+    llm: "用哪个大模型干活。",
+    "default": "没有特别指定的任务都用这个模型。",
+    tasks: "给个别任务单独指定模型，比如把排日程派给便宜的本地模型。",
+  };
+
+  /** 生成一个 hover 说明的「?」小圆点。没有对应说明就什么都不加。 */
+  function tip(key, fallbackKey) {
+    var text = HELP[key] || (fallbackKey ? HELP[fallbackKey] : "");
+    return text ? ' <span class="help-tip" data-help="' + esc(text) + '"></span>' : "";
   }
 
   /* -------------------------------------------------------------------- api */
@@ -233,7 +431,7 @@
   function tiles(items) {
     return '<div class="ext-tiles">' + items.map(function (t) {
       return '<div class="ext-tile' + (t.warn ? " is-warn" : "") + '"><b>' + esc(t.value) +
-        "</b><span>" + esc(t.label) + "</span></div>";
+        "</b><span>" + esc(t.label) + (t.help ? tip(t.help) : "") + "</span></div>";
     }).join("") + "</div>";
   }
 
@@ -253,14 +451,17 @@
       (state.invalid[path] ? " is-bad" : "");
   }
 
-  /** 按 JSON 形状渲染控件。数组和无法判型的值退化为 JSON 文本框。 */
+  /** 按 JSON 形状渲染控件。数组和无法判型的值退化为 JSON 文本框。
+   *  每个节点带一个 hover 说明（`HELP` 里查得到的话），说的是"改了会怎样"。 */
   function renderNode(key, value, path, depth) {
+    var hint = tip(path, key);
+
     if (value && typeof value === "object" && !Array.isArray(value)) {
       var body = Object.keys(value).map(function (childKey) {
         return renderNode(childKey, value[childKey], pathKey(path, childKey), depth + 1);
       }).join("");
       return '<details class="ext-group"' + (depth === 0 ? " open" : "") + ">" +
-        "<summary>" + esc(label(key)) + "</summary>" +
+        "<summary>" + esc(label(key)) + hint + "</summary>" +
         '<div class="ext-group-body">' + body + "</div></details>";
     }
 
@@ -268,17 +469,17 @@
       var on = currentValue(path, value);
       return '<label class="' + fieldClass(path) + ' inline">' +
         '<input type="checkbox" data-path="' + esc(path) + '" data-kind="bool"' + (on ? " checked" : "") + " />" +
-        "<span>" + esc(label(key)) + "</span></label>";
+        "<span>" + esc(label(key)) + hint + "</span></label>";
     }
 
     if (typeof value === "number") {
-      return '<label class="' + fieldClass(path) + '"><span>' + esc(label(key)) + "</span>" +
+      return '<label class="' + fieldClass(path) + '"><span>' + esc(label(key)) + hint + "</span>" +
         '<input type="number" step="any" data-path="' + esc(path) + '" data-kind="number" value="' +
         esc(currentValue(path, value)) + '" /></label>';
     }
 
     if (typeof value === "string") {
-      return '<label class="' + fieldClass(path) + '"><span>' + esc(label(key)) + "</span>" +
+      return '<label class="' + fieldClass(path) + '"><span>' + esc(label(key)) + hint + "</span>" +
         '<input type="text" data-path="' + esc(path) + '" data-kind="text" value="' +
         esc(currentValue(path, value)) + '" /></label>';
     }
@@ -286,7 +487,7 @@
     // 数组 / null：JSON 文本框。结构化控件在这里得不偿失，而 JSON 是可校验的。
     var raw = currentValue(path, value);
     var text = typeof raw === "string" && state.invalid[path] ? raw : JSON.stringify(raw);
-    return '<label class="' + fieldClass(path) + '"><span>' + esc(label(key)) +
+    return '<label class="' + fieldClass(path) + '"><span>' + esc(label(key)) + hint +
       (state.invalid[path] ? ' <b class="ext-warn">JSON 无法解析</b>' : "") + "</span>" +
       '<textarea data-path="' + esc(path) + '" data-kind="json">' + esc(text) + "</textarea></label>";
   }
@@ -329,18 +530,27 @@
     var sectors = rt.sectors || {};
 
     var head = tiles([
-      { label: "周期阶段", value: PHASE_SHORT[macro.phase] || macro.phase || "—" },
-      { label: "通胀率（年化）", value: pct(macro.inflation_rate) },
-      { label: "失业率", value: pct(macro.unemployment_rate) },
-      { label: "累计物价指数", value: fixed(macro.cumulative_inflation, 4) },
-      { label: "系统总货币", value: money(latest ? latest.system_total : rt.money_stock.final_system_total) },
+      { label: "周期阶段", value: PHASE_SHORT[macro.phase] || macro.phase || "—", help: "tile.phase" },
+      { label: "通胀率（年化）", value: pct(macro.inflation_rate), help: "tile.inflation" },
+      { label: "失业率", value: pct(macro.unemployment_rate), help: "tile.unemployment" },
+      { label: "累计物价指数", value: fixed(macro.cumulative_inflation, 4), help: "tile.price_index" },
+      {
+        label: "系统总货币",
+        value: money(latest ? latest.system_total : rt.money_stock.final_system_total),
+        help: "tile.money_total",
+      },
       {
         label: "守恒漂移（最大绝对值）",
         value: cons.max_abs_drift == null ? "—" : money(cons.max_abs_drift),
         warn: cons.ok === false,
+        help: "tile.drift",
       },
-      { label: "基尼系数", value: wealth.gini == null ? "—" : fixed(wealth.gini, 4) },
-      { label: "负债 agent", value: (wealth.indebted_agents || 0) + " / " + (wealth.agents || 0) },
+      { label: "基尼系数", value: wealth.gini == null ? "—" : fixed(wealth.gini, 4), help: "tile.gini" },
+      {
+        label: "负债 agent",
+        value: (wealth.indebted_agents || 0) + " / " + (wealth.agents || 0),
+        help: "tile.indebted",
+      },
     ]);
 
     var sectorRows = ["firms", "government", "bank"].map(function (name) {
@@ -395,33 +605,33 @@
       '<p class="ext-lede">读自最近一次仿真的产物（<code>' + esc(rt.output_dir) +
       "</code>）。宏观状态每天由周期推进，钱在 agent 与企业/政府/银行三个部门池之间流转。</p>" +
       head +
-      "<h3>部门池余额</h3>" +
+      "<h3>部门池余额" + tip("block.sectors") + "</h3>" +
       '<table class="ext-table"><thead><tr><th>部门</th><th class="num">余额</th></tr></thead><tbody>' +
       sectorRows +
-      (injected ? '<tr><td>其中：人为注入累计</td><td class="num">' + money(injected) + "</td></tr>" : "") +
+      (injected ? '<tr><td>其中：人为注入累计' + tip("iv.sector") + '</td><td class="num">' + money(injected) + "</td></tr>" : "") +
       "</tbody></table>" +
-      "<h3>货币守恒</h3>" + conservationNote + totalChart +
-      "<h3>全体日收支</h3>" + ledgerChart +
+      "<h3>货币守恒" + tip("block.conservation") + "</h3>" + conservationNote + totalChart +
+      "<h3>全体日收支" + tip("block.ledger") + "</h3>" + ledgerChart +
       "</div>" +
 
-      '<div class="ext-card"><h2>财富分布</h2>' +
+      '<div class="ext-card"><h2>财富分布' + tip("block.wealth") + "</h2>" +
       '<p class="ext-lede">口径为流动资产（活期 + 储蓄 + 投资），公积金单列。</p>' +
       '<table class="ext-table"><tbody>' +
-      ["agents:居民数:" + (wealth.agents || 0),
-       "total:流动资产合计:" + money(wealth.total_balance),
-       "mean:人均:" + money(wealth.mean_balance),
-       "median:中位数:" + money(wealth.median_balance),
-       "range:最低 / 最高:" + money(wealth.min_balance) + " / " + money(wealth.max_balance),
-       "hf:公积金合计:" + money(wealth.total_housing_fund),
-       "debt:负债合计:" + money(wealth.total_debt),
-       "gini:基尼系数:" + (wealth.gini == null ? "—（少于 2 人或总额为 0）" : fixed(wealth.gini, 4))]
+      [["居民数", wealth.agents || 0],
+       ["流动资产合计", money(wealth.total_balance)],
+       ["人均", money(wealth.mean_balance)],
+       ["中位数", money(wealth.median_balance), "一半人比这个多、一半人比这个少。它和「人均」差得越远，说明分布越偏。"],
+       ["最低 / 最高", money(wealth.min_balance) + " / " + money(wealth.max_balance)],
+       ["公积金合计", money(wealth.total_housing_fund), "这笔钱确实是居民的，但平时取不出来花，所以不算进上面的流动资产。"],
+       ["负债合计", money(wealth.total_debt)],
+       ["基尼系数", wealth.gini == null ? "—（少于 2 人或总额为 0）" : fixed(wealth.gini, 4), HELP["tile.gini"]]]
         .map(function (row) {
-          var parts = row.split(":");
-          return "<tr><td>" + esc(parts[1]) + '</td><td class="num">' + esc(parts.slice(2).join(":")) + "</td></tr>";
+          var hint = row[2] ? ' <span class="help-tip" data-help="' + esc(row[2]) + '"></span>' : "";
+          return "<tr><td>" + esc(row[0]) + hint + '</td><td class="num">' + esc(row[1]) + "</td></tr>";
         }).join("") +
       "</tbody></table></div>" +
 
-      '<div class="ext-card"><h2>干预队列</h2>' +
+      '<div class="ext-card"><h2>干预队列' + tip("block.queue") + "</h2>" +
       '<p class="ext-lede">右侧提交的干预写进 <code>' + esc(iv.path) +
       "</code>，运行中的仿真在每个自然日边界消费它。仿真没在跑时会一直等到下次开跑。</p>" +
       "<h3>待生效</h3>" + pendingList +
@@ -438,25 +648,26 @@
     }).join("");
 
     return (
-      '<div class="ext-edit-card"><h3>干预运行中的货币系统</h3>' +
+      '<div class="ext-edit-card"><h3>干预运行中的货币系统' + tip("iv.form") + "</h3>" +
       '<p class="ext-note">留空的字段不改。部门余额填的是<b>增减量</b>（正数注入、负数抽离）；' +
       "注入会同步抬高守恒基准，所以审计不会把它误报成漏钱。</p>" +
-      '<label class="ext-field"><span>周期阶段（当前：' + esc(PHASE_LABEL[macro.phase] || macro.phase || "—") + "）</span>" +
+      '<label class="ext-field"><span>周期阶段（当前：' + esc(PHASE_LABEL[macro.phase] || macro.phase || "—") + "）" +
+      tip("iv.phase") + "</span>" +
       '<select id="ivPhase">' + options + "</select></label>" +
       '<div class="ext-row">' +
-      '<label class="ext-field"><span>通胀率（当前 ' + pct(macro.inflation_rate) + "）</span>" +
+      '<label class="ext-field"><span>通胀率（当前 ' + pct(macro.inflation_rate) + "）" + tip("iv.inflation") + "</span>" +
       '<input type="number" step="any" id="ivInflation" placeholder="0.08" /></label>' +
-      '<label class="ext-field"><span>失业率（当前 ' + pct(macro.unemployment_rate) + "）</span>" +
+      '<label class="ext-field"><span>失业率（当前 ' + pct(macro.unemployment_rate) + "）" + tip("iv.unemployment") + "</span>" +
       '<input type="number" step="any" id="ivUnemployment" placeholder="0.09" /></label>' +
       "</div>" +
       '<div class="ext-row">' +
-      '<label class="ext-field"><span>企业池 ±</span><input type="number" step="any" id="ivFirms" /></label>' +
-      '<label class="ext-field"><span>政府池 ±</span><input type="number" step="any" id="ivGovernment" /></label>' +
-      '<label class="ext-field"><span>银行池 ±</span><input type="number" step="any" id="ivBank" /></label>' +
+      '<label class="ext-field"><span>企业池 ±' + tip("iv.sector") + '</span><input type="number" step="any" id="ivFirms" /></label>' +
+      '<label class="ext-field"><span>政府池 ±' + tip("iv.sector") + '</span><input type="number" step="any" id="ivGovernment" /></label>' +
+      '<label class="ext-field"><span>银行池 ±' + tip("iv.sector") + '</span><input type="number" step="any" id="ivBank" /></label>' +
       "</div>" +
       '<div class="ext-row">' +
-      '<label class="ext-field"><span>生效日（留空 = 下一天）</span><input type="number" step="1" id="ivDay" /></label>' +
-      '<label class="ext-field"><span>备注</span><input type="text" id="ivNote" placeholder="财政刺激" /></label>' +
+      '<label class="ext-field"><span>生效日（留空 = 下一天）' + tip("iv.day") + '</span><input type="number" step="1" id="ivDay" /></label>' +
+      '<label class="ext-field"><span>备注' + tip("iv.note") + '</span><input type="text" id="ivNote" placeholder="财政刺激" /></label>' +
       "</div>" +
       '<div class="ext-edit-actions">' +
       '<button class="button" id="ivSubmit">加入干预队列</button>' +
@@ -478,19 +689,21 @@
 
     var counts = rt.event_type_counts || {};
     var countTiles = Object.keys(counts).map(function (key) {
-      return { label: (TYPE_LABEL[key] || key) + "事件", value: counts[key] };
+      return { label: (TYPE_LABEL[key] || key) + "事件", value: counts[key], help: "env.type" };
     });
 
     var days = (rt.days || []).slice().reverse().map(function (day) {
       var events = (day.events || []).map(function (ev) {
         var sev = Number(ev.severity) || 0;
         return '<div class="ext-event"><div class="ext-event-head">' +
-          '<span class="ext-badge t-' + esc(ev.type) + '">' + esc(TYPE_LABEL[ev.type] || ev.type) + "</span>" +
+          '<span class="ext-badge t-' + esc(ev.type) + '" data-help="' + esc(HELP["env.type"]) + '">' +
+          esc(TYPE_LABEL[ev.type] || ev.type) + "</span>" +
           "<b>" + esc(ev.name) + "</b>" +
-          '<span class="ext-sev' + (sev >= 0.6 ? " high" : "") + '" title="严重度 ' + esc(sev) +
+          '<span class="ext-sev' + (sev >= 0.6 ? " high" : "") +
+          '" data-help="' + esc("严重度 " + sev + "。" + HELP["env.sev_bar"]) +
           '"><i style="width:' + Math.round(Math.min(1, sev) * 100) + '%"></i></span>' +
           (ev.impact_tags || []).map(function (tag) {
-            return '<span class="ext-badge">' + esc(tag) + "</span>";
+            return '<span class="ext-badge" data-help="' + esc(HELP["env.tags"]) + '">' + esc(tag) + "</span>";
           }).join("") +
           "</div><p>" + esc(ev.description) + "</p></div>";
       }).join("");
@@ -504,10 +717,14 @@
       '<p class="ext-lede">环境生成器每天抛出自然/经济/政策/科技四类事件，进入 agent 的当日情境。读自 <code>' +
       esc(rt.timeline_path) + "</code>。</p>" +
       tiles([
-        { label: "最新一天", value: rt.latest_day == null ? "—" : "第 " + rt.latest_day + " 天" },
-        { label: "已生成天数", value: rt.day_count },
-        { label: "日内 tick 记录", value: rt.tick_records },
-        { label: "平均严重度", value: rt.mean_severity == null ? "—" : fixed(rt.mean_severity, 3) },
+        { label: "最新一天", value: rt.latest_day == null ? "—" : "第 " + rt.latest_day + " 天", help: "env.latest_day" },
+        { label: "已生成天数", value: rt.day_count, help: "env.day_count" },
+        { label: "日内突发记录", value: rt.tick_records, help: "env.ticks" },
+        {
+          label: "平均严重度",
+          value: rt.mean_severity == null ? "—" : fixed(rt.mean_severity, 3),
+          help: "env.severity",
+        },
       ].concat(countTiles)) +
       "</div>" +
       '<div class="ext-card"><h2>最近 ' + (rt.days || []).length + " 天的事件</h2>" + (days || '<p class="ext-hint">暂无事件。</p>') + "</div>"
@@ -541,7 +758,8 @@
       }
       return "<tr><td>" + esc(target.label) + "</td>" +
         "<td><code>" + esc(target.url || "—") + "</code></td>" +
-        '<td><span class="ext-dot ' + esc(cls) + '"></span>' + esc(text) + "</td></tr>";
+        '<td data-help="' + esc(HELP["svc.status"]) + '"><span class="ext-dot ' + esc(cls) + '"></span>' +
+        esc(text) + "</td></tr>";
     }).join("");
 
     var tasks = (rt.llm_routing && rt.llm_routing.tasks) || {};
@@ -550,28 +768,29 @@
     }).join("") || '<tr><td colspan="2">全部走默认模型</td></tr>';
 
     return (
-      '<div class="ext-card"><h2>对外服务连通性</h2>' +
+      '<div class="ext-card"><h2>对外服务连通性' + tip("svc.probe") + "</h2>" +
       '<p class="ext-lede">仿真需要向外拨号的地方：外部环境服务、分布式中继。点下面的按钮做一次即时探测。</p>' +
-      '<table class="ext-table"><thead><tr><th>服务</th><th>地址</th><th>状态</th></tr></thead><tbody>' +
+      '<table class="ext-table"><thead><tr><th>服务</th><th>地址</th><th>状态' + tip("svc.status") +
+      "</th></tr></thead><tbody>" +
       (rows || '<tr><td colspan="3">没有配置对外服务。</td></tr>') + "</tbody></table>" +
       '<div class="ext-edit-actions"><button class="button subtle" id="svcProbe">探测一次</button>' +
       '<span class="ext-note">' + esc(state.health ? "上次探测：" + state.health.checked_at : "尚未探测") + "</span></div>" +
       "</div>" +
 
-      '<div class="ext-card"><h2>LLM 路由</h2>' +
+      '<div class="ext-card"><h2>LLM 路由' + tip("svc.llm") + "</h2>" +
       '<p class="ext-lede">可用模型来自配置里的 providers（密钥不在此暴露，也不可在此编辑）。路由决定哪个任务用哪个模型。</p>' +
       tiles([
         { label: "可用模型", value: (rt.llm_providers || []).length },
-        { label: "默认模型", value: (rt.llm_routing && rt.llm_routing["default"]) || "—" },
+        { label: "默认模型", value: (rt.llm_routing && rt.llm_routing["default"]) || "—", help: "default" },
       ]) +
       "<h3>模型清单</h3><p class=\"ext-hint\">" + esc((rt.llm_providers || []).join(" · ") || "无") + "</p>" +
       "<h3>按任务指定</h3>" +
       '<table class="ext-table"><thead><tr><th>任务</th><th>模型</th></tr></thead><tbody>' + taskRows + "</tbody></table>" +
       "</div>" +
 
-      '<div class="ext-card"><h2>外部信息源</h2>' +
+      '<div class="ext-card"><h2>外部信息源' + tip("svc.news") + "</h2>" +
       tiles([
-        { label: "新闻缓存条目", value: (rt.news_cache && rt.news_cache.entries) || 0 },
+        { label: "新闻缓存条目", value: (rt.news_cache && rt.news_cache.entries) || 0, help: "svc.news" },
         { label: "缓存文件", value: (rt.news_cache && rt.news_cache.exists) ? "存在" : "缺失" },
       ]) +
       '<p class="ext-hint">缓存路径：<code>' + esc((rt.news_cache && rt.news_cache.path) || "—") + "</code></p></div>"
@@ -588,7 +807,7 @@
   function renderConfigCard(tab, config, note) {
     var count = dirtyCount();
     return (
-      '<div class="ext-edit-card"><h3>配置</h3>' +
+      '<div class="ext-edit-card"><h3>配置' + tip("cfg.card") + "</h3>" +
       '<p class="ext-note">' + esc(note) + "</p>" +
       '<div id="extConfigTree">' + renderConfigEditor(config) + "</div>" +
       '<div class="ext-edit-actions">' +
@@ -624,6 +843,9 @@
       meta.innerHTML = "观测时间 " + esc(state.data.generated_at) +
         (dirtyCount() ? '<br/><b class="ext-ok">' + dirtyCount() + " 项配置改动未保存</b>" : "");
     }
+
+    // 每次渲染都重建了 innerHTML，之前绑好的「?」全没了，要重新扫一遍。
+    if (window.HelpTips) window.HelpTips.scan();
   }
 
   function load() {

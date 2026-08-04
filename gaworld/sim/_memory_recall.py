@@ -163,28 +163,110 @@ def _build_recall_context_labels(
     return labels
 
 
-def _behavioral_action_fallbacks(activity: str) -> dict[str, str]:
-    text = str(activity or "")
-    if any(k in text for k in ["工作", "学习", "会议", "上课", "实验"]):
-        return {
+GENERIC_BEHAVIORAL_ACTION_FALLBACKS = {
+    "progress": "先把眼前这件事往前推进一点",
+    "maintain": "按原节奏继续当前安排",
+    "avoidant": "先拖一会儿再说，顺手刷会儿手机",
+    "social": "联系一下相关的人确认接下来的安排",
+}
+
+# Activity family → keyword trigger + category fallbacks. Ordered: the
+# first matching family wins, so put the sharper (event-response) families
+# ahead of the broad routine ones.
+_BEHAVIORAL_FALLBACK_FAMILIES: list[tuple[list[str], dict[str, str]]] = [
+    (
+        ["避雨", "躲雨", "避险", "阴凉", "暖和", "撑伞", "避风"],
+        {
+            "progress": "就近进便利店或商场避一避，顺手把手头的事处理掉",
+            "maintain": "撑着伞按原计划继续赶路",
+            "avoidant": "在屋檐下发呆等雨小一点",
+            "social": "联系要见的人说明会晚到一会儿",
+        },
+    ),
+    (
+        ["通勤", "出行", "路线", "绕路", "改去", "前往", "赶路", "堵"],
+        {
+            "progress": "重新规划一条路线，尽快到目的地",
+            "maintain": "按原来的走法继续赶路",
+            "avoidant": "先在原地刷会儿手机，晚点再走",
+            "social": "联系对方确认到达时间",
+        },
+    ),
+    (
+        ["工作", "学习", "会议", "上课", "实验"],
+        {
             "progress": "推进最重要的一项任务",
             "maintain": "按原计划继续处理例行事项",
             "avoidant": "拖一会儿再开始，先刷手机分心",
             "social": "联系相关的人确认进度和分工",
-        }
-    if any(k in text for k in ["买菜", "购物", "办事"]):
-        return {
+        },
+    ),
+    (
+        ["买菜", "购物", "办事", "逛"],
+        {
             "progress": "尽快把最需要买的东西先办完",
             "maintain": "按清单照常处理手头事务",
             "avoidant": "先随便逛一会儿拖时间",
             "social": "发消息问熟人有没有顺路需求",
-        }
-    return {
-        "progress": "先把眼前这件事往前推进一点",
-        "maintain": "按原节奏继续当前安排",
-        "avoidant": "先拖一会儿再说，顺手刷会儿手机",
-        "social": "联系一下相关的人确认接下来的安排",
-    }
+        },
+    ),
+    (
+        ["吃饭", "早饭", "午饭", "晚饭", "早餐", "午餐", "晚餐", "做饭", "外卖", "咖啡店"],
+        {
+            "progress": "认真准备一顿，好好吃完",
+            "maintain": "照常吃平时那一口",
+            "avoidant": "边刷手机边随便对付两口",
+            "social": "约熟人一起吃，顺便聊天",
+        },
+    ),
+    (
+        ["社交", "聚会", "聊天", "拜访", "会面", "约朋友", "见面"],
+        {
+            "progress": "把想谈的事当面确认清楚",
+            "maintain": "照常寒暄几句，维持往来",
+            "avoidant": "少说话，刷手机等场子散",
+            "social": "多聊天，问问对方的近况",
+        },
+    ),
+    (
+        ["休息", "睡前", "放松", "个人时间", "下班"],
+        {
+            "progress": "顺手整理一下明天的安排",
+            "maintain": "按平时的节奏继续休息",
+            "avoidant": "躺着刷手机，拖到很晚",
+            "social": "回消息，联系一下惦记的人",
+        },
+    ),
+]
+
+
+def _behavioral_action_fallbacks(activity: str) -> dict[str, str]:
+    """Category → filler action for an activity whose action space is thin.
+
+    Family-specific wording matters: a generic "先把眼前这件事往前推进一点"
+    is meaningless for an interrupt activity such as 找地方避雨, and once
+    picked it seeds an equally meaningless habit.
+    """
+    text = str(activity or "")
+    for keywords, fallbacks in _BEHAVIORAL_FALLBACK_FAMILIES:
+        if any(k in text for k in keywords):
+            return dict(fallbacks)
+    return dict(GENERIC_BEHAVIORAL_ACTION_FALLBACKS)
+
+
+def is_fallback_only_action_list(activity: str, actions: list[str]) -> bool:
+    """True when every action is filler — i.e. the LLM produced nothing.
+
+    Such an action space must not be cached: ``load_agent_actions`` would
+    replay it on every later run and the agent would be stuck with four
+    generic actions forever.
+    """
+    cleaned = [str(a).strip() for a in (actions or []) if str(a).strip()]
+    if not cleaned:
+        return True
+    filler = set(_behavioral_action_fallbacks(activity).values())
+    filler.update(GENERIC_BEHAVIORAL_ACTION_FALLBACKS.values())
+    return all(action in filler for action in cleaned)
 
 
 def _ensure_behavioral_action_balance(activity: str, actions: list[str]) -> list[str]:
@@ -667,6 +749,7 @@ def maybe_review_memories(
 
 
 __all__ = [
+    "GENERIC_BEHAVIORAL_ACTION_FALLBACKS",
     "NEGATIVE_RECALL_HINTS",
     "POSITIVE_RECALL_HINTS",
     "RECALL_STAGE_ENTRY_TYPES",
@@ -694,5 +777,6 @@ __all__ = [
     "_social_relationship_snapshot",
     "_summarize_environment_refs",
     "evoke_memory",
+    "is_fallback_only_action_list",
     "maybe_review_memories",
 ]

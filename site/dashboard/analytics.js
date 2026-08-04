@@ -1,6 +1,12 @@
 // Analytics view: renders the artifacts of a finished (or running) simulation
 // as SVG. No chart library — every figure below is a string of SVG built from
 // the /api/analytics/* payloads, so the page works fully offline.
+//
+// Any past run can be analysed, not just the current one: /api/analytics/runs
+// lists the live run, the archives the visualizer keeps under
+// <visualization>/runs/ and the scenario (compare-event) runs, each tagged with
+// the sections its artifacts can fill. The selection rides in ?run= so a run is
+// linkable.
 (function () {
   "use strict";
 
@@ -44,6 +50,14 @@
     metrics: [],        // selected state metrics
     agents: [],         // selected agent ids (strings)
     econSeries: ["balance", "income", "expense"],
+    runs: [],           // every analysable run, newest first
+    runId: "",          // "" = the current run
+    runInfo: null,      // the selected entry of state.runs
+  };
+
+  var SECTION_LABELS = {
+    "state-history": "状态变化", economy: "经济轨迹",
+    social: "社交网络", behavior: "行为分布", events: "事件时间线",
   };
 
   var LABELS = { metric: METRIC_LABELS, econ: ECON_LABELS, period: PERIOD_LABELS };
@@ -71,10 +85,16 @@
     return Number(value).toFixed(abs >= 100 ? 0 : 2);
   }
 
-  async function api(path) {
-    var res = await fetch(path, { headers: { Accept: "application/json" } });
+  async function api(path, params) {
+    var query = params ? "?" + new URLSearchParams(params).toString() : "";
+    var res = await fetch(path + query, { headers: { Accept: "application/json" } });
     if (!res.ok) throw new Error(path + " → HTTP " + res.status);
     return res.json();
+  }
+
+  // Every section of one page load reads the same run.
+  function section(name) {
+    return api("/api/analytics/" + name, state.runId ? { run: state.runId } : null);
   }
 
   function note(message) {
@@ -315,7 +335,13 @@
 
   function renderStateControls() {
     var data = state.history;
-    if (!data || !data.available) return;
+    if (!data || !data.available) {
+      // Switching to a run without state artifacts must not leave the previous
+      // run's chips behind.
+      $("anMetricPicker").innerHTML = "";
+      $("anAgentPicker").innerHTML = "";
+      return;
+    }
     $("anMetricPicker").innerHTML = data.metrics.map(function (key) {
       var on = state.metrics.indexOf(key) >= 0;
       return '<button type="button" class="an-chip' + (on ? " is-on" : "") +
@@ -394,6 +420,7 @@
     var data = state.economy;
     if (!data || !data.available) {
       $("anEconGrid").innerHTML = note("尚无经济数据。开启经济模块运行仿真后会生成 output/economy/。");
+      $("anEconSeriesPicker").innerHTML = "";
       $("anEconWealth").innerHTML = "";
       $("anEconMacro").innerHTML = "";
       return;
@@ -782,6 +809,89 @@
     });
   }
 
+  /* -------------------------------------------------------------- run list */
+
+  function formatStamp(iso) {
+    var date = new Date(iso);
+    if (isNaN(date.getTime())) return iso || "";
+    var pad = function (n) { return String(n).padStart(2, "0"); };
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
+      " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
+  }
+
+  function runLabel(run) {
+    var parts = [run.kind === "live" ? "当前运行" : (run.label || run.id)];
+    if (run.agent_count) parts.push(run.agent_count + " 人");
+    if (run.sim_days) parts.push(run.sim_days + " 天");
+    if (run.last_updated) parts.push(formatStamp(run.last_updated));
+    return parts.join(" · ");
+  }
+
+  function renderRunOptions() {
+    var select = $("anRunSelect");
+    select.innerHTML = "";
+    [["live", "当前运行"], ["archive", "历史运行"], ["scenario", "场景 / 对比运行"]]
+      .forEach(function (pair) {
+        var runs = state.runs.filter(function (run) { return run.kind === pair[0]; });
+        if (!runs.length) return;
+        var group = document.createElement("optgroup");
+        group.label = pair[1];
+        runs.forEach(function (run) {
+          var option = document.createElement("option");
+          option.value = run.id;
+          option.textContent = runLabel(run);
+          group.appendChild(option);
+        });
+        select.appendChild(group);
+      });
+    select.value = state.runId;
+  }
+
+  // Recorded runs keep different artifact sets: an archived run holds only its
+  // trace, and a scenario run may have skipped the economy. Say so up front
+  // rather than leaving six "暂无数据" panels to be read as a broken page.
+  function renderRunNote() {
+    var note = $("anRunNote");
+    var run = state.runInfo;
+    var missing = run && run.sections
+      ? Object.keys(SECTION_LABELS).filter(function (key) { return !run.sections[key]; })
+      : [];
+    if (!run || run.kind === "live" || !missing.length) {
+      note.hidden = true;
+      note.textContent = "";
+      return;
+    }
+    note.hidden = false;
+    note.textContent = "该运行未归档以下数据，相关面板为空：" +
+      missing.map(function (key) { return SECTION_LABELS[key]; }).join("、") + "。";
+  }
+
+  function selectRun(runId) {
+    var match = state.runs.filter(function (run) { return run.id === runId; })[0];
+    state.runInfo = match || null;
+    state.runId = match ? match.id : "";
+    // Metric / agent picks belong to the run they were made in.
+    state.metrics = [];
+    state.agents = [];
+    var url = new URL(window.location.href);
+    if (state.runId) url.searchParams.set("run", state.runId);
+    else url.searchParams.delete("run");
+    window.history.replaceState(null, "", url);
+  }
+
+  async function loadRuns() {
+    var payload = await api("/api/analytics/runs");
+    state.runs = Array.isArray(payload.runs) ? payload.runs : [];
+    var wanted = state.runId || new URLSearchParams(window.location.search).get("run") || "";
+    var match = state.runs.filter(function (run) { return run.id === wanted; })[0];
+    // A run that vanished from disk (or an unknown ?run=) falls back to the
+    // live one rather than failing every section with a 404.
+    state.runInfo = match || state.runs[0] || null;
+    state.runId = state.runInfo ? state.runInfo.id : "";
+    renderRunOptions();
+    renderRunNote();
+  }
+
   /* ----------------------------------------------------------------- wiring */
 
   function pickDefaults() {
@@ -836,6 +946,10 @@
       renderEconomy();
     });
     $("anRefreshBtn").addEventListener("click", function () { load(); });
+    $("anRunSelect").addEventListener("change", function (event) {
+      selectRun(event.target.value);
+      load();
+    });
   }
 
   async function load() {
@@ -843,13 +957,14 @@
     status.textContent = "加载中…";
     status.className = "an-status is-busy";
     try {
+      await loadRuns();
       var results = await Promise.all([
-        api("/api/analytics/overview"),
-        api("/api/analytics/state-history"),
-        api("/api/analytics/economy"),
-        api("/api/analytics/social"),
-        api("/api/analytics/behavior"),
-        api("/api/analytics/events"),
+        section("overview"),
+        section("state-history"),
+        section("economy"),
+        section("social"),
+        section("behavior"),
+        section("events"),
       ]);
       state.overview = results[0];
       state.history = results[1];

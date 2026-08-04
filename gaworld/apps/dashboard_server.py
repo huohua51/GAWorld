@@ -1345,25 +1345,119 @@ def _agent_name_map():
     return {section["id"]: section["name"] for section in _profile_sections()[1]}
 
 
-def _analytics_payload(section):
-    """Dispatch one Analytics section against the current ``output/`` artifacts."""
+def _live_analytics_paths():
+    """Where the current run writes the artifacts Analytics reads."""
     config = _effective_config()
-    memory_dir = config.get("memory_dir", "output/memory")
-    visualization_dir = config.get("visualization", {}).get("output_dir", "output/visualization")
-    diary_dir = config.get("diary_output_dir", "output/diaries")
+    return {
+        "output_dir": os.path.join(REPO_ROOT, "output"),
+        "memory_dir": os.path.join(REPO_ROOT, config.get("memory_dir", "output/memory")),
+        "visualization_dir": os.path.join(
+            REPO_ROOT, config.get("visualization", {}).get("output_dir", "output/visualization")
+        ),
+        "diary_dir": os.path.join(REPO_ROOT, config.get("diary_output_dir", "output/diaries")),
+    }
+
+
+def _analytics_run_paths(run_id, runs=None):
+    """Resolve a replay run id to the artifact dirs Analytics reads, or None.
+
+    Only ids that ``/api/replay/runs`` actually listed are accepted, which also
+    keeps the query parameter from reaching outside the repo.
+    """
+    if not run_id:
+        return _live_analytics_paths()
+    run = next((item for item in (runs if runs is not None else _replay_runs()) if item["id"] == run_id), None)
+    if run is None:
+        return None
+    if run["kind"] == "live":
+        return _live_analytics_paths()
+
+    config = _effective_config()
+    visualization_dir = os.path.join(REPO_ROOT, run["id"])
+    if run["kind"] == "archive":
+        # An archived run keeps only its trace; its sibling artifacts belong to
+        # whichever run overwrote them since, so they are deliberately not read
+        # — the missing dirs below make those sections report "no data".
+        base = visualization_dir
+    else:
+        base = os.path.dirname(visualization_dir)
+    return {
+        "output_dir": base,
+        # A scenario run mirrors the live tree's layout inside its own output
+        # dir, so the configured dir names apply, not their full paths.
+        "memory_dir": os.path.join(base, os.path.basename(config.get("memory_dir", "memory"))),
+        "visualization_dir": visualization_dir,
+        "diary_dir": os.path.join(base, os.path.basename(config.get("diary_output_dir", "diaries"))),
+    }
+
+
+def _analytics_runs():
+    """Replayable runs, each tagged with the Analytics sections it can fill.
+
+    The dashboard uses the flags to explain up front why an archived run shows
+    an event timeline but no state curves.
+    """
+    runs = _replay_runs()
+    listed = []
+    for run in runs:
+        paths = _analytics_run_paths(run["id"], runs=runs)
+        if paths is None:  # pragma: no cover - ids come from the same listing
+            continue
+        memory_dir = paths["memory_dir"]
+        has_memory = os.path.isdir(memory_dir) and any(
+            name.startswith("agent_") for name in os.listdir(memory_dir)
+        )
+        listed.append(
+            {
+                "id": run["id"],
+                "kind": run["kind"],
+                "label": run["label"],
+                "frame_count": run["frame_count"],
+                "finished": run["finished"],
+                "generated_at": run["generated_at"],
+                "last_updated": run["last_updated"],
+                "sim_days": run["sim_days"],
+                "agent_count": run["agent_count"],
+                "sections": {
+                    "state-history": os.path.exists(
+                        os.path.join(paths["output_dir"], "state", "agent_state_history.csv")
+                    ),
+                    "economy": os.path.exists(
+                        os.path.join(paths["output_dir"], "economy", "daily_ledger.csv")
+                    ),
+                    "social": has_memory,
+                    "behavior": has_memory,
+                    "events": os.path.exists(
+                        os.path.join(paths["visualization_dir"], "simulation_trace.json")
+                    ),
+                },
+            }
+        )
+    return listed
+
+
+def _analytics_payload(section, paths=None):
+    """Dispatch one Analytics section against a run's artifacts."""
+    paths = paths or _live_analytics_paths()
     names = _agent_name_map()
     if section == "overview":
-        return analytics.overview(REPO_ROOT, memory_dir, visualization_dir, diary_dir, names)
+        return analytics.overview(
+            paths["output_dir"],
+            paths["memory_dir"],
+            paths["visualization_dir"],
+            paths["diary_dir"],
+            names,
+        )
     if section == "state-history":
-        return analytics.state_history(REPO_ROOT, names)
+        return analytics.state_history(paths["output_dir"], names)
     if section == "economy":
-        return analytics.economy(REPO_ROOT, names)
+        return analytics.economy(paths["output_dir"], names)
     if section == "social":
-        return analytics.social(REPO_ROOT, memory_dir, names)
+        return analytics.social(paths["memory_dir"], names)
     if section == "behavior":
-        return analytics.behavior(REPO_ROOT, memory_dir, names)
+        return analytics.behavior(paths["memory_dir"], names)
     if section == "events":
-        return analytics.events(REPO_ROOT, visualization_dir)
+        return analytics.events(paths["visualization_dir"])
     return None
 
 
@@ -1464,7 +1558,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             agent_id = path.split("/")[3]
             return self._json_response(_agent_goals_payload(agent_id))
         if path.startswith("/api/analytics/"):
-            payload = _analytics_payload(path[len("/api/analytics/") :])
+            section = path[len("/api/analytics/") :]
+            if section == "runs":
+                return self._json_response({"runs": _analytics_runs()})
+            # No ?run= means the current run, so bookmarked links keep working.
+            paths = _analytics_run_paths((query.get("run") or [""])[0])
+            if paths is None:
+                return self._json_response({"error": "Unknown run"}, status=404)
+            payload = _analytics_payload(section, paths)
             if payload is None:
                 return self._json_response({"error": "Unknown analytics section"}, status=404)
             return self._json_response(payload)

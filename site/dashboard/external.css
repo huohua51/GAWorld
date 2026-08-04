@@ -94,7 +94,10 @@
   overflow-wrap: anywhere;
 }
 
-.ext-tile span {
+/* Direct child only: a descendant selector here also caught the nested
+   `.help-tip` span and forced the "?" to display:block, bumping it onto its
+   own line in every tile. */
+.ext-tile > span {
   display: block;
   margin-top: 3px;
   font-size: 11px;
@@ -127,7 +130,7 @@
 .ext-day { border: 1px solid var(--line, #dde6de); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
 .ext-day-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .ext-day-head b { font-size: 14px; }
-.ext-day-head span { font-size: 11.5px; color: var(--muted, #66746c); }
+.ext-day-head > span { font-size: 11.5px; color: var(--muted, #66746c); }
 .ext-day-summary { margin: 6px 0 10px; font-size: 12.5px; line-height: 1.65; color: var(--muted, #66746c); }
 
 .ext-event { border-top: 1px dashed var(--line, #dde6de); padding: 8px 0 2px; }
@@ -135,6 +138,11 @@
 .ext-event-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ext-event-head b { font-size: 12.5px; }
 .ext-event p { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted, #66746c); }
+
+/* Elements that carry their own hover explanation but are not the "?" glyph
+   (severity bars, type badges, the health-status cell) — without a cursor
+   change there is nothing telling the user an explanation is there. */
+[data-help]:not(.help-tip) { cursor: help; }
 
 .ext-badge {
   font-size: 10.5px; padding: 2px 7px; border-radius: 999px;

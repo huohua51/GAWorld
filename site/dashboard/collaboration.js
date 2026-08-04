@@ -129,21 +129,38 @@
     }
 
     const stepIndex = Number(metadata.step_index);
-    const step = Number.isInteger(stepIndex) ? plan[stepIndex] : null;
+    const hasStep = Number.isInteger(stepIndex);
+    const step = hasStep ? plan[stepIndex] : null;
     const stepLabel = step
       ? "步骤 " + String(stepIndex + 1) + " · " + String(step.title || "")
       : "";
+    const phase = String(metadata.phase || "");
+    let round = hasStep ? "第 " + String(stepIndex + 1) + " 轮" : "";
+    if (metadata.final === true || phase === "synthesis") {
+      round = "统稿";
+    }
+    const excerpt = String(metadata.excerpt || "");
 
     let action = content || type.toUpperCase();
     let detail = "";
     let speech = "";
 
-    if (type === "artifact") {
+    if (type === "turn_started") {
+      action = {
+        execute: "开始撰写子任务成果",
+        review: "开始审阅成果",
+        revision: "开始按意见修订",
+        synthesis: "开始统稿最终成果",
+      }[phase] || "开始新的回合";
+      detail = [stepLabel, content].filter(Boolean).join(" · ");
+    } else if (type === "artifact") {
       action = metadata.final === true ? "汇总了最终成果" : "提交了子任务产物";
       detail = [stepLabel, content].filter(Boolean).join(" · ");
+      speech = excerpt;
     } else if (type === "revision") {
       action = "按审阅意见完成修订";
       detail = [stepLabel, content].filter(Boolean).join(" · ");
+      speech = excerpt;
     } else if (type === "review") {
       action = metadata.approved === true ? "审阅通过" : "提出了修改意见";
       detail = [stepLabel, String(metadata.artifact || "")]
@@ -169,6 +186,7 @@
       type,
       speaker: hasAgent ? nameOf(agentId) : "系统",
       role: badges.join(" · "),
+      round,
       action,
       detail,
       speech,
@@ -499,6 +517,11 @@
 
     function appendEvents(events) {
       const context = activityContext();
+      const feed = els.activityFeed;
+      // Keep the feed pinned to the newest turn only while the observer is
+      // already at the bottom; otherwise reading an earlier round would be
+      // interrupted every poll.
+      const pinned = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
       (Array.isArray(events) ? events : []).forEach(function (event) {
         const sequence = Number(event.seq || 0);
         if (sequence <= state.lastSeq) {
@@ -530,6 +553,12 @@
           role.textContent = entry.role;
           head.appendChild(role);
         }
+        if (entry.round) {
+          const round = document.createElement("span");
+          round.className = "activity-round";
+          round.textContent = entry.round;
+          head.appendChild(round);
+        }
         const action = document.createElement("p");
         action.className = "activity-action";
         action.textContent = entry.action;
@@ -547,12 +576,14 @@
           body.appendChild(speech);
         }
         item.append(time, body);
-        els.activityFeed.appendChild(item);
+        feed.appendChild(item);
       });
       els.eventCursor.textContent = "SEQ "
         + String(state.lastSeq).padStart(4, "0");
       renderEmptyActivity();
-      els.activityFeed.scrollTop = els.activityFeed.scrollHeight;
+      if (pinned) {
+        feed.scrollTop = feed.scrollHeight;
+      }
     }
 
     function renderActiveTeam() {

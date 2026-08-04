@@ -6,7 +6,7 @@
   <title>GAWorld · 结果分析</title>
   <meta name="description" content="GAWorld 仿真结果可视化：状态变化、经济轨迹、社交网络、行为分布与事件时间线" />
   <link rel="stylesheet" href="/site/dashboard/styles.css?v=4" />
-  <link rel="stylesheet" href="/site/dashboard/analytics.css?v=3" />
+  <link rel="stylesheet" href="/site/dashboard/analytics.css?v=4" />
 </head>
 <body>
   <main class="shell">
@@ -17,6 +17,10 @@
         <p class="hero-sub">状态变化 · 经济轨迹 · 社交网络 · 行为分布 · 事件时间线</p>
       </div>
       <div class="hero-status">
+        <label class="an-run-picker">
+          <span>运行</span>
+          <select id="anRunSelect"></select>
+        </label>
         <span id="anStatus" class="an-status is-busy">加载中…</span>
         <button id="anRefreshBtn" class="button small">刷新数据</button>
         <details class="an-export" id="anExport">
@@ -31,13 +35,15 @@
       </div>
     </header>
 
+    <p id="anRunNote" class="an-run-note" hidden></p>
+
     <section class="panel">
       <div class="section-head">
         <div>
           <p class="kicker">Overview</p>
           <h2>运行总览</h2>
         </div>
-        <span class="help-tip" data-help="本次仿真产出的规模概览，以及变化最剧烈的状态指标（按全体智能体首末差值的均值排序）。"></span>
+        <span class="help-tip" data-help="本次仿真产出的规模概览，以及变化最剧烈的状态指标（按全体智能体首末差值的均值排序）。可在页首切换要分析的运行：当前运行、历史归档运行或场景对比运行。"></span>
       </div>
       <div id="anOverview" class="an-kpis"></div>
       <div class="an-two">
@@ -187,7 +193,7 @@
     </section>
   </main>
   <script src="/site/dashboard/help.js?v=1"></script>
-  <script src="/site/dashboard/analytics-export.js?v=2"></script>
-  <script src="/site/dashboard/analytics.js?v=4"></script>
+  <script src="/site/dashboard/analytics-export.js?v=3"></script>
+  <script src="/site/dashboard/analytics.js?v=5"></script>
 </body>
 </html>

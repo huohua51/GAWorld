@@ -26,14 +26,17 @@
     </header>
 
     <nav class="studio-steps" id="extTabs">
-      <button class="step is-active" data-tab="currency" title="宏观周期、部门池、货币守恒、财富分布，以及对运行中仿真的干预">
+      <button class="step is-active" data-tab="currency">
         <i>¥</i>货币系统
+        <span class="help-tip" data-help="钱在这个世界里怎么流：宏观形势、企业/政府/银行三个资金池、总量守不守恒、财富分布。也可以在这里改经济规则，或对正在跑的仿真做一次干预。"></span>
       </button>
-      <button class="step" data-tab="environment" title="外部环境生成器抛出的天气/经济/政策/科技事件，以及生成参数">
+      <button class="step" data-tab="environment">
         <i>≋</i>外部环境
+        <span class="help-tip" data-help="世界每天发生了什么：天气、经济新闻、政策、科技。这些事件会进入每个居民的当天情境，影响他们的心情和日程。"></span>
       </button>
-      <button class="step" data-tab="services" title="外部环境服务、分布式中继、外部信息源、LLM 路由">
+      <button class="step" data-tab="services">
         <i>⇄</i>对外服务
+        <span class="help-tip" data-help="仿真要往外拨号的地方：外部环境服务、多机中继、新闻源、用哪个大模型。这里可以看通不通，也可以改。"></span>
       </button>
     </nav>
 
@@ -51,6 +54,7 @@
       </div>
     </footer>
   </main>
-  <script src="/site/dashboard/external.js?v=1"></script>
+  <script src="/site/dashboard/help.js?v=1"></script>
+  <script src="/site/dashboard/external.js?v=2"></script>
 </body>
 </html>

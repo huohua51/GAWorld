@@ -126,7 +126,6 @@ from gaworld.memory.store import (
     load_sim_state,
     reset_agent_memory,
     retrieve_relevant_memories,
-    save_agent_actions,
     save_agent_location_action_bias,
     save_agent_locations,
     save_agent_memory,
@@ -1339,6 +1338,7 @@ from gaworld.sim._memory_recall import (  # noqa: E402, F401
     _social_relationship_snapshot,
     _summarize_environment_refs,
     evoke_memory,
+    is_fallback_only_action_list,
     maybe_review_memories,
 )
 
@@ -2181,6 +2181,8 @@ from gaworld.sim._action import (  # noqa: E402, F401
     fallback_action,
     generate_actions,
     get_location_action_bias,
+    save_action_space,
+    strip_fallback_only_activities,
 )
 # is_sleep_activity kept for in-file callers at L1238 and L3355 (now-shifted).
 from gaworld.sim._schedule import is_sleep_activity  # noqa: E402, F401
@@ -2542,6 +2544,7 @@ from gaworld.sim._fastforward import (  # noqa: E402
 # =========================================================
 def validate_action_space(schedules, action_space):
     missing = set()
+    filler_only = set()
     if not schedules:
         return
 
@@ -2556,9 +2559,17 @@ def validate_action_space(schedules, action_space):
         for _, activity in sch:
             if activity not in space:
                 missing.add(activity)
+            elif is_fallback_only_action_list(activity, space.get(activity, [])):
+                filler_only.add(activity)
     if missing:
         print("⚠️ 警告：以下活动没有定义动作空间：")
         for m in missing:
+            print("  -", m)
+    if filler_only:
+        # Present but useless: only generic behavioural filler, which means
+        # action generation failed for these activities.
+        print("⚠️ 警告：以下活动只有通用兜底动作（动作生成很可能失败了）：")
+        for m in filler_only:
             print("  -", m)
 
 def build_schedule_map(schedules):
@@ -2852,7 +2863,9 @@ def run_simulation():
             schedules[agent_id] = generate_schedule(a)
             save_agent_schedule(agent_id, schedules[agent_id])
 
-        cached_actions = load_agent_actions(agent_id)
+        # Legacy caches may hold fallback-only entries written before those
+        # were kept out of the cache; drop them so they get regenerated.
+        cached_actions = strip_fallback_only_activities(load_agent_actions(agent_id))
         if cached_actions:
             actions[agent_id] = {
                 activity: _ensure_behavioral_action_balance(activity, acts)
@@ -2862,7 +2875,7 @@ def run_simulation():
             # Action space is expensive; cache for reuse across runs.
             base_actions = generate_actions(a, schedules[agent_id])
             actions[agent_id] = build_action_space_for_agent(a, base_actions)
-        save_agent_actions(agent_id, actions[agent_id])
+        save_action_space(agent_id, actions[agent_id])
 
     # Print each agent's base routine at the beginning of the simulation.
     for agent in agents:
@@ -3173,7 +3186,7 @@ def run_simulation():
             )
             updated = ensure_action_space_for_activity(agent, actions[agent_id], activity)
             if updated and STATEFUL:
-                save_agent_actions(agent_id, actions[agent_id])
+                save_action_space(agent_id, actions[agent_id])
 
         # P3: a *persistent* anomaly (non-resumable physical / emergency
         # reaction) makes the disrupted activity unworkable for a while —
@@ -3237,7 +3250,7 @@ def run_simulation():
                     for _evt_activity in (_imm, _fol):
                         _upd = ensure_action_space_for_activity(agent, actions[agent_id], _evt_activity)
                         if _upd and STATEFUL:
-                            save_agent_actions(agent_id, actions[agent_id])
+                            save_action_space(agent_id, actions[agent_id])
                     _reshape_log = (
                         f"[LifeReshape {time_str}] 因“{_reshape_ev.get('title', '突发事件')}”"
                         f"（严重度 {_event_severity(_reshape_ev):.2f}）重排当天，"
@@ -4190,7 +4203,7 @@ def run_simulation():
         for agent_id, daily_schedule, action_space_updated in _routine_results:
             daily_schedules[agent_id] = daily_schedule
             if action_space_updated and STATEFUL:
-                save_agent_actions(agent_id, actions[agent_id])
+                save_action_space(agent_id, actions[agent_id])
             lines = [f"{t} {act}" for t, act in daily_schedule] if daily_schedule else ["(no schedule)"]
             routine_text = "\n".join(lines)
             daily_routine_texts[agent_id] = routine_text

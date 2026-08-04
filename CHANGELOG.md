@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-08-02 — Analyse any recorded run, not just the current one
+
+### Added
+
+- **A run picker on 仿真结果分析.** `site/dashboard/analytics.html` read the live `output/` tree and
+  nothing else, so every finished run's charts were gone the moment the next run started writing.
+  The header now lists the current run, the per-run archives under `<visualization>/runs/` and the
+  `compare-event` scenario runs — the same runs the replay page offers — and every section reloads
+  against the picked one. The URL carries `?run=<id>`, so a past run's analysis is linkable.
+- **`GET /api/analytics/runs`**, and a `?run=<id>` parameter on every `/api/analytics/*` section.
+  Ids are validated against the served run list, so the parameter cannot reach outside the repo.
+  Each entry reports which sections its artifacts can fill, and the page states up front which
+  panels will be empty rather than leaving six "暂无数据" cards to be read as a broken page.
+- **Exports name their run.** The picker sits in the page chrome the HTML report strips out, so the
+  run label now rides in the JSON payload, the Markdown header and the report's scope banner.
+- **仿真回放 reads out what the agents are doing and thinking, frame by frame.** The trace has always
+  carried each agent's `perception` / `plan` / `action` / `outcome` / `reflection`, but the replay
+  page drew only dots on a map — the reasoning behind a move was reachable only by opening the JSON.
+  A panel beside the map now follows the playhead: one card per agent with its location, its action
+  and its lead intent, and a 按计划 / 计划已改变 tag. Clicking a card (or an agent chip) expands the
+  whole chain — 感知 → 想法 → 行动 → 结果 → 反思 — plus the route travelled, why the plan changed,
+  and the state meters. The simulator writes plan and reflection as one template-filled line
+  (`目标：…；顾虑：…`), so the panel splits them back into labelled rows and falls back to plain
+  prose when a model ignored the template. `详情` hides the panel; the scroll position survives the
+  frame-by-frame rebuild.
+
+### Changed
+
+- **The Analytics readers take the directory their artifacts live in** rather than the repo root
+  with `output/` hard-coded inside each reader (`gaworld/apps/analytics.py`). Same data for the live
+  run; a past run is the same code pointed at a different tree. An *archived* run is deliberately
+  read as trace-only — its sibling `state/`, `economy/` and `memory/` dirs belong to whichever run
+  overwrote them since, and showing those as its own would be a quiet lie.
+
+---
+
 ## [Unreleased] — 2026-08-01 — External Systems: watch the world itself, and edit it
 
 ### Added
@@ -30,7 +66,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   applied *after* the cycle advance so an operator-set figure is the one that day uses. Sector
   injections move `initial_system_total` by the same amount, so the daily conservation audit reports
   a deliberate injection as an injection rather than as money leaking.
-- **`site/dashboard/external.test.js`** (28 checks, driven from `tests/test_dashboard_external_systems.py`)
+- **Plain-language hover help on ~126 elements.** Every metric, form field and config knob carries
+  a `?` (or, for severity bars / type badges / the health column, a `cursor: help` region) that
+  explains what the number *means* and what changing it does — "守恒漂移" says a non-zero value is a
+  bug, not a setting; "失业率" says it does not actually make anyone lose their job. Reuses the
+  existing `help.js` (`data-help` + dark popover, keyboard-focusable) rather than adding a second
+  tooltip convention. Lookup is full-path-then-last-segment, so
+  `economy.social_insurance.unemployment_rate` (a contribution rate) is not described as the macro
+  unemployment indicator.
+- **`site/dashboard/external.test.js`** (43 checks, driven from `tests/test_dashboard_external_systems.py`)
   — the Python tests cover the endpoints but cannot see the panel; a typo'd id or a crashed renderer
   would leave every backend test green and the page blank. It also pins that LLM-authored event text
   is escaped before it reaches `innerHTML`.

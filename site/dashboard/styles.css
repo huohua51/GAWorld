@@ -275,6 +275,71 @@ input[type="range"] { accent-color: var(--green); min-height: auto; border: none
 }
 .dashboard-avatar { width: 100%; height: 100%; display: block; object-fit: cover; }
 
+/* --------------------------------------------- current-run agent roster */
+.sim-roster { margin-bottom: 12px; }
+.sim-roster-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sim-roster-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--ink);
+  font-size: 11px;
+}
+.sim-roster-count:empty { display: none; }
+.sim-roster-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.sim-roster-list:empty::before { content: attr(data-empty); color: var(--muted); font-size: 13px; font-weight: 600; }
+.roster-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 62px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--steel);
+  font: inherit;
+  cursor: pointer;
+}
+.roster-chip:hover { background: var(--green-soft); }
+.roster-chip:disabled { opacity: 0.5; cursor: default; }
+.roster-chip.is-active { background: var(--green-soft); color: var(--ink); }
+.roster-face {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid var(--line);
+  background: #fbfdfb;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--muted);
+}
+.roster-chip.is-active .roster-face { border-color: var(--green); }
+.roster-face img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.roster-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .map-panel { display: flex; flex-direction: column; }
 body.is-running .map-panel { border-color: rgba(14, 122, 88, 0.55); box-shadow: 0 0 0 3px rgba(14, 122, 88, 0.12), var(--shadow-sm); }
 
@@ -311,7 +376,6 @@ body.is-running .map-panel { border-color: rgba(14, 122, 88, 0.55); box-shadow: 
 
 /* ----------------------------------------------------------- lower grid */
 
-.profile-editor { min-height: 380px; }
 .compact-editor { min-height: 84px; margin-bottom: 8px; }
 .event-grid {
   display: grid;
@@ -326,6 +390,187 @@ body.is-running .map-panel { border-color: rgba(14, 122, 88, 0.55); box-shadow: 
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+
+/* ------------------------------------------------- memory readable view */
+
+.memory-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.memory-card-head h3 { margin: 0; }
+.raw-link {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.raw-link:hover { color: var(--green); border-color: var(--green); }
+
+.memory-view {
+  min-height: 150px;
+  max-height: 420px;
+  overflow: auto;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdfb;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.memory-view .mem-empty { color: var(--muted); font-size: 12.5px; }
+.memory-view .mem-block + .mem-block { margin-top: 14px; }
+.memory-view .mem-block-title {
+  margin: 0 0 6px;
+  color: var(--steel);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.memory-view .mem-item {
+  padding: 7px 0;
+  border-top: 1px dashed var(--line);
+}
+.memory-view .mem-item:first-child { border-top: none; padding-top: 0; }
+.memory-view .mem-item p { margin: 3px 0 0; color: var(--ink); }
+.memory-view .mem-label { color: var(--muted); font-size: 11.5px; font-weight: 800; }
+.memory-view .mem-row { display: flex; gap: 8px; margin: 3px 0; }
+.memory-view .mem-row .mem-label { flex: 0 0 68px; padding-top: 1px; }
+.memory-view .mem-row .mem-value { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+
+.mem-chip {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mem-chip.neutral { background: #eef1f3; color: var(--steel); }
+.mem-chip.warn { background: #fbf1d8; color: #7a5c05; }
+.mem-chip.up { background: #dff0e7; color: #0a5d43; }
+.mem-chip.down { background: #f8e4e4; color: #8d2f2f; }
+.mem-chip.time { background: #e7edf1; color: var(--steel); font-variant-numeric: tabular-nums; }
+
+.mem-bar {
+  display: inline-block;
+  width: 74px;
+  height: 6px;
+  vertical-align: middle;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.mem-bar > i { display: block; height: 100%; background: var(--green); }
+.mem-strength { margin-left: 6px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.mem-timeline { display: grid; gap: 6px; }
+.mem-timeline .mem-slot { display: flex; gap: 8px; align-items: flex-start; }
+.mem-timeline .mem-slot-time {
+  flex: 0 0 46px;
+  color: var(--green-deep);
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.mem-timeline .mem-slot-activity { flex: 1 1 auto; min-width: 0; }
+
+.ep-card { border-top: 1px dashed var(--line); padding: 6px 0; }
+.ep-card:first-child { border-top: none; }
+.ep-card > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+.ep-card > summary::-webkit-details-marker { display: none; }
+.ep-card > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--muted);
+  transform: rotate(-90deg);
+  transition: transform 0.18s ease;
+}
+.ep-card[open] > summary::before { transform: rotate(0); }
+.ep-card .ep-title { font-weight: 700; color: var(--ink); }
+.ep-card .ep-body { margin: 6px 0 4px 13px; padding-left: 9px; border-left: 2px solid var(--green-soft); }
+
+.log-view { font-size: 12px; }
+.log-view .log-line { display: flex; gap: 7px; padding: 1px 0; word-break: break-word; }
+.log-view .log-line + .log-line { border-top: 1px solid rgba(221, 230, 222, 0.5); }
+.log-view .log-tag {
+  flex: 0 0 auto;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--steel);
+  font-size: 11px;
+  font-weight: 800;
+}
+.log-view .log-text { flex: 1 1 auto; min-width: 0; color: var(--ink); }
+.log-view .log-line.plain .log-text { color: var(--muted); }
+
+/* --------------------------------------------------------- raw modal */
+
+.raw-modal { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; }
+.raw-modal-backdrop { position: absolute; inset: 0; background: rgba(12, 26, 20, 0.5); }
+.raw-modal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(84vh, 820px);
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+}
+.raw-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.raw-modal-head h3 { margin: 0; font-size: 16px; }
+.raw-modal-close {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.raw-modal-close:hover { color: var(--ink); }
+.raw-modal-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.raw-modal-tab {
+  padding: 4px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.raw-modal-tab:hover { border-color: var(--green); color: var(--green); }
+.raw-modal-tab.active { background: var(--green); border-color: var(--green); color: #fff; }
+.raw-modal-body { flex: 1 1 auto; min-height: 220px; max-height: none; }
+.raw-modal-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.raw-modal-meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.raw-modal-foot .button-row { margin: 0; }
 
 /* ------------------------------------------------------ collapsible panels */
 

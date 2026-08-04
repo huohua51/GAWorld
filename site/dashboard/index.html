@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GAWorld Console</title>
   <meta name="description" content="GAWorld 本地仿真控制台" />
-  <link rel="stylesheet" href="/site/dashboard/styles.css?v=4" />
+  <link rel="stylesheet" href="/site/dashboard/styles.css?v=5" />
   <link rel="stylesheet" href="/site/dashboard/interaction.css" />
 </head>
 <body>
@@ -121,16 +121,20 @@
               </div>
             </div>
             <div class="head-actions">
-              <span class="help-tip" data-help="该居民的人物设定（Markdown 格式）。默认为查看模式，点“编辑”进入编辑并可保存。"></span>
+              <span class="help-tip" data-help="该居民的人物设定（只读）。如需修改，请前往 Agent Studio 编辑。"></span>
               <select id="agentSelect"></select>
             </div>
           </div>
+          <div class="sim-roster">
+            <div class="sim-roster-head">
+              <span data-i18n="agent.roster">参与本次运行</span>
+              <span class="help-tip" data-help="本次运行名单中的居民头像（来自上方 Agent IDs）。点击头像即可查看该居民的人物设定。"></span>
+              <span id="simRosterCount" class="sim-roster-count"></span>
+            </div>
+            <div id="simRosterList" class="sim-roster-list" data-empty="尚未选择参与仿真的居民。"></div>
+          </div>
           <div id="profileView" class="profile-view md-body" data-empty="选择居民以查看人物设定。"></div>
-          <textarea id="profileEditor" class="profile-editor" spellcheck="false" hidden></textarea>
           <div class="button-row end">
-            <button id="editProfileBtn" class="button" data-i18n="btn.edit_profile">编辑</button>
-            <button id="saveProfileBtn" class="button primary" data-i18n="btn.save_profile" hidden>保存 Profile</button>
-            <button id="cancelProfileBtn" class="button" data-i18n="btn.cancel" hidden>取消</button>
             <button id="toggleSimBtn" class="button">加入仿真</button>
             <button id="refreshAgentBtn" class="button" data-i18n="btn.refresh">刷新</button>
           </div>
@@ -292,6 +296,7 @@
           <div class="button-row end">
             <button id="fosExportBtn" class="button primary" data-i18n="fos_export.generate_btn">Generate FOS Prompt</button>
             <button id="fosCopyBtn" class="button" data-i18n="fos_export.copy_btn">Copy to Clipboard</button>
+            <button id="fosDownloadBtn" class="button" data-i18n="fos_export.download_btn">Download</button>
           </div>
           <pre id="fosOutputBox" class="codebox fos-output" data-i18n="fos_export.no_output">Click &quot;Generate FOS Prompt&quot; after running a simulation.</pre>
         </section>
@@ -302,15 +307,40 @@
               <h2 data-i18n="memory.title">记忆与习惯</h2>
             </div>
             <div class="head-actions">
-              <span class="help-tip" data-help="选中居民的长期记忆、日程/习惯/意图、近期经历(episode)与 Agent 日志。"></span>
+              <span class="help-tip" data-help="选中居民的长期记忆、日程/习惯/意图、近期经历(episode)与 Agent 日志。“原始数据”可查看并下载未经加工的 JSON / JSONL / 日志原文。"></span>
+              <button id="rawMemoryBtn" class="button small" data-i18n="btn.raw_data">原始数据</button>
               <button id="reloadMemoryBtn" class="button small" data-i18n="btn.reload_memory">刷新记忆</button>
             </div>
           </div>
           <div class="memory-grid">
-            <article><h3 data-i18n="memory.long_term">长期记忆</h3><pre id="memoryBox" class="codebox"></pre></article>
-            <article><h3 data-i18n="memory.schedule">日程/习惯/意图</h3><pre id="stateMemoryBox" class="codebox"></pre></article>
-            <article><h3 data-i18n="memory.recent_episodes">近期 episode</h3><pre id="episodesBox" class="codebox"></pre></article>
-            <article><h3 data-i18n="memory.agent_log">Agent 日志</h3><pre id="agentLogBox" class="codebox"></pre></article>
+            <article class="memory-card">
+              <div class="memory-card-head">
+                <h3 data-i18n="memory.long_term">长期记忆</h3>
+                <button class="raw-link" data-raw-open="long_term" data-i18n="raw.open">原始</button>
+              </div>
+              <div id="memoryView" class="memory-view"></div>
+            </article>
+            <article class="memory-card">
+              <div class="memory-card-head">
+                <h3 data-i18n="memory.schedule">日程/习惯/意图</h3>
+                <button class="raw-link" data-raw-open="state" data-i18n="raw.open">原始</button>
+              </div>
+              <div id="stateMemoryView" class="memory-view"></div>
+            </article>
+            <article class="memory-card">
+              <div class="memory-card-head">
+                <h3 data-i18n="memory.recent_episodes">近期 episode</h3>
+                <button class="raw-link" data-raw-open="episodes" data-i18n="raw.open">原始</button>
+              </div>
+              <div id="episodesView" class="memory-view"></div>
+            </article>
+            <article class="memory-card">
+              <div class="memory-card-head">
+                <h3 data-i18n="memory.agent_log">Agent 日志</h3>
+                <button class="raw-link" data-raw-open="log" data-i18n="raw.open">原始</button>
+              </div>
+              <div id="agentLogView" class="memory-view log-view"></div>
+            </article>
           </div>
         </section>
 
@@ -331,11 +361,29 @@
     </section>
   </main>
   <div id="messageLine" class="toast" role="status"></div>
+  <div id="rawModal" class="raw-modal" hidden>
+    <div class="raw-modal-backdrop" data-raw-close></div>
+    <div class="raw-modal-panel" role="dialog" aria-modal="true" aria-labelledby="rawModalTitle">
+      <div class="raw-modal-head">
+        <h3 id="rawModalTitle" data-i18n="raw.title">原始数据</h3>
+        <button class="raw-modal-close" data-raw-close aria-label="Close" data-i18n-title="raw.close" title="关闭">&times;</button>
+      </div>
+      <div id="rawModalTabs" class="raw-modal-tabs"></div>
+      <pre id="rawModalBody" class="codebox raw-modal-body"></pre>
+      <div class="raw-modal-foot">
+        <span id="rawModalMeta" class="raw-modal-meta"></span>
+        <div class="button-row">
+          <button id="rawCopyBtn" class="button small" data-i18n="raw.copy">复制</button>
+          <button id="rawDownloadBtn" class="button small primary" data-i18n="raw.download">下载</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <script src="/site/dashboard/i18n.js"></script>
   <script src="/site/dashboard/help.js?v=1"></script>
   <script src="/site/dashboard/collaboration-core.js"></script>
   <script src="/site/dashboard/citymap-view.js?v=1"></script>
-  <script src="/site/dashboard/app.js?v=5"></script>
+  <script src="/site/dashboard/app.js?v=7"></script>
   <script src="/site/dashboard/interaction.js"></script>
 </body>
 </html>

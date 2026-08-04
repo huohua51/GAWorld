@@ -149,6 +149,7 @@ def population_schema() -> dict[str, Any]:
         "hukou_labels": list(pop_schema.HUKOU_LABELS),
         "cohort_axes": sorted(_cohort_axes()),
         "cohort_axis_labels": COHORT_AXIS_LABELS,
+        "household_type_labels": HOUSEHOLD_TYPE_LABELS,
         "labels": LABELS,
         "preset_descriptions": PRESET_DESCRIPTIONS,
         "providers": _providers(),
@@ -203,6 +204,19 @@ COHORT_AXIS_LABELS: dict[str, str] = {
     "employment": "就业状态 Employment",
     "gender": "性别 Gender",
     "district": "居住区 District",
+}
+
+#: Household type in Chinese. The roster lists one row per generated resident,
+#: and ``shared_rental`` in a Chinese table is an identifier leaking into the
+#: UI. Served for the same reason as the knob schema: the panel must not keep
+#: its own copy of an enum declared in ``gaworld.population.schema``.
+HOUSEHOLD_TYPE_LABELS: dict[str, str] = {
+    "single": "独居",
+    "couple": "夫妻二人",
+    "nuclear": "核心家庭",
+    "single_parent": "单亲家庭",
+    "multigen": "三代同堂",
+    "shared_rental": "合租",
 }
 
 #: Bilingual labels for everything the panel displays, keyed by the internal
@@ -467,6 +481,11 @@ def _remember_population(job_id: str, result: Any) -> None:
     _LAST_POPULATION.update(
         {
             "job_id": job_id,
+            # The whole result, kept so a download can be rendered later
+            # (:func:`export_population`) without regenerating the population —
+            # the flattened ``agents`` below drop the education, job, household
+            # and relationship fields the profile Markdown is built from.
+            "generated": result,
             "agents": [
                 {
                     "id": p.id,
@@ -485,6 +504,70 @@ def _remember_population(job_id: str, result: Any) -> None:
             "neighbours": {int(k): list(v) for k, v in result.neighbours.items()},
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Download the generated agents
+# ---------------------------------------------------------------------------
+
+#: ``format`` → (filename suffix, MIME type, needs a BOM). Same three artefacts
+#: as writing to disk, so a download is a drop-in replacement for
+#: ``CONFIG["csv_path"]`` / ``CONFIG["md_path"]``.
+_EXPORT_FORMATS: dict[str, tuple[str, str, bool]] = {
+    # utf-8-sig: the simulator reads the state CSV BOM-aware, and Excel needs
+    # the BOM to open Chinese names without mojibake.
+    "csv": ("state_init.csv", "text/csv; charset=utf-8", True),
+    "md": ("profiles.md", "text/markdown; charset=utf-8", False),
+    "json": ("manifest.json", "application/json; charset=utf-8", False),
+}
+
+
+def export_population(fmt: str) -> dict[str, Any]:
+    """Render the last generated population as a file the browser can save.
+
+    Rendering happens here rather than in the panel so the CSV column order and
+    the profile template stay declared once, in ``gaworld.population.writer``.
+    Nothing is written to disk: this is the "let me look at these agents / take
+    them with me" path, separate from the deliberate save in step 5.
+    """
+    from gaworld.population.writer import (
+        build_manifest,
+        render_profiles_markdown,
+        render_state_csv,
+    )
+
+    result = _LAST_POPULATION.get("generated")
+    if result is None:
+        raise ValueError("还没有生成人口，请先在「人口结构」步骤生成。")
+    if fmt not in _EXPORT_FORMATS:
+        raise ValueError(f"不支持的导出格式：{fmt}")
+
+    suffix, content_type, bom = _EXPORT_FORMATS[fmt]
+    if fmt == "csv":
+        content = render_state_csv(result.people)
+    elif fmt == "md":
+        content = render_profiles_markdown(result.spec, result.people, result.households)
+    else:
+        content = json.dumps(
+            build_manifest(
+                result.spec,
+                result.people,
+                result.households,
+                result.workplaces,
+                result.report,
+                result.findings,
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+    return {
+        "format": fmt,
+        "filename": f"{result.spec.name}_{suffix}",
+        "content_type": content_type,
+        "bom": bom,
+        "bytes": len(content.encode("utf-8")),
+        "content": content,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +752,6 @@ def start_validation_job(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_get(path: str, query: dict[str, Any] | None = None) -> tuple[dict[str, Any], int]:
-    del query
     if path == "/api/population/schema":
         return population_schema(), 200
     if path.startswith("/api/population/jobs/"):
@@ -677,6 +759,14 @@ def handle_get(path: str, query: dict[str, Any] | None = None) -> tuple[dict[str
         if record is None:
             return {"error": "Unknown job"}, 404
         return record, 200
+    if path == "/api/population/export":
+        # ``query`` comes from ``parse_qs``: every value is a list.
+        raw = (query or {}).get("format") or ["csv"]
+        fmt = str(raw[0] if isinstance(raw, list) else raw)
+        try:
+            return export_population(fmt), 200
+        except ValueError as exc:
+            return {"error": str(exc)}, 400
     if path == "/api/population/last":
         agents = _LAST_POPULATION.get("agents") or []
         return {"count": len(agents), "job_id": _LAST_POPULATION.get("job_id")}, 200
@@ -701,6 +791,7 @@ def handle_post(path: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int
 
 
 __all__ = [
+    "export_population",
     "handle_get",
     "handle_post",
     "job_status",

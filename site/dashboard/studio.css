@@ -173,6 +173,14 @@ label.field, .field-row { margin-bottom: 12px; }
 .goal-add:disabled { opacity: .5; cursor: not-allowed; }
 .goals-save { margin-top: 12px; text-align: right; }
 
+/* ---- Profile (step 1) ---- */
+.profile-md {
+  min-height: 220px; max-height: 46vh; overflow: auto;
+  padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: #fbfdfb;
+}
+.profile-md:empty::before { content: attr(data-empty); color: var(--muted); font-size: 13px; }
+
 /* ---- Confirm bar (state / memory / finance write actions) ---- */
 .confirm-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;

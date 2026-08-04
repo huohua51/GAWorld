@@ -28,6 +28,8 @@ const store = {
   goalsDraft: null, // working copy of the three-tier goals, edited inline in step 6
   goalSeq: 0, // counter for client-side ids of newly added goals
   stateDirty: false, // step 2 sliders moved but not yet confirmed
+  profileEditing: false, // step 1 profile shows rendered Markdown until this flips
+  profileEdit: "", // buffer for the profile textarea, discarded on cancel
   socialDraft: null, // working copy of the relationship edges, edited inline in step 5
   socialRemoved: [], // ids deleted from socialDraft, sent with the next save
   financeDraft: null, // working copy of the editable finance state (step 7)
@@ -56,6 +58,37 @@ function esc(text) {
 }
 
 function clamp01(v) { return Math.max(0, Math.min(1, Number(v) || 0)); }
+
+/* Minimal Markdown → HTML, same subset the homepage profile panel renders. */
+function renderMarkdown(md) {
+  const inline = (t) => esc(t)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+  const lines = String(md || "").replace(/\r\n?/g, "\n").split("\n");
+  let html = "";
+  let inList = false;
+  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  for (const ln of lines) {
+    const h = ln.match(/^(#{1,4})\s+(.*)$/);
+    const li = ln.match(/^\s*[-*]\s+(.*)$/);
+    if (h) {
+      closeList();
+      const lvl = Math.min(h[1].length + 1, 5);
+      html += `<h${lvl}>${inline(h[2])}</h${lvl}>`;
+    } else if (li) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inline(li[1])}</li>`;
+    } else if (ln.trim() === "") {
+      closeList();
+    } else {
+      closeList();
+      html += `<p>${inline(ln)}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
 
 /* ---------- avatar ---------- */
 function placeholderAvatar(name) {
@@ -140,6 +173,7 @@ async function selectAgent(id) {
   store.socialRemoved = [];
   store.financeDraft = cloneFinance(d.finance_state);
   store.stateDirty = false;
+  store.profileEditing = false;
   store.memPick = null;
   $("#saveHint").textContent = "已加载 · 自动回填";
   renderSubject();
@@ -156,6 +190,7 @@ function startCreate() {
   store.socialRemoved = [];
   store.financeDraft = null;
   store.stateDirty = false;
+  store.profileEditing = false;
   store.memPick = null;
   store.step = 1;
   setActiveStepButton();
@@ -205,9 +240,7 @@ function stepIdentity() {
         ${field("职业 / 工作节奏", `<input data-nar="job" value="${esc(store.draft.narrative.job)}" placeholder="如：互联网初级工程师，晚 9-10 点下班">`)}
         ${field("性格 / 情绪特征", `<textarea data-nar="personality" placeholder="内向理性，绩效期焦虑…">${esc(store.draft.narrative.personality)}</textarea>`)}
       </div>`
-    : `<div class="card"><h3>叙事 Profile（Markdown）</h3>
-        <label class="field"><span>保存后写回 profile 文件</span>
-        <textarea data-idt="profile_text" style="min-height:220px">${esc(store.draft.profile_text)}</textarea></label></div>`;
+    : profileCard();
   return `
     <h2 class="section-title">身份</h2>
     <p class="section-note">定义这位数字居民是谁。这些字段写入状态 CSV 与 profile。</p>
@@ -232,6 +265,45 @@ function stepIdentity() {
         <div class="viz-wrap">${radarSVG(store.draft.state, true)}</div>
       </div>
     </div>`;
+}
+
+/* Profile reads as rendered Markdown; “编辑” swaps in the raw source, and the
+ * change only reaches the profile file once 确认修改 is pressed. */
+function profileCard() {
+  if (!store.profileEditing) {
+    return `<div class="card">
+      <h3>叙事 Profile
+        <button type="button" id="editProfileBtn" class="mini-btn">编辑</button></h3>
+      <div class="profile-md md-body" data-empty="尚无 profile 文本——点“编辑”开始撰写。">${renderMarkdown(store.draft.profile_text)}</div>
+    </div>`;
+  }
+  return `<div class="card">
+    <h3>叙事 Profile（Markdown）</h3>
+    <label class="field"><span>确认后写回 profile 文件</span>
+      <textarea data-profile-edit style="min-height:220px">${esc(store.profileEdit)}</textarea></label>
+    <div class="confirm-bar">
+      <span class="confirm-hint">编辑 Markdown 源码，确认后写入</span>
+      <button type="button" id="cancelProfileBtn" class="button">取消</button>
+      <button type="button" id="confirmProfileBtn" class="button primary">确认修改</button>
+    </div>
+  </div>`;
+}
+
+async function confirmProfile() {
+  if (store.creating || store.currentId == null) return;
+  try {
+    foot("保存 Profile…");
+    await api(`/api/agents/${store.currentId}/profile`, {
+      method: "POST", body: JSON.stringify({ text: store.profileEdit }),
+    });
+    store.draft.profile_text = store.profileEdit;
+    if (store.detail) store.detail.profile_text = store.profileEdit;
+    store.profileEditing = false;
+    foot("Profile 已写入", "ok");
+    renderStep();
+  } catch (err) {
+    foot("Profile 保存失败：" + err.message, "err");
+  }
 }
 
 function stepState() {
@@ -941,11 +1013,24 @@ function bindStep() {
   $("#stepBody").querySelectorAll("[data-idt]").forEach((el) => {
     el.addEventListener("input", () => {
       const key = el.dataset.idt;
-      if (key === "profile_text") { store.draft.profile_text = el.value; return; }
       store.draft.identity[key] = key === "age" ? Number(el.value) : el.value;
       renderSubject();
     });
   });
+  const pEdit = $("#stepBody").querySelector("[data-profile-edit]");
+  if (pEdit) pEdit.addEventListener("input", () => { store.profileEdit = pEdit.value; });
+  const pBtn = $("#editProfileBtn");
+  if (pBtn) pBtn.addEventListener("click", () => {
+    store.profileEdit = store.draft.profile_text;
+    store.profileEditing = true;
+    renderStep();
+  });
+  const pCancel = $("#cancelProfileBtn");
+  if (pCancel) pCancel.addEventListener("click", () => {
+    store.profileEditing = false;
+    renderStep();
+  });
+  const pOk = $("#confirmProfileBtn"); if (pOk) pOk.addEventListener("click", confirmProfile);
   $("#stepBody").querySelectorAll("[data-nar]").forEach((el) => {
     el.addEventListener("input", () => { store.draft.narrative[el.dataset.nar] = el.value; });
   });

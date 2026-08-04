@@ -64,9 +64,18 @@
     };
   }
 
+  // Which run the export came from. The picker sits in the page chrome the
+  // report strips out, so the name has to be carried into the file itself.
+  function runTitle(state) {
+    var run = state.runInfo;
+    if (!run || run.kind === "live") return "当前运行";
+    return run.label || run.id;
+  }
+
   function scopeSummary(state, labels) {
     var pick = selection(state);
     return {
+      run: runTitle(state),
       metrics: pick.metrics.map(function (key) { return label(labels.metric, key); }),
       agents: pick.agents.map(function (agent) { return agent.name; }),
       econ_series: pick.econSeries.map(function (key) { return label(labels.econ, key); }),
@@ -122,6 +131,7 @@
 
     return {
       exported_at: stamp,
+      run: state.runInfo || null,
       scope: scopeSummary(state, labels),
       overview: state.overview,
       state_history: history,
@@ -326,7 +336,7 @@
 
   function buildMarkdown(state, labels, stamp) {
     var pick = selection(state);
-    var out = ["# GAWorld 仿真结果分析", "", "导出时间：" + stamp, ""];
+    var out = ["# GAWorld 仿真结果分析", "", "运行：" + runTitle(state), "", "导出时间：" + stamp, ""];
 
     out.push("**导出范围**：" + [
       "指标 " + (pick.metrics.length ? pick.metrics.map(function (k) { return label(labels.metric, k); }).join("、") : "无"),
@@ -454,6 +464,7 @@
   function buildHtmlReport(state, labels, stamp, bodyHtml, css) {
     var scope = scopeSummary(state, labels);
     var lines = [
+      ["运行", scope.run],
       ["导出时间", stamp],
       ["状态指标", scope.metrics.join("、") || "无"],
       ["居民", scope.agents.join("、") || "无"],

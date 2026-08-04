@@ -22,6 +22,7 @@
 | 群体（cohort）模拟 | 把人口划分成群体，每群每天 1 次 LLM 调用 + 按预算实体化少数个体，实现大规模人群的低成本模拟 | `python -m gaworld.group --size 500 --days 7 --no-llm`；`--focal 7,42` 全程跟踪指定居民；`--network-coupling 0.7` 开社交图耦合（不开则验证门 L2 不通过）；不加 `--no-llm` 会真的调 LLM，运行前先打印预估次数 |
 | 群体模式验证门 | L1–L4 配对实验，量化 cohort 近似的代价并给出"能回答哪类研究问题"的结论；分水岭层不过时退出码为 1 | `python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7` |
 | Population Studio | 5 步可视化：选模板（预设带说明）→ 人口结构（目标 vs 实际 + 金字塔/洛伦兹/度分布）→ 心理状态（均值雷达 + P25–P75）→ 跑模拟（可选后端模型）→ 检查结果（白话判定 + 文件可直接点开）；指标统一中英文双标 | 控制台「人口与群体」页签 → `http://127.0.0.1:8766/site/dashboard/population.html` |
+| 外部系统观测台 | 观察并编辑世界本身：货币系统（宏观周期、部门池、货币守恒审计、财富分布与基尼）、外部环境生成器（自然/经济/政策/科技事件时间线与生成参数）、对外服务（连通性即时探测、LLM 路由、外部信息源）。配置表单按配置自身的 JSON 形状生成，约 150 个旋钮可编辑；另可对**跑着的**仿真排一次货币干预（改宏观状态 / 给部门池注资），由仿真在下一个日边界消费。指标与旋钮几乎都带 hover 白话说明（`?` 悬停，说的是「改了会怎样」而非复述标题） | 控制台「外部系统」页签 → `http://127.0.0.1:8766/site/dashboard/external.html`；详见 [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md) |
 | 轨迹回放查看器 | 可视化回放智能体移动轨迹；顶部「运行」下拉可选择任意一次已记录的仿真：当前运行（实时）、历史归档运行（`output/visualization/runs/<run_id>/`）、compare-event 等场景运行；`?run=<id>` 可分享指定运行 | `python generative_city_sim.py serve-viz --port 8000` → `/site/simviz/index.html`（Dashboard 内为「仿真回放」页签） |
 | 分布式 relay | 多机协同仿真，各节点处理本地 agent 子集 | `python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877` |
 | 城市地图生成 | 用自然语言描述生成城市地图（节点 / 道路 / 地铁） | `python scripts/generate_citymap.py --description "..."` |
@@ -88,4 +89,5 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统](SKILL_SYSTEM.md) · [真实工作系统使用](REAL_WORK_USAGE.md)
 - [群体模拟教程](GROUP_SIMULATION_TUTORIAL.md) · [群体模拟设计](GROUP_AGENT_DESIGN.md)
+- [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)（货币系统 / 外部环境 / 对外服务的观察与编辑）
 - [项目结构](PROJECT_STRUCTURE.md) · [中文 README](../README.zh-CN.md) · [English README](../README.md)

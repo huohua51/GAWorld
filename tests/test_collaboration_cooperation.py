@@ -70,6 +70,94 @@ def test_cooperation_plans_executes_reviews_and_synthesizes(tmp_path):
     assert any(item["filename"] == "final.md" for item in saved.artifacts)
 
 
+def test_cooperation_announces_every_turn_with_an_excerpt(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="观测台需要逐轮动作",
+        leader_id=1,
+        roles={"1": "作者", "2": "审阅者"},
+        plan=[_step("研究", 1, "research.md")],
+    )
+    store.create(session)
+
+    def llm(prompt, task=None, agent_id=None):
+        if task == "collaboration_execute":
+            return "# 初稿\n第一段。"
+        if task == "collaboration_review":
+            return json.dumps({"approved": False, "feedback": "补充证据"})
+        if task == "collaboration_revision":
+            return "# 修订稿\n补上证据。"
+        return "# 汇总\n收尾。"
+
+    CooperationRunner(store=store, agent_loader=_agent, llm=llm).run(session.id)
+
+    events = store.events(session.id)
+    turns = [
+        (event.metadata["phase"], event.agent_id, event.metadata.get("step_index"))
+        for event in events
+        if event.type == "turn_started"
+    ]
+    excerpts = {
+        event.type: event.metadata.get("excerpt")
+        for event in events
+        if event.type in {"artifact", "revision"}
+    }
+    assert turns == [
+        ("execute", 1, 0),
+        ("review", 2, 0),
+        ("revision", 1, 0),
+        ("synthesis", 1, None),
+    ]
+    assert excerpts["revision"] == "# 修订稿 补上证据。"
+    assert excerpts["artifact"] == "# 汇总 收尾。"
+
+
+def test_cooperation_does_not_replay_turn_markers_on_resume(tmp_path):
+    store = SessionStore(tmp_path)
+    session = CollaborationSession.new(
+        kind="cooperation",
+        member_ids=[1, 2],
+        task="可恢复任务",
+        leader_id=1,
+        roles={"1": "成员1", "2": "成员2"},
+        plan=[_step("第一步", 1, "one.md"), _step("第二步", 2, "two.md")],
+    )
+    store.create(session)
+    failed_once = False
+
+    def llm(prompt, task=None, agent_id=None):
+        nonlocal failed_once
+        if task == "collaboration_execute" and agent_id == 2 and not failed_once:
+            failed_once = True
+            raise RuntimeError("second step failed")
+        return _basic_llm(prompt, task=task, agent_id=agent_id)
+
+    runner = CooperationRunner(
+        store=store,
+        agent_loader=_agent,
+        llm=llm,
+        step_retries=0,
+    )
+    runner.run(session.id)
+    runner.run(session.id)
+
+    turns = [
+        (event.metadata["phase"], event.metadata.get("step_index"))
+        for event in store.events(session.id)
+        if event.type == "turn_started"
+    ]
+    assert store.get(session.id).status is SessionStatus.COMPLETED
+    assert turns == [
+        ("execute", 0),
+        ("review", 0),
+        ("execute", 1),
+        ("review", 1),
+        ("synthesis", None),
+    ]
+
+
 def test_cooperation_uses_fallback_for_malformed_plan(tmp_path):
     store = SessionStore(tmp_path)
     session = CollaborationSession.new(

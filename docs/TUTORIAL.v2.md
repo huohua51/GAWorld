@@ -24,6 +24,7 @@
 12. [Dashboard 使用指南](#12-dashboard-使用指南)
     - [12.1 Agent Studio（单智能体构建/查看器）](#121-agent-studio单智能体构建查看器)
     - [12.2 Population Studio（人口生成与群体模拟）](#122-population-studio人口生成与群体模拟)
+    - [12.3 外部系统观测台（货币 / 环境 / 对外服务）](#123-外部系统观测台)
 13. [大规模人群：人口合成与群体模拟](#13-大规模人群人口合成与群体模拟)
 14. [配置与开关总表](#14-配置与开关总表)
 15. [输出文件地图](#15-输出文件地图)
@@ -262,6 +263,10 @@ python generative_city_sim.py run --sim-days 600 --fast-forward
 经济模块使用独立随机流（由 `random_seed` 派生），其它模块增删随机调用不影响经济轨迹的可复现性。
 
 经济数据写入 `output/economy/`（`daily_ledger.csv` 含 `debt` 列、`wealth_snapshot.csv`、`macro_state.json`、`sectors.json`、`conservation_audit.csv`、`agents/agent_<id>_*`）。
+
+> 这些数字不必靠翻 CSV 来读：控制台「**外部系统**」页签把宏观状态、部门池、守恒审计与
+> 财富分布画成面板，并且可以直接改经济配置、或对**跑着的**仿真排一次货币干预。
+> 见 [12.3](#123-外部系统观测台) 与[外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)。
 
 ### 5.3 位置系统与交通
 
@@ -661,6 +666,7 @@ python generative_city_sim.py dashboard --port 8766
 | 记忆查看 | 检查单个智能体的记忆内容 |
 | 访谈执行 | 对智能体提问并查看回答 |
 | 日志查看 | 实时查看运行日志 |
+| 外部系统 | 观察并编辑世界本身：货币系统、外部环境生成器、对外服务连接（见 [12.3](#123-外部系统观测台)） |
 
 **配置覆盖**：Dashboard 的修改写入 `dashboard_config.json`，运行时**覆盖** `config.py` 的基础配置（`config.py` ← 基础，`dashboard_config.json` ← 覆盖）。想恢复原始值，删除 `dashboard_config.json` 即可。
 
@@ -721,6 +727,50 @@ Agent Studio 造一个居民，Population Studio 造一座小镇并按群体模�
 `POST /api/population/generate` → `job_id`、`GET /api/population/jobs/{id}`、
 `POST /api/population/group-run`、`POST /api/population/validate`。
 生成与模拟都是异步 job。测试见 `tests/test_dashboard_population.py`。
+
+---
+
+### 12.3 外部系统观测台
+
+> 本节是**摘要**。完整教程（含干预机制原理、守恒记账、完整参数与 API）见
+> [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)。
+
+前两个面板对着 **agent**；这个面板对着**世界本身**。控制台「**外部系统**」页签，
+或直接 `http://127.0.0.1:8766/site/dashboard/external.html`。
+
+三个子面板，每个都是左边观察、右边编辑：
+
+| 子面板 | 观察 | 编辑 |
+|---|---|---|
+| **货币系统** | 周期阶段、通胀、失业、累计物价指数、企业/政府/银行三个部门池、货币守恒曲线与漂移、财富分布与基尼、全体日收支 | 对**运行中**仿真的干预（改宏观状态、给部门池注资）+ 完整 `CONFIG["economy"]` 树 |
+| **外部环境** | `timeline.jsonl` 里最近若干天的自然/经济/政策/科技事件，带严重度与影响标签 | `external_environment`、`environment`、`policy_events`（排定的政策冲击） |
+| **对外服务** | 外部环境服务与分布式中继的即时连通性探测、LLM 路由、新闻缓存状态 | 上述服务配置 + `external_rag`、`news`、`llm.routing`（模型清单只读，密钥不暴露） |
+
+**配置表单是从配置自身长出来的**：`economy` 一棵子树就有约 120 个叶子，面板按 JSON
+形状渲染控件，后端按现有配置的类型把补丁强制成形（`"0.09"` → `0.09`），不认识的键
+丢弃并在响应里回报。约 150 个旋钮因此可编辑，且加一个新旋钮不需要动面板代码。
+
+**不需要背名词**：几乎每个指标和旋钮旁边都有一个 **?**，鼠标移上去给一句白话说明，说的是
+「这个数意味着什么、改了会怎样」——比如失业率会明确告诉你它并不会真的让谁丢工作。
+说明存在 `external.js` 的 `HELP` 表里，按「完整路径 → 末段键名」两级查找，所以社保里的
+`unemployment_rate` 和宏观里的失业率不会被解释成同一件事。复用的是 `help.js`
+（`data-help` 属性 + 深色浮层，支持键盘聚焦）。
+
+**两种"改"要分清**：
+
+- **配置**写进 `dashboard_config.json`，**下一次**运行生效，适合做对照实验；
+- **干预**写进 `output/economy/interventions.json`，跑着的仿真在**下一个日边界**消费它。
+
+干预不去写 `output/economy/macro_state.json`——那是 run 的*产物*，仿真在
+`on_simulation_start` 从配置重建宏观状态、从不回读它，改它会看起来生效而实际无效。
+干预排在周期推进**之后**执行，所以你设的通胀率就是那天真正被使用的值。给部门池注资会
+同步移动守恒基准 `initial_system_total`，因此每日审计把有意的注资记成注资，而不是
+报成 drift（漏钱）。
+
+**后端 API**（`dashboard_server.py` 转发到 `gaworld/apps/external_systems_api.py`）：
+`GET /api/external-systems/{overview,health,interventions}`、
+`POST /api/external-systems/{config,interventions,interventions/cancel}`。
+测试见 `tests/test_dashboard_external_systems.py` 与 `site/dashboard/external.test.js`。
 
 ---
 
@@ -802,10 +852,12 @@ CONFIG["time_grid_snap"] = True    # 默认 False
 | `agent_ids` / `sim_days` / `seconds_per_day` | 参与 agent、仿真天数、每日现实秒数 |
 | `long_run` | **新**：长时段快进（每天一条日简报、跳过日内时刻循环；`--fast-forward` 等价；`long_run.randomness` 控制突发事件与波动，见 [3.1](#31-长时段快进fast-forward跑-10--60--600-天)） |
 | `llm.routing.default` / `llm.routing.tasks` | 默认 provider / 按任务覆盖 |
-| `economy` | 个税、社保、恩格尔消费、投资、宏观周期、冲击、部门池守恒、信贷（`credit`）、agent 间路由（`routing`）、熟人借贷（`friend_loans`） |
+| `economy` | 个税、社保、恩格尔消费、投资、宏观周期、冲击、部门池守恒、信贷（`credit`）、agent 间路由（`routing`）、熟人借贷（`friend_loans`）；**可在控制台「外部系统」页签里可视化编辑**，见 [12.3](#123-外部系统观测台) |
 | `interests` | 兴趣 / 技能成长（开关、上限、插入倾向、持久化、日终衰减 `decay`、兴趣集演化 `evolution`） |
 | `dynamic_behavior` | 动态行为系统开关 |
 | `environment.local_physical` / `.anomaly` / `.replan` / `.spatial_preferences` | **新**：物理感知与反应式重规划 |
+| `external_environment` | 外部环境生成器：四类事件的日概率、天气池、生成方式（`llm` / 规则）、日内突发（面板可编辑，见 [12.3](#123-外部系统观测台)） |
+| `external_environment_service` / `environment_server` / `external_rag` / `news` | 对外服务连接：远端环境服务、外部信息注入、新闻源（面板可编辑并可即时探测连通性） |
 | `skills` | **新**：Skill 库（全局目录、注入开关、单提示上限） |
 | `memory.skill_consolidation` | **新**：经验 → Skill 提炼（默认 OFF） |
 | `real_work` | **新**：真实工作任务系统 |
@@ -832,6 +884,7 @@ output/
 │                vector_db.sqlite
 ├── economy/     daily_ledger.csv（含 debt 列）、wealth_snapshot.csv、macro_state.json
 │                sectors.json、conservation_audit.csv    ← 新：部门池 + 每日守恒审计
+│                interventions.json                      ← 新：货币干预队列（面板写入，仿真在日边界消费）
 │                agents/agent_<id>_ledger.csv、agent_<id>_snapshot.json
 ├── environment/ timeline.jsonl
 ├── intervention/intervention_metrics.csv
@@ -996,4 +1049,6 @@ move 动作会经过 Controller 校验链：`location_exists`（默认开，拦�
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统设计与使用](SKILL_SYSTEM.md)
 - [真实工作系统 — 使用](REAL_WORK_USAGE.md) · [设计](REAL_WORK_DESIGN.md)
+- [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)（货币系统 / 外部环境 / 对外服务的观察与编辑）
+- [群体模拟教程](GROUP_SIMULATION_TUTORIAL.md) · [设计](GROUP_AGENT_DESIGN.md)
 - [项目结构](PROJECT_STRUCTURE.md) · [仓库规范](../AGENTS.md) · [更新日志](../CHANGELOG.md)

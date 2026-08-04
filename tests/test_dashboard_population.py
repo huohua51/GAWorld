@@ -164,6 +164,63 @@ class JobTests(unittest.TestCase):
         self.assertIsNone(population_api.job_status("does-not-exist"))
 
 
+class ExportTests(unittest.TestCase):
+    """Downloading the generated agents straight from the panel.
+
+    The three artefacts are rendered here rather than in JavaScript so the CSV
+    column order and the profile template stay declared once, in
+    ``gaworld.population.writer`` — a second copy in ``population.js`` would
+    drift the moment either changes.
+    """
+
+    def _generate(self, size=40):
+        record = _wait(population_api.start_population_job({"spec": {"size": size, "seed": 3}})["job_id"])
+        self.assertEqual("done", record["status"], record.get("error"))
+
+    def test_export_serves_the_same_three_artefacts_as_writing_to_disk(self):
+        self._generate()
+        csv_file = population_api.export_population("csv")
+        self.assertTrue(csv_file["filename"].endswith("_state_init.csv"))
+        # utf-8-sig on the reader side: without the BOM flag the downloaded CSV
+        # is not a drop-in replacement for CONFIG["csv_path"].
+        self.assertTrue(csv_file["bom"])
+        self.assertGreater(csv_file["bytes"], 0)
+
+        markdown = population_api.export_population("md")
+        self.assertTrue(markdown["filename"].endswith("_profiles.md"))
+        self.assertIn("## Profile", markdown["content"])
+
+        manifest = json.loads(population_api.export_population("json")["content"])
+        self.assertEqual(40, manifest["counts"]["people"])
+
+    def test_exported_csv_keeps_the_writer_column_order(self):
+        from gaworld.population.schema import CSV_COLUMNS
+
+        self._generate()
+        header = population_api.export_population("csv")["content"].splitlines()[0]
+        self.assertEqual(list(CSV_COLUMNS), header.split(","))
+
+    def test_export_over_the_route_returns_400_when_nothing_was_generated(self):
+        population_api._LAST_POPULATION.clear()
+        payload, status = population_api.handle_get("/api/population/export", {"format": ["csv"]})
+        self.assertEqual(400, status)
+        self.assertIn("error", payload)
+
+    def test_unknown_export_format_is_rejected(self):
+        self._generate()
+        payload, status = population_api.handle_get("/api/population/export", {"format": ["exe"]})
+        self.assertEqual(400, status)
+        self.assertIn("error", payload)
+
+    def test_household_type_labels_cover_every_generated_type(self):
+        # The roster renders one row per resident; an unlabelled type would
+        # print a raw identifier like "shared_rental" in a Chinese table.
+        from gaworld.population.schema import HOUSEHOLD_TYPES
+
+        labels = population_api.population_schema()["household_type_labels"]
+        self.assertEqual(sorted(HOUSEHOLD_TYPES), sorted(labels))
+
+
 class SecurityTests(unittest.TestCase):
     def test_out_dir_cannot_escape_the_repository(self):
         # The dashboard serves REPO_ROOT statically and takes this value from

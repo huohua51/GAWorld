@@ -31,11 +31,13 @@ from typing import Any
 from gaworld.cognition.realism import build_context_key
 from gaworld.interests import match_growth_items
 from gaworld.llm import providers as _llm_providers
+from gaworld.logging_setup import get_logger
 from gaworld.memory.store import (
     _format_memory_hint,
     _memory_action_bias,
     load_recent_actions,
     retrieve_relevant_memories,
+    save_agent_actions,
     save_agent_location_action_bias,
 )
 from gaworld.settings import CONFIG
@@ -49,6 +51,7 @@ from gaworld.sim._memory_recall import (
     _same_activity_habit_entry,
     _social_relationship_snapshot,
     evoke_memory,
+    is_fallback_only_action_list,
 )
 from gaworld.sim._schedule import (
     _action_style_tags,
@@ -56,6 +59,8 @@ from gaworld.sim._schedule import (
     _extract_json_block,
     is_sleep_activity,
 )
+
+_LOG = get_logger("gaworld.sim.action")
 
 
 # ---------------------------------------------------------------------------
@@ -239,10 +244,37 @@ def _llm_generate_actions(
         retry_actions = _parse_action_space(retry_response, missing)
         for activity, acts in retry_actions.items():
             action_space[activity] = acts
+    still_missing = [a for a in activities if a not in action_space]
+    if still_missing:
+        _LOG.warning(
+            "action space generation produced nothing for agent %s: %s "
+            "— falling back to generic behavioural actions (not cached)",
+            agent.get("id"),
+            "、".join(still_missing),
+        )
     balanced: dict[str, list[str]] = {}
     for activity in activities:
         balanced[activity] = _ensure_behavioral_action_balance(activity, action_space.get(activity, []))
     return balanced
+
+
+def strip_fallback_only_activities(action_space: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Drop activities whose action list is pure filler before persisting."""
+    return {
+        activity: acts
+        for activity, acts in (action_space or {}).items()
+        if not is_fallback_only_action_list(activity, acts)
+    }
+
+
+def save_action_space(agent_id: Any, action_space: dict[str, list[str]]) -> None:
+    """Persist an action space, minus the entries the LLM failed to fill.
+
+    Caching a fallback-only entry poisons the agent permanently: the cache
+    is honoured on the next run and ``ensure_action_space_for_activity``
+    skips any activity already present, so the LLM is never retried.
+    """
+    save_agent_actions(agent_id, strip_fallback_only_activities(action_space))
 
 
 def _llm_generate_location_bias(
@@ -710,4 +742,6 @@ __all__ = [
     "fallback_action",
     "generate_actions",
     "get_location_action_bias",
+    "save_action_space",
+    "strip_fallback_only_activities",
 ]

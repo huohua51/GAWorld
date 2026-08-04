@@ -31,6 +31,10 @@ var OVERVIEW = {
         currency: "CNY",
         work_days_per_month: 22,
         tax: { monthly_exemption: 5000.0, brackets: [[3000, 0.03, 0], ["Infinity", 0.45, 15160]] },
+        // `unemployment_rate` here is a contribution rate; the macro subtree's
+        // similarly-named field is a business-cycle indicator. The help lookup
+        // must key off the full path or it describes one as the other.
+        social_insurance: { pension_rate: 0.08, unemployment_rate: 0.005 },
         macro: { initial_inflation_rate: 0.025, initial_unemployment_rate: 0.052 },
         sectors: { initial_firms_balance: 0.0 },
       },
@@ -192,6 +196,22 @@ setTimeout(function () {
     ["unbounded tax bracket is preserved for editing", edit.indexOf("Infinity") >= 0],
     ["save starts disabled with nothing dirty", edit.indexOf("disabled") >= 0],
     ["header states the observation time", meta.indexOf("2026-08-01 08:00:00") >= 0],
+
+    // --- hover help ---
+    // Every metric on this panel is jargon to someone. The explanations must
+    // say what the number *means*, not restate its label.
+    ["metrics carry hover help", observe.indexOf('class="help-tip" data-help=') >= 0],
+    ["drift help says a non-zero value is a bug", observe.indexOf("程序出问题") >= 0],
+    ["gini help gives a real-world anchor", observe.indexOf("贫富差距") >= 0],
+    ["unemployment help corrects the obvious misreading", observe.indexOf("并不会真的让谁丢工作") >= 0],
+    ["sector pools are explained in plain language", observe.indexOf("企业池发工资") >= 0],
+    ["intervention deltas are explained", edit.indexOf("加减多少钱") >= 0],
+    ["config card says when edits take effect", edit.indexOf("下一次运行的规则") >= 0],
+    ["config knobs carry hover help", edit.indexOf("月收入低于这个数不交税") >= 0],
+    ["ambiguous keys resolve by full path", edit.indexOf("失业保险的个人缴费比例") >= 0],
+    // Tooltips render via textContent, so markdown emphasis would show as
+    // literal asterisks.
+    ["no markdown leaks into tooltips", (observe + edit).indexOf("**") < 0],
   ];
 
   switchTo("environment");
@@ -204,6 +224,9 @@ setTimeout(function () {
     // LLM-authored text lands in innerHTML; it must arrive escaped.
     ["llm event text is escaped", envObserve.indexOf("<img src=x") < 0 && envObserve.indexOf("&lt;img") >= 0],
     ["policy event schedule is editable", envEdit.indexOf('data-path="policy_events"') >= 0],
+    ["severity bars explain themselves on hover", envObserve.indexOf("严重度 0.3") >= 0],
+    ["impact tags explain themselves on hover", envObserve.indexOf("影响居民的哪些方面") >= 0],
+    ["policy_events explains why to prefer it", envEdit.indexOf("比调概率靠谱") >= 0],
   ]);
 
   switchTo("services");
@@ -216,6 +239,8 @@ setTimeout(function () {
     ["llm routing is shown", svcObserve.indexOf("minimax") >= 0],
     ["llm routing is editable", svcEdit.indexOf('data-path="llm.routing.default"') >= 0],
     ["provider credentials are not rendered", svcEdit.indexOf("providers") < 0],
+    ["health statuses are decoded on hover", svcObserve.indexOf("连不上") >= 0],
+    ["llm routing help suggests a real use", svcObserve.indexOf("便宜的本地模型") >= 0],
   ]);
 
   var failed = 0;
