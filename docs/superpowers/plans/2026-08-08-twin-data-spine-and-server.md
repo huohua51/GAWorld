@@ -559,7 +559,9 @@ if __name__ == "__main__":
 
 Run: `python3 -m pytest tests/test_twin_binding.py -v`
 
-Expected: FAIL — `ModuleNotFoundError: No module named 'gaworld.twin.binding'`
+Expected: FAIL — `ImportError: cannot import name 'binding' from 'gaworld.twin'`
+
+(The package `gaworld/twin/__init__.py` already exists from Task 1, so a `from package import submodule` of a missing submodule raises `ImportError`, not `ModuleNotFoundError`.)
 
 - [ ] **Step 3: Write the implementation**
 
@@ -937,6 +939,8 @@ if __name__ == "__main__":
 Run: `python3 -m pytest tests/test_twin_backend.py -v`
 
 Expected: FAIL — `ModuleNotFoundError: No module named 'gaworld.twin.backend'`
+
+(This one really is `ModuleNotFoundError`: the test imports `from gaworld.twin.backend import TwinBackend`, a direct submodule import, rather than `from gaworld.twin import backend`.)
 
 - [ ] **Step 3: Write the implementation**
 
