@@ -1527,6 +1527,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             payload, status = external_systems_api.handle_get(path, query)
             return self._json_response(payload, status=status)
+        if path.startswith("/api/settings"):
+            from gaworld.apps import settings_api
+
+            payload, status = settings_api.handle_get(path, query)
+            return self._json_response(payload, status=status)
         if path == "/api/config":
             return self._json_response(_config_summary())
         if path == "/api/agents":
@@ -1627,6 +1632,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             from gaworld.apps import external_systems_api
 
             body, status = external_systems_api.handle_post(path, payload)
+            return self._json_response(body, status=status)
+        if path.startswith("/api/settings"):
+            from gaworld.apps import settings_api
+
+            body, status = settings_api.handle_post(path, payload)
             return self._json_response(body, status=status)
         if path == "/api/config":
             return self._json_response(_save_config_patch(payload))

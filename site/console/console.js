@@ -13,6 +13,8 @@
     { id: "population", src: "/site/dashboard/population.html" },
     { id: "collaboration", src: "/site/dashboard/collaboration.html" },
     { id: "external", src: "/site/dashboard/external.html" },
+    { id: "settings", src: "/site/dashboard/settings.html" },
+    { id: "docs", src: "/site/dashboard/docs.html" },
   ];
 
   var framesEl = document.getElementById("frames");
