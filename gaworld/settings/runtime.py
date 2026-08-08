@@ -87,6 +87,21 @@ def simulation_settings() -> dict[str, Any]:
         #"map_mode": "virtual",
         "map_mode": "real",
         "real_map_path": "data/hangzhou_real.geojson",
+        # Mobile digital twin. The twin server is a SEPARATE process from the
+        # dashboard (see gaworld/apps/twin_server.py) because the dashboard
+        # accepts unauthenticated config-write and process-spawn POSTs and
+        # must never be exposed publicly.
+        "twin": {
+            "enabled": False,
+            "root": "output/twin",
+            "bindings_path": "data/twin_bindings.json",
+            # How stale a snapshot may be before the mirror channel stops
+            # applying it and the phone shows "not synced".
+            "snapshot_ttl_minutes": 30,
+            # A GPS fix farther than this from every map node is reported as
+            # out of map rather than snapped to the nearest edge node.
+            "max_snap_km": 3.0,
+        },
         # Memory / logs
         "stateful": True,
         "memory_dir": "output/memory",
