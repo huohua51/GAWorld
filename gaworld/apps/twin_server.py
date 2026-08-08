@@ -52,6 +52,12 @@ def make_handler(backend):
             status = int(result.get("status", 200 if result.get("ok") else 400))
             self._json(result, status=status)
 
+        def _redirect(self, location):
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def _token(self):
             header = self.headers.get("Authorization", "")
             if header.startswith("Bearer "):
@@ -90,8 +96,13 @@ def make_handler(backend):
             if path.startswith("/api/"):
                 return self._json({"error": "not found"}, status=404)
 
+            # Redirect rather than rewrite the path. The client's HTML, its
+            # manifest `start_url`, and its service-worker scope are all
+            # relative, so the browser's base URL must actually be
+            # /site/mobile/ — rewriting to the index while leaving the URL at
+            # "/" makes every relative asset resolve to the wrong path.
             if path in ("/", "/m", "/m/"):
-                self.path = "/site/mobile/index.html"
+                return self._redirect("/site/mobile/")
             return super().do_GET()
 
         def do_POST(self):

@@ -12,6 +12,13 @@ from gaworld.twin import binding
 from gaworld.twin.backend import TwinBackend
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Stop urllib following redirects so the 302 itself can be asserted."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _fake_map():
     return {"nodes": {"home": {"id": "home", "name": "home", "x_km": 0.0, "y_km": 0.0}}}
 
@@ -103,6 +110,22 @@ class TestTwinServer(unittest.TestCase):
         status, body = _request(f"{self.base}/api/twin/profile", token=self._token())
         self.assertEqual(status, 200)
         self.assertIn("<svg", body["avatar_svg"])
+
+    def test_root_redirects_so_relative_assets_resolve(self):
+        # The client's HTML, manifest start_url, and service-worker scope are
+        # all relative. Serving index.html *at* "/" makes the browser request
+        # /core.js instead of /site/mobile/core.js, so the page loads with no
+        # JS at all — silently, with a 200 on the HTML itself.
+        for path in ("/", "/m", "/m/"):
+            with self.subTest(path=path):
+                request = urllib.request.Request(f"{self.base}{path}")
+                opener = urllib.request.build_opener(_NoRedirect)
+                try:
+                    opener.open(request)
+                    self.fail(f"{path} did not redirect")
+                except urllib.error.HTTPError as exc:
+                    self.assertEqual(exc.code, 302)
+                    self.assertEqual(exc.headers["Location"], "/site/mobile/")
 
     def test_dashboard_endpoints_are_not_reachable(self):
         # The whole reason this is a separate process: none of the dashboard's
