@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#11151c" />
+  <title>GAWorld · 我的孪生</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="app">
+    <!-- Gate: shown until a token exists in localStorage. -->
+    <section id="authGate" class="card" hidden>
+      <h1>连接到 GAWorld</h1>
+      <p class="muted">输入邀请码，把这台手机绑定到你的智能体。</p>
+      <input id="codeInput" type="text" inputmode="text" autocomplete="off"
+             placeholder="邀请码" aria-label="邀请码" />
+      <button id="codeSubmit" type="button">连接</button>
+      <p id="authError" class="error" role="alert"></p>
+    </section>
+
+    <section id="main" hidden>
+      <header class="card avatar-card">
+        <div id="avatar" class="avatar" aria-label="智能体形象"></div>
+        <div class="avatar-meta">
+          <h1 id="agentLabel">—</h1>
+          <p><span id="syncState" class="badge">—</span></p>
+          <p id="currentState" class="muted">—</p>
+        </div>
+      </header>
+
+      <p id="notice" class="notice" role="status" hidden></p>
+
+      <section class="card">
+        <h2>你在做什么？</h2>
+        <div id="tagGrid" class="tag-grid"></div>
+        <input id="noteInput" type="text" placeholder="备注（可选）" aria-label="备注" />
+        <button id="reportButton" type="button" class="primary">上报</button>
+        <p id="queueState" class="muted"></p>
+      </section>
+
+      <section class="card">
+        <h2>今日轨迹</h2>
+        <canvas id="trail" width="600" height="400" aria-label="今日轨迹"></canvas>
+        <button id="replayButton" type="button">回放</button>
+      </section>
+    </section>
+  </main>
+
+  <script src="core.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
