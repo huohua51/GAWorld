@@ -192,5 +192,52 @@ class TestTwinPerceive(_TwinStageCase):
         self.assertEqual(step["_perception"], "现在是早上。")
 
 
+class TestStageOrdering(_TwinStageCase):
+    def test_mirror_after_move_survives_but_before_move_does_not(self):
+        """Encode WHY the mirror sits after select_action.
+
+        Simulates the two candidate orderings against a stand-in `move` that
+        rewrites location the way the real one does. Only the correct ordering
+        leaves the real location standing.
+        """
+        store.append_reports(7, [_report("a", 1000)], root=self.root)
+
+        def fake_move(agent, step, sim):
+            agent.setdefault("locations", {})["current"] = "模拟推断的地点"
+            step["_location"] = "模拟推断的地点"
+            step["_resolved_location"] = "模拟推断的地点"
+
+        # Wrong ordering: mirror then move.
+        agent_wrong = {"id": 7, "name": "cw", "locations": {"current": "家"}}
+        step_wrong = self._fresh_step()
+        stages.twin_mirror(agent_wrong, step_wrong, self.ctx, now_ts=1060)
+        fake_move(agent_wrong, step_wrong, self.ctx)
+        self.assertEqual(step_wrong["_location"], "模拟推断的地点")
+
+        # Correct ordering: move then mirror.
+        agent_right = {"id": 7, "name": "cw", "locations": {"current": "家"}}
+        step_right = self._fresh_step()
+        fake_move(agent_right, step_right, self.ctx)
+        stages.twin_mirror(agent_right, step_right, self.ctx, now_ts=1060)
+        self.assertEqual(step_right["_location"], "office")
+
+    def test_configured_pipeline_places_the_stages_correctly(self):
+        """The documented CONFIG ordering must actually satisfy the contract."""
+        order = [
+            "prepare", "perceive", "gaworld.twin.stages:twin_perceive", "interrupts",
+            "plan", "adjust_activity", "move", "select_action",
+            "gaworld.twin.stages:twin_mirror", "reflect", "update_state",
+            "broadcast", "memorize", "record",
+        ]
+        self.assertLess(order.index("perceive"), order.index("gaworld.twin.stages:twin_perceive"))
+        self.assertLess(order.index("gaworld.twin.stages:twin_perceive"), order.index("plan"))
+        self.assertLess(order.index("move"), order.index("gaworld.twin.stages:twin_mirror"))
+        self.assertLess(
+            order.index("select_action"), order.index("gaworld.twin.stages:twin_mirror")
+        )
+        self.assertLess(order.index("gaworld.twin.stages:twin_mirror"), order.index("reflect"))
+        self.assertLess(order.index("gaworld.twin.stages:twin_mirror"), order.index("memorize"))
+
+
 if __name__ == "__main__":
     unittest.main()
