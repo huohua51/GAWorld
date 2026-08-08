@@ -1,0 +1,266 @@
+# 手机端数字孪生（Mobile Digital Twin）
+
+> 把你自己接进仿真：手机上报真实位置与行为，驱动一个属于你的智能体，
+> 并在小屏上看到它的形象与今日轨迹。
+>
+> 后端：`gaworld/apps/twin_server.py`｜逻辑：`gaworld/twin/`｜前端：`site/mobile/`
+> 设计：[spec](./superpowers/specs/2026-08-08-mobile-digital-twin-design.md)
+
+---
+
+## 目录
+
+- [0. 这是什么，什么时候该用](#0-这是什么什么时候该用)
+- [1. 五分钟跑通（本机）](#1-五分钟跑通本机)
+- [2. 让手机连上：HTTPS 是硬要求](#2-让手机连上https-是硬要求)
+- [3. 绑定：邀请码与令牌](#3-绑定邀请码与令牌)
+- [4. 三条消费通道](#4-三条消费通道)
+- [5. 在仿真里启用孪生](#5-在仿真里启用孪生)
+- [6. 离线画像标定](#6-离线画像标定)
+- [7. API 速查](#7-api-速查)
+- [8. 参数速查](#8-参数速查)
+- [9. 已知限制](#9-已知限制)
+
+---
+
+## 0. 这是什么，什么时候该用
+
+一句话：**手机采集你的真实位置与行为，服务端把它变成仿真里某个智能体的状态与记忆。**
+
+适合：
+
+- 想验证"真实数据驱动的智能体"这个想法本身
+- 需要一份真实作息/轨迹数据，用来标定或对照仿真中的 agent
+- 给合作者/评审演示"我的孪生"
+
+**不适合**：面向真实用户的产品。当前定位是研究与演示，**没有注册体系、没有个人信息合规流程**。
+位置历史属于个人信息保护法下的敏感个人信息，若要开放给研究对象以外的人，必须先补齐告知同意、
+留存期限与删除机制。
+
+### 为什么是独立进程
+
+`twin_server` 与控制台 `dashboard_server` 是**两个进程**，这不是洁癖：
+
+`dashboard_server` 接受**无鉴权**的 `POST /api/config`（改全局配置）与 `POST /api/run/start`
+（拉起仿真子进程）。把它绑到 `0.0.0.0`，等于把改配置和起进程的能力开放给任何扫到端口的人。
+所以它**永远留在 `127.0.0.1:8766`**，公网上只放 `twin_server` 的五个端点。
+
+`tests/test_twin_server.py::test_dashboard_endpoints_are_not_reachable` 守着这条线：
+在 twin 服务上 `POST /api/config` 必须是 404。
+
+---
+
+## 1. 五分钟跑通（本机）
+
+**第一步，签发一个邀请码**（`1` 是要绑定的 agent id）：
+
+```bash
+python3 -m gaworld.apps.twin_server --issue-code 1 --label "我"
+```
+
+输出一串短码，例如 `52t8-ylFmr0b`。这串码只出现这一次——服务端只存它的哈希。
+
+**第二步，起服务**：
+
+```bash
+python3 -m gaworld.apps.twin_server --port 8767
+```
+
+**第三步，浏览器打开** `http://127.0.0.1:8767/`，输入邀请码。
+
+注意 `/` 会 **302 跳到 `/site/mobile/`**。这是必需的：前端的相对路径、manifest 的
+`start_url` 与 Service Worker 的 scope 都依赖真实的 base URL；如果直接在 `/` 上吐
+index.html，浏览器会去要 `/core.js` 而不是 `/site/mobile/core.js`，页面返回 200 但
+没有样式也没有脚本。
+
+本机 `http://127.0.0.1` 下浏览器允许定位；**换成手机就不行了**，见下一节。
+
+---
+
+## 2. 让手机连上：HTTPS 是硬要求
+
+浏览器的 Geolocation API 在**非 HTTPS 且非 localhost** 的页面上直接不可用。
+所以"手机连远程服务器"这件事，TLS 不是加分项而是前提。
+
+推荐 Cloudflare Tunnel：零公网 IP、零证书运维。
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8767
+```
+
+它会打印一个 `https://<随机名>.trycloudflare.com` 域名，手机直接访问即可。
+需要固定域名与第二层鉴权时，用具名隧道并挂上 Cloudflare Access。
+
+> **别把 8766 也开出去。** 隧道只指向 8767。
+
+自建服务器 + Caddy 同样可行：
+
+```
+twin.example.com {
+    reverse_proxy 127.0.0.1:8767
+}
+```
+
+---
+
+## 3. 绑定：邀请码与令牌
+
+```
+邀请码 ──redeem──▶ 令牌（Bearer）──▶ 唯一确定一个 agent_id
+```
+
+关键设计：**`agent_id` 不在请求体里**，而是由令牌反查得出。否则任何持有合法令牌的人，
+改一个字段就能写别人的 agent。`tests/test_twin_backend.py::test_a_client_cannot_write_another_agents_data`
+就是守这条的。
+
+邀请码与令牌都是随机不透明串，服务端**只存 SHA-256 哈希**，读绑定文件不足以冒充任何人。
+
+一个邀请码可以多次兑换（重装 PWA、清了站点数据），每次发新令牌。撤销邀请码会
+**连带失效由它签出的全部令牌**——否则撤销就形同虚设。
+
+绑定存在 `data/twin_bindings.json`，已加入 `.gitignore`。
+
+---
+
+## 4. 三条消费通道
+
+`output/twin/agent_<id>/reports.jsonl` 是**唯一事实来源**，只追加。三条通道都从它派生，互不耦合：
+
+| 通道 | 读什么 | 写什么 | 时机 |
+|---|---|---|---|
+| A 镜像 | `snapshot.json` | agent 的 `locations.current` 与当前动作 | 每 tick |
+| B 感知注入 | 上次消费位点之后的新上报 | episodic memory | 每 tick |
+| C 画像标定 | 全量 `reports.jsonl` | habits/profile 补丁 | 离线，**人工确认后** |
+
+C 刻意不自动写 profile：让采集数据静默改写实验对象，会让后续结果无法归因——
+到底是配置改了，还是画像悄悄漂了？
+
+**上报过期怎么办**：超过 `snapshot_ttl_minutes`（默认 30）没有新上报，镜像通道停止覆盖，
+agent 回到自主行为，手机端显示「未同步」，而不是把几小时前的位置当作当前位置继续展示。
+
+**人不在地图范围怎么办**：地图锚在杭州。落点离所有节点都超过 `max_snap_km`（默认 3 公里）时，
+标记 `out_of_map`，**镜像通道跳过位置覆盖**，但行为仍然照常注入。不会把人硬拽到地图边缘假装成功——
+伪造的位置会同时污染镜像与标定数据。
+
+---
+
+## 5. 在仿真里启用孪生
+
+两步，都是配置，**不用改任何代码**。
+
+```python
+CONFIG["twin"]["enabled"] = True
+
+CONFIG["pipeline"]["agent_step"] = [
+    "prepare", "perceive", "gaworld.twin.stages:twin_perceive", "interrupts",
+    "plan", "adjust_activity", "move", "select_action",
+    "gaworld.twin.stages:twin_mirror", "reflect", "update_state",
+    "broadcast", "memorize", "record",
+]
+```
+
+### 两个插入点，不能合并
+
+```
+perceive → [twin_perceive] → interrupts → plan → …
+    … → select_action → [twin_mirror] → reflect
+```
+
+- `twin_perceive` 在 `perceive` 之后：真实上下文进入感知，`plan` 能看见，agent 自己决定怎么反应。
+- `twin_mirror` 在 `select_action` 之后：agent 正常规划、正常移动，**最后**才被真实数据覆盖。
+
+> ⚠️ **`twin_mirror` 必须在 `move` 之后。** 放在 `move` 之前会被 `move` 原样改回去，
+> 而且**不报错**——stage 照跑，值照写，然后被覆盖。
+> `tests/test_twin_stages.py::TestStageOrdering` 把这条顺序钉死了。
+
+### 每次镜像都有审计
+
+覆盖走 `set_agent_twin_state` 干预，落进 `controller.intervention` 审计表
+（`output/records/controller.intervention.jsonl`）。这不是锦上添花：没有这条轨迹，
+事后分析无法区分某个行为是仿真自己生成的，还是从现实注入的。
+
+（标准的 `set_agent_state` 只接受 float，写不了字符串型的 location 与 action，所以另起了一个。）
+
+### 开关即对照组
+
+孪生默认**关闭**，且默认流水线不含这两个 stage。开启是显式动作——这正好让
+「有孪生 / 无孪生」成为一组干净的对照实验。
+
+---
+
+## 6. 离线画像标定
+
+```bash
+python3 scripts/twin_calibrate.py 1
+```
+
+打印一份可读的 diff（常去地点、行为分布），**什么都不写**。确认无误后：
+
+```bash
+python3 scripts/twin_calibrate.py 1 --approve --out output/twin/calibration.json
+```
+
+`--min-occurrences`（默认 3）过滤偶发信号：只去过一次的地方不算习惯。
+
+---
+
+## 7. API 速查
+
+全部端点走同一个鉴权入口，除签发令牌本身外没有例外路径。
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/api/twin/auth` | POST | `{"code": "..."}` 换令牌 |
+| `/api/twin/report` | POST | 请求体**永远是数组**，长度 1 为常规上报，更长为离线补传 |
+| `/api/twin/snapshot` | GET | 最新上报 + `fresh` 新鲜度 |
+| `/api/twin/profile` | GET | 头像 SVG、标签、可选行为词表 |
+| `/api/twin/trail` | GET | 今日轨迹点，支持 `?since_ts=` |
+
+上报体的 `report_id` 由客户端生成，是**幂等键**：同一个 id 传两次只落一行。
+离线补传因此可以放心重发。
+
+---
+
+## 8. 参数速查
+
+`CONFIG["twin"]`：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `False` | 总开关，同时控制两个 stage |
+| `root` | `output/twin` | 上报与快照的落盘位置 |
+| `bindings_path` | `data/twin_bindings.json` | 绑定与令牌哈希 |
+| `snapshot_ttl_minutes` | `30` | 超过则镜像停用、前端显示「未同步」 |
+| `max_snap_km` | `3.0` | 超过则判定 `out_of_map` |
+
+> `max_snap_km` 默认 3 公里偏松——它意味着你可能被归到两公里外的地点。
+> 拿到真实 GPS 轨迹后建议收紧。
+
+---
+
+## 9. 已知限制
+
+坦白列出，免得有人踩坑才发现：
+
+1. **尚未在真机上验证。** 所有验证都是无头浏览器 + curl。定位授权弹窗、
+   iOS Safari 在独立模式下的 IndexedDB 行为、安装流程，都需要真机 + HTTPS 才能确认。
+2. **没有 GPS 时只上报行为。** 当前回落是发送零坐标，服务端会判定 `out_of_map`
+   并跳过位置——行为仍然记录。spec 里设想的「手动选点」尚未实现。
+3. **地图只覆盖杭州。** 出差期间位置孪生实际停摆，只有行为注入还在工作。
+4. **manifest 没有图标**，安装后用的是系统默认。
+5. **Service Worker 缓存需手动失效**：改动 `site/mobile/` 下任何 shell 文件后，
+   必须同步提升 `sw.js` 里的 `CACHE_NAME`，否则老用户拿到的是旧包。
+
+---
+
+## 相关文件
+
+- 设计：[spec](./superpowers/specs/2026-08-08-mobile-digital-twin-design.md)
+- 实施计划：[数据层与服务](./superpowers/plans/2026-08-08-twin-data-spine-and-server.md)
+  ｜[仿真接入](./superpowers/plans/2026-08-08-twin-simulation-integration.md)
+  ｜[手机端](./superpowers/plans/2026-08-08-twin-mobile-pwa.md)
+- 测试：`tests/test_twin_*.py`（64 项）、`site/mobile/core.test.js`（17 项）
+
+其中 `tests/test_twin_e2e.py` 是唯一一个真正跑 `run_simulation` 的：stage 的单元测试
+用的是手搭的 step 字典和替身 `move`，即便流水线接入坏了也照样通过。它跑真实仿真并断言
+审计表里出现了镜像写入，是唯一会在集成断裂时失败的测试。
