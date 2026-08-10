@@ -8,6 +8,8 @@ import networkx as nx
 from gaworld.social.decision import SocialContext, decide_pair_interaction
 from gaworld.social.hooks import on_agent_pre_step
 from gaworld.social.llm_events import generate_interaction
+from gaworld.social.memory import format_social_memory, social_event_salience, write_social_memories
+from gaworld.social.reflection import relationship_reflection_text, write_relationship_reflections
 from gaworld.social.runtime import SocialInteractionRuntime, initialize_agent_social_state
 from gaworld.social.schemas import SocialDecision
 
@@ -181,6 +183,78 @@ class TestSocialSystem(unittest.TestCase):
         self.assertEqual(0.0, event.emotion_delta_source)
         self.assertEqual(0.0, event.stress_delta_target)
         self.assertEqual(0.02, event.trust_delta)
+
+    def test_social_memory_formats_and_persists_salient_events(self):
+        agents = [_agent(1), _agent(2)]
+        runtime = SocialInteractionRuntime(
+            {
+                "seed": 1,
+                "network_seed": 1,
+                "avg_degree": 2,
+                "max_events_per_tick": 1,
+                "pair_cooldown_minutes": 0,
+                "agent_daily_budget": 4,
+            },
+            agents,
+        )
+        with patch("gaworld.social.runtime.decide_interactions_for_slot", return_value=[_decision()]):
+            event = runtime.tick(day=1, time_str="12:00", agents=agents, agent_activities={1: "午餐", 2: "午餐"})[0]
+
+        vector_records = []
+        log_records = []
+        saved = []
+        records = write_social_memories(
+            [event],
+            agents,
+            min_salience=0.0,
+            vector_writer=lambda agent_id, entry_type, text, day, time_str: vector_records.append(
+                (agent_id, entry_type, text, day, time_str)
+            ),
+            log_writer=lambda agent, text: log_records.append((agent["id"], text)),
+            memory_saver=lambda agent: saved.append(agent["id"]),
+        )
+
+        self.assertGreaterEqual(social_event_salience(event), 0.5)
+        self.assertIn("SocialMemory", format_social_memory(event, 1))
+        self.assertEqual(2, len(records))
+        self.assertEqual(2, len(vector_records))
+        self.assertIn("social_memory", {row[1] for row in vector_records})
+        self.assertTrue(agents[0]["_recent_social_memories"])
+        self.assertTrue(saved)
+
+    def test_relationship_reflection_persists_daily_summary(self):
+        agents = [_agent(1), _agent(2)]
+        runtime = SocialInteractionRuntime(
+            {
+                "seed": 1,
+                "network_seed": 1,
+                "avg_degree": 2,
+                "max_events_per_tick": 1,
+                "pair_cooldown_minutes": 0,
+                "agent_daily_budget": 4,
+            },
+            agents,
+        )
+        with patch("gaworld.social.runtime.decide_interactions_for_slot", return_value=[_decision()]):
+            event = runtime.tick(day=1, time_str="12:00", agents=agents, agent_activities={1: "午餐", 2: "午餐"})[0]
+
+        text = relationship_reflection_text(agents[0], 1, [event])
+        vector_records = []
+        records = write_relationship_reflections(
+            [event],
+            agents,
+            day=1,
+            vector_writer=lambda agent_id, entry_type, text, day, time_str: vector_records.append(
+                (agent_id, entry_type, text, day, time_str)
+            ),
+            log_writer=lambda agent, text: None,
+            memory_saver=lambda agent: None,
+        )
+
+        self.assertIn("RelationshipReflection", text)
+        self.assertEqual(2, len(records))
+        self.assertEqual("social_reflection", vector_records[0][1])
+        self.assertIn("_social_relationship_reflection", agents[0])
 
 
 if __name__ == "__main__":

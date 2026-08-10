@@ -396,6 +396,7 @@ CONFIG = {
         "weak_tie_probability": 0.12,
         "max_events_per_tick": 2,
         "max_diffusion_targets": 1,
+        "memory_salience_threshold": 0.50,
         "pair_cooldown_minutes": 180,
         "agent_daily_budget": 6,
         "agent_daily_budget_extrovert_bonus": 2,

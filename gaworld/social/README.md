@@ -7,7 +7,8 @@ The subsystem does three things:
 
 1. Builds a weighted social graph from agent attributes.
 2. Simulates pairwise interaction and message diffusion during each time tick.
-3. Writes emotion and relationship changes back to the main agent state.
+3. Writes emotion, relationship, social memory, and daily relationship
+   reflection changes back to the main agent state.
 
 ## Runtime Flow
 
@@ -18,9 +19,12 @@ generative_city_sim.py
   -> HookBus emits on_time_tick
   -> runtime decides interactions and generates dialogue
   -> runtime updates emotion, stress, trust, closeness, friction
+  -> salient events are written as social memories
   -> HookBus emits on_agent_pre_step
-  -> pending social events are injected into the agent's social_context
+  -> pending events, recent social memories, and relationship reflection are injected into social_context
   -> original perception / planning / action / reflection continues
+  -> HookBus emits on_day_end
+  -> daily relationship reflections are persisted
 ```
 
 ## Files
@@ -34,6 +38,10 @@ generative_city_sim.py
   agent state into social motives. It does not generate new world events.
 - `llm_events.py`: generates dialogue and structured state deltas. It uses a
   deterministic mock by default and can call a configured LLM.
+- `memory.py`: converts salient social interactions into agent memory, vector
+  entries, and recent in-session social memory snippets.
+- `reflection.py`: writes end-of-day relationship reflections for agents who
+  participated in social interactions.
 - `runtime.py`: bridges the social graph with the main simulator state.
 - `hooks.py`: extension-hook entry points used by `config.py`.
 
@@ -51,6 +59,7 @@ The active config lives in `config.py` under `social_interactions`.
     "weak_tie_probability": 0.12,
     "max_events_per_tick": 2,
     "max_diffusion_targets": 1,
+    "memory_salience_threshold": 0.50,
     "output_jsonl": "output/social_interactions/events.jsonl",
 }
 ```
@@ -79,3 +88,7 @@ output/social_interactions/
 ├── relationship_changes.csv
 └── dashboard.html
 ```
+
+In addition, salient events are appended to each involved agent's persistent
+memory as `social_memory` entries, and end-of-day summaries are written as
+`social_reflection` entries.

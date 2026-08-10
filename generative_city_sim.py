@@ -4816,8 +4816,18 @@ def infer_event_effect(agent, event_desc, event_type="event"):
 def get_social_context(agent, agents_by_id):
     neighbors = agent["social_neighbors"]
     agent["_recent_social_partners"] = []
+    memory_fragments = []
+    reflection = str(agent.get("_social_relationship_reflection", "") or "").strip()
+    if reflection:
+        memory_fragments.append(reflection.replace("\n", "；"))
+    recent_memories = agent.get("_recent_social_memories", [])
+    if isinstance(recent_memories, list):
+        for item in recent_memories[-2:]:
+            text = str(item or "").strip()
+            if text:
+                memory_fragments.append(text)
     if not neighbors:
-        return "今天几乎没有与熟人互动。"
+        return "；".join(memory_fragments) if memory_fragments else "今天几乎没有与熟人互动。"
     k = min(3, len(neighbors))
     if HUMAN_REALISM_ENABLED:
         sampled = []
@@ -4848,6 +4858,8 @@ def get_social_context(agent, agents_by_id):
             fragments.append(f"{name}会给你支持感，你更容易想到和对方保持联系")
         else:
             fragments.append(f"{name}的近况会偶尔分散你的注意力")
+    if memory_fragments:
+        fragments = memory_fragments + fragments
     return "；".join(fragments) if fragments else "今天几乎没有与熟人互动。"
 
 def perception(agent, time_str, social_context, env_context, policy_event):

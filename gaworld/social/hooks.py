@@ -14,6 +14,8 @@ from gaworld.social.analytics import (
     write_relationship_changes,
     write_social_timeline,
 )
+from gaworld.social.memory import write_social_memories
+from gaworld.social.reflection import write_relationship_reflections
 from gaworld.social.runtime import (
     SocialInteractionRuntime,
     format_social_event_log,
@@ -137,6 +139,13 @@ def on_time_tick(context: dict[str, Any]) -> None:
     if bool(cfg.get("print_events", False)):
         for event in events:
             print(format_console_event(event))
+    memory_records = write_social_memories(
+        events,
+        agents,
+        min_salience=float(cfg.get("memory_salience_threshold", 0.50)),
+    )
+    if memory_records:
+        state["last_memory_records"] = memory_records
     daily_logs = context.get("daily_logs")
     if isinstance(daily_logs, dict):
         for event in events:
@@ -194,3 +203,8 @@ def on_day_end(context: dict[str, Any]) -> None:
         write_relationship_changes(day_events, str(cfg["relationship_changes_csv"]))
     if cfg.get("dashboard_html"):
         write_dashboard(day_events, str(cfg["dashboard_html"]))
+    agents = context.get("agents", [])
+    if isinstance(agents, list):
+        reflections = write_relationship_reflections(day_events, agents, day=day)
+        if reflections:
+            state["last_relationship_reflections"] = reflections

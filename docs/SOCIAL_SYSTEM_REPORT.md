@@ -27,6 +27,9 @@ flowchart LR
 - 同质性建网：同片区、年龄相近、户籍相同、平台依赖/风险偏好接近的人更容易连边。
 - 社交互动类型：`check_in`、`share_news`、`ask_help`、`invite`、`vent`、`conflict`。
 - 消息扩散：`share_news` 可继续向高信任、高影响力、高易感性的邻居传播。
+- 社交记忆：高显著性互动会写入 agent memory、vector db 和近期社交记忆缓存。
+- 每日关系反思：每天结束时，参与过社交互动的 agent 会生成 relationship reflection。
+- 社交上下文回灌：后续行动前的 `social_context` 会包含最近社交记忆、每日关系反思和关系邻居摘要。
 - 输出文件：
   - `output/social_interactions/events.jsonl`
   - `output/social_interactions/daily_summary.md`
@@ -52,6 +55,36 @@ flowchart TD
 
 - `gaworld.social.runtime.initialize_agent_social_state()`
 - `gaworld.social.runtime.SocialInteractionRuntime`
+
+### 1.3 本次新增闭环
+
+本次已经把社交系统从“只在 timeline 里显示互动”推进到“互动能影响后续 agent 行为上下文”的阶段。
+
+```mermaid
+flowchart TD
+    A["Social interaction event"] --> B["Relationship / emotion update"]
+    A --> C["social_event_salience"]
+    C --> D{"salient enough?"}
+    D -->|yes| E["agent memory + vector db<br/>social_memory"]
+    D -->|no| F["timeline only"]
+    E --> G["recent social memories"]
+    B --> H["end-of-day relationship reflection"]
+    H --> I["agent memory + vector db<br/>social_reflection"]
+    G --> J["get_social_context"]
+    I --> J
+    J --> K["next perception / planning / action"]
+```
+
+新增文件：
+
+- `gaworld/social/memory.py`：把 `conflict`、`ask_help`、`vent`、`share_news` 等高显著性互动写成主观社交记忆。
+- `gaworld/social/reflection.py`：每天总结“今天和谁关系更近、信任变化最明显、是否有摩擦、明天倾向怎么做”。
+
+改动入口：
+
+- `gaworld/social/hooks.py`：在 `on_time_tick` 写入社交记忆，在 `on_day_end` 写入关系反思。
+- `generative_city_sim.py`：`get_social_context()` 现在会读取近期社交记忆和每日关系反思。
+- `config.py`：新增 `memory_salience_threshold`，当前默认值为 `0.50`。
 
 
 
@@ -309,9 +342,9 @@ gaworld/social/
 
 目标：让 agent 真的记得社交经历。
 
-- 将高显著性社交事件写入 memory/vector db。
-- 增加 relationship reflection：每天总结“我和谁关系变好了/变差了/欠了谁人情”。
-- `get_social_context()` 从最近社交记忆和关系 summary 中抽取，而不是只采样邻居。
+- 已完成：将高显著性社交事件写入 memory/vector db。
+- 已完成：增加 relationship reflection：每天总结“我和谁关系变好了/变差了/需要注意谁”。
+- 已完成：`get_social_context()` 从最近社交记忆和关系 summary 中抽取，而不是只采样邻居。
 - `planning` 里加入 social intention：今天要联系谁、避免谁、回复谁。
 
 ### M3：改造聊天生成
@@ -357,10 +390,10 @@ gaworld/social/
    - 文件：`docs/SOCIAL_LITERATURE_ALIGNMENT.md`
    - 内容：Smallville、1,000 People、AgentSociety、S³、OASIS、Y Social、SimBench、validation critique。
 
-2. **社交记忆入库**
-   - 文件：`gaworld/social/memory.py`
-   - hook：`on_time_tick` 或 `on_agent_post_step`
-   - 目标：conflict/help/invite/share_news 写入长期 memory。
+2. **社交意图规划**
+   - 文件：`gaworld/social/planning.py`
+   - hook：`on_agent_pre_step` 或 planning prompt 构造处
+   - 目标：基于近期社交记忆和每日关系反思，显式生成今天要联系谁、避免谁、修复谁。
 
 3. **多样化 mock 聊天**
    - 文件：`gaworld/social/llm_events.py`
@@ -369,6 +402,22 @@ gaworld/social/
 4. **社交指标输出**
    - 文件：`gaworld/social/analytics.py`
    - 输出：`metrics.json` 和 report 表格。
+
+5. **文献对齐文档**
+   - 文件：`docs/SOCIAL_LITERATURE_ALIGNMENT.md`
+   - 内容：Smallville、1,000 People、AgentSociety、S³、OASIS、Y Social、SimBench、validation critique。
+
+已完成的最小任务：
+
+1. **社交记忆入库**
+   - 文件：`gaworld/social/memory.py`
+   - hook：`on_time_tick` 或 `on_agent_post_step`
+   - 目标：conflict/help/invite/share_news 写入长期 memory。
+
+2. **每日关系反思**
+   - 文件：`gaworld/social/reflection.py`
+   - hook：`on_day_end`
+   - 目标：让每天的社交变化进入后续上下文。
 
 ## 7. 验证现状
 
