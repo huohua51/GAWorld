@@ -287,3 +287,27 @@ label.field, .field-row { margin-bottom: 12px; }
 }
 .cog-score { font-family: Georgia, serif; font-size: 34px; color: var(--green); margin-bottom: 8px; }
 .growth-change { display: block; color: var(--green); font-size: 11px; }
+
+/* ---- 家庭编辑（step 5） ---- */
+.fam-head { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.tag-pinned { border-color: var(--green); color: var(--green); background: rgba(19, 121, 91, 0.09); }
+.fam-brief { margin: 4px 0 8px; font-size: 12.5px; line-height: 1.65; color: var(--ink); }
+.fam-duties { margin: 0 0 12px; padding-left: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+.fam-duties b { color: var(--ink); font-weight: 600; }
+.fam-warn {
+  margin: 0 0 10px; padding: 7px 10px; font-size: 11.5px; line-height: 1.6;
+  border-left: 3px solid #d6a81e; background: #fffdf5; color: var(--ink);
+}
+.fam-group {
+  margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line);
+}
+.fam-group > b { font-size: 12.5px; }
+.fam-toggle { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.fam-toggle .section-note { margin: 0; }
+.fam-radios { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 4px; }
+.fam-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; }
+.goal-mini.goal-check { flex-direction: row; align-items: center; gap: 6px; }
+.goal-mini input[type="number"] {
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
+  font: inherit; font-size: 12px; width: 74px; background: #fff; color: var(--ink);
+}

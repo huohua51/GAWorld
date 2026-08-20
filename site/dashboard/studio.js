@@ -32,6 +32,9 @@ const store = {
   profileEdit: "", // buffer for the profile textarea, discarded on cancel
   socialDraft: null, // working copy of the relationship edges, edited inline in step 5
   socialRemoved: [], // ids deleted from socialDraft, sent with the next save
+  familyPreview: null, // server-side family preview for the current agent (step 5)
+  familyDraft: null, // working copy of this agent's family override
+  familyLoading: false, // guards the lazy preview fetch against retry loops
   financeDraft: null, // working copy of the editable finance state (step 7)
   memGraph: null, // { svg, nodes } for the inline memory graph
   memGraphBig: null, // { svg, nodes } for the zoomed modal graph
@@ -175,9 +178,14 @@ async function selectAgent(id) {
   store.stateDirty = false;
   store.profileEditing = false;
   store.memPick = null;
+  store.familyPreview = null;
+  store.familyDraft = null;
   $("#saveHint").textContent = "已加载 · 自动回填";
   renderSubject();
   renderStep();
+  // The family preview is a second request; render once without it so the
+  // step is never blank, then again when it lands.
+  loadFamilyPreview().then(() => { if (store.step === 5) renderStep(); });
 }
 
 function startCreate() {
@@ -192,6 +200,8 @@ function startCreate() {
   store.stateDirty = false;
   store.profileEditing = false;
   store.memPick = null;
+  store.familyPreview = null;
+  store.familyDraft = null;
   store.step = 1;
   setActiveStepButton();
   $("#saveHint").textContent = "新建居民（未保存）";
@@ -708,6 +718,316 @@ function relationEditorRow(r, idx) {
   </div>`;
 }
 
+/* ---------------------------------------------------------------------------
+ * 家庭（step 5）
+ *
+ * Households are re-derived from (roster, config, seed) at the start of every
+ * run, so an edit made here cannot be a mutation of the result — it would be
+ * erased the next time the simulation started. What the panel writes is an
+ * *override*: `data/family_overrides.json`, which the assigner consults while
+ * assigning. That is why every save comes back with a fresh preview rather
+ * than an "已保存" toast: the question worth answering is what this agent's
+ * family will actually be next run, including the knock-on effects on whoever
+ * they were pinned to.
+ * ------------------------------------------------------------------------- */
+
+const MARITAL_LABELS = { never: "未婚", married: "已婚", divorced: "离异", widowed: "丧偶" };
+const HH_TYPE_LABELS = {
+  single: "独居", shared: "合租", with_parents: "与父母同住", cohabit: "未婚同居",
+  couple: "夫妻二人", nuclear: "核心家庭", single_parent: "单亲家庭", multigen: "三代同堂",
+};
+const ELDER_ROLE_LABELS = { mother: "母亲", father: "父亲", parent: "父母", grandparent: "祖辈" };
+
+function blankFamilyDraft(override) {
+  const src = override && typeof override === "object" ? override : {};
+  const partner = src.partner;
+  let partnerMode = "auto";
+  if ("partner" in src) partnerMode = partner === null ? "none" : (partner.kind === "agent" ? "agent" : "ghost");
+  return {
+    marital_status: src.marital_status || "",
+    partnerMode,
+    partnerRole: (partner && partner.role) || "spouse",
+    partnerAgentId: partner && partner.kind === "agent" ? Number(partner.agent_id) : null,
+    partnerGhost: partner && partner.kind === "ghost"
+      ? { name: partner.name || "", gender: partner.gender || "女", age: Number(partner.age) || 30 }
+      : { name: "", gender: "女", age: 30 },
+    children: Array.isArray(src.children) ? src.children.map(clonePerson) : null,
+    elders: Array.isArray(src.elders) ? src.elders.map(clonePerson) : null,
+    note: src.note || "",
+  };
+}
+
+function clonePerson(p) {
+  return {
+    name: p.name || "", gender: p.gender || "男",
+    age: Number(p.age) || 0, coresident: p.coresident !== false,
+    role: p.role || "",
+  };
+}
+
+/* Draft -> the wire shape `normalize_override` validates. The tri-state on
+ * children/elders is load-bearing: `null` means "sample it", `[]` means
+ * "pinned to none" — an operator saying this couple has no children. */
+function familyDraftToOverride(d) {
+  const out = {};
+  if (d.marital_status) out.marital_status = d.marital_status;
+  if (d.partnerMode === "none") out.partner = null;
+  else if (d.partnerMode === "agent" && d.partnerAgentId != null) {
+    out.partner = { kind: "agent", agent_id: Number(d.partnerAgentId), role: d.partnerRole };
+  } else if (d.partnerMode === "ghost") {
+    out.partner = {
+      kind: "ghost", role: d.partnerRole, name: d.partnerGhost.name,
+      gender: d.partnerGhost.gender, age: Number(d.partnerGhost.age) || 0, coresident: true,
+    };
+  }
+  if (d.children) out.children = d.children;
+  if (d.elders) out.elders = d.elders;
+  if (d.note) out.note = d.note;
+  return out;
+}
+
+async function loadFamilyPreview() {
+  if (store.creating || store.currentId == null) { store.familyPreview = null; return; }
+  try {
+    const payload = await api(`/api/family/preview?agent_id=${store.currentId}`);
+    store.familyPreview = payload;
+    store.familyDraft = blankFamilyDraft(payload.override);
+  } catch (err) {
+    store.familyPreview = { error: err.message };
+    store.familyDraft = blankFamilyDraft(null);
+  }
+}
+
+function personRow(person, idx, kind) {
+  const attrs = `data-fam-kind="${kind}" data-idx="${idx}"`;
+  const genderOpts = ["男", "女"].map((g) =>
+    `<option value="${g}"${person.gender === g ? " selected" : ""}>${g}</option>`).join("");
+  const roleSelect = kind === "elders"
+    ? `<label class="goal-mini"><span>身份</span><select data-fam-role ${attrs}>${
+        Object.keys(ELDER_ROLE_LABELS).map((r) =>
+          `<option value="${r}"${person.role === r ? " selected" : ""}>${ELDER_ROLE_LABELS[r]}</option>`).join("")
+      }</select></label>`
+    : "";
+  return `<div class="goal-edit">
+    <div class="goal-edit-head">
+      <input class="goal-title-input" data-fam-name ${attrs} value="${esc(person.name)}" placeholder="姓名">
+      <button type="button" class="goal-remove" data-fam-remove ${attrs} title="删除" aria-label="删除">✕</button>
+    </div>
+    <div class="goal-edit-controls">
+      <label class="goal-mini"><span>性别</span><select data-fam-gender ${attrs}>${genderOpts}</select></label>
+      <label class="goal-mini"><span>年龄</span><input type="number" min="0" max="120" data-fam-age ${attrs} value="${Number(person.age) || 0}"></label>
+      ${roleSelect}
+      <label class="goal-mini goal-check"><span>同住</span>
+        <input type="checkbox" data-fam-coresident ${attrs}${person.coresident ? " checked" : ""}></label>
+    </div>
+  </div>`;
+}
+
+function personGroup(kind, title, hint) {
+  const list = store.familyDraft[kind];
+  const manual = Array.isArray(list);
+  const body = manual
+    ? `${list.map((p, i) => personRow(p, i, kind)).join("") || `<p class="section-note">已固定为「没有」。</p>`}
+       <button type="button" class="goal-add" data-fam-add="${kind}">+ 新增</button>`
+    : `<p class="section-note">${esc(hint)}</p>`;
+  return `<div class="fam-group">
+    <label class="fam-toggle">
+      <input type="checkbox" data-fam-manual="${kind}"${manual ? " checked" : ""}>
+      <b>${esc(title)}</b><span class="section-note">${manual ? "手动指定" : "自动生成"}</span>
+    </label>
+    ${body}
+  </div>`;
+}
+
+function familyPartnerBlock(candidates) {
+  const d = store.familyDraft;
+  const modes = [
+    ["auto", "自动"], ["none", "无伴侣"], ["agent", "仿真内居民"], ["ghost", "场外人物"],
+  ].map(([v, label]) =>
+    `<label class="fam-radio"><input type="radio" name="famPartnerMode" value="${v}"${
+      d.partnerMode === v ? " checked" : ""}> ${label}</label>`).join("");
+  const roleSel = `<label class="goal-mini"><span>关系</span><select data-fam-partner-role>
+      <option value="spouse"${d.partnerRole === "spouse" ? " selected" : ""}>配偶</option>
+      <option value="partner"${d.partnerRole === "partner" ? " selected" : ""}>同居伴侣</option>
+    </select></label>`;
+  let detail = "";
+  if (d.partnerMode === "agent") {
+    const opts = (candidates || []).map((c) =>
+      `<option value="${c.agent_id}"${Number(d.partnerAgentId) === Number(c.agent_id) ? " selected" : ""}>${
+        esc(c.name)} · ${c.age}岁 · ${esc(c.gender)}${c.residence ? " · " + esc(c.residence) : ""}</option>`).join("");
+    detail = `<div class="goal-edit-controls">
+      <label class="goal-mini"><span>选择居民</span><select data-fam-partner-agent>
+        <option value="">— 请选择 —</option>${opts}</select></label>
+      ${roleSel}
+    </div>
+    <p class="section-note">双向生效：对方的家庭也会随之改变，两人共享同一个住处；原本和对方配对的居民会自动退回场外配偶。</p>`;
+  } else if (d.partnerMode === "ghost") {
+    detail = `<div class="goal-edit-controls">
+      <label class="goal-mini"><span>姓名</span><input data-fam-partner-name value="${esc(d.partnerGhost.name)}" placeholder="场外配偶姓名"></label>
+      <label class="goal-mini"><span>性别</span><select data-fam-partner-gender>
+        ${["男", "女"].map((g) => `<option value="${g}"${d.partnerGhost.gender === g ? " selected" : ""}>${g}</option>`).join("")}
+      </select></label>
+      <label class="goal-mini"><span>年龄</span><input type="number" min="0" max="120" data-fam-partner-age value="${Number(d.partnerGhost.age) || 0}"></label>
+      ${roleSel}
+    </div>`;
+  } else if (d.partnerMode === "none") {
+    detail = `<p class="section-note">固定为没有伴侣——即使婚姻状态抽样结果是已婚，也不会生成配偶。</p>`;
+  } else {
+    detail = `<p class="section-note">按婚姻状态与配对规则自动决定。</p>`;
+  }
+  return `<div class="fam-group"><b>伴侣</b>
+    <div class="fam-radios">${modes}</div>${detail}</div>`;
+}
+
+function familyCard() {
+  if (store.creating) {
+    return `<div class="card"><h3>家庭</h3>
+      <p class="section-note">新建居民保存后，才能编辑家庭。</p></div>`;
+  }
+  const preview = store.familyPreview;
+  if (!preview) {
+    return `<div class="card"><h3>家庭</h3><p class="section-note">加载中…</p></div>`;
+  }
+  if (preview.error) {
+    return `<div class="card"><h3>家庭</h3>
+      <p class="section-note">家庭预览不可用：${esc(preview.error)}</p></div>`;
+  }
+  const sel = preview.selected || {};
+  const d = store.familyDraft;
+  const statusOpts = [["", "自动（按年龄段抽样）"]].concat(
+    Object.keys(MARITAL_LABELS).map((k) => [k, MARITAL_LABELS[k]])
+  ).map(([v, label]) =>
+    `<option value="${v}"${d.marital_status === v ? " selected" : ""}>${label}</option>`).join("");
+
+  const tags = `<span class="tag">${esc(MARITAL_LABELS[sel.marital_status] || "?")}</span>
+    <span class="tag">${esc(HH_TYPE_LABELS[sel.household_type] || sel.household_type || "?")}</span>
+    <span class="tag${sel.pinned ? " tag-pinned" : ""}">${sel.pinned ? "已固定" : "自动生成"}</span>`;
+
+  const duties = preview.duties || {};
+  const dutyList = (arr, label) =>
+    (arr && arr.length)
+      ? `<li><b>${label}</b>：${arr.map(esc).join("；")}</li>`
+      : `<li><b>${label}</b>：无</li>`;
+
+  const warnings = (preview.warnings || []).length
+    ? `<p class="fam-warn">${preview.warnings.map(esc).join("<br>")}</p>` : "";
+
+  return `<div class="card">
+    <h3>家庭 <span class="tag">${esc(sel.household_id || "")}</span></h3>
+    <p class="section-note">家庭在每次运行开始时按「配置 → 家庭与户」重新生成。这里的修改保存为
+      <code>data/family_overrides.json</code> 里的覆盖项，跨运行生效，并优先于抽样结果。</p>
+    ${warnings}
+    <div class="fam-head">${tags}</div>
+    <p class="fam-brief">${esc(sel.brief || "（无家庭）")}</p>
+    <ul class="fam-duties">${dutyList(duties.weekday, "工作日")}${dutyList(duties.weekend, "周末")}</ul>
+
+    <div class="fam-group"><b>婚姻状态</b>
+      <div class="goal-edit-controls">
+        <label class="goal-mini"><span>状态</span><select data-fam-status>${statusOpts}</select></label>
+      </div>
+    </div>
+    ${familyPartnerBlock(preview.candidates)}
+    ${personGroup("children", "子女", "按生育率旋钮自动生成。勾选后可精确指定每个孩子。")}
+    ${personGroup("elders", "同住长辈", "按共居规则自动生成。勾选后可精确指定同住的长辈。")}
+
+    <div class="goals-save">
+      <button type="button" id="resetFamilyBtn" class="button">恢复自动生成</button>
+      <button type="button" id="saveFamilyBtn" class="button primary">保存并预览</button>
+    </div>
+  </div>`;
+}
+
+async function saveFamilyOverride(clear) {
+  if (store.creating || store.currentId == null) return;
+  try {
+    foot(clear ? "恢复自动生成…" : "保存家庭设定…");
+    const body = clear
+      ? { agent_id: store.currentId, clear: true }
+      : { agent_id: store.currentId, override: familyDraftToOverride(store.familyDraft) };
+    const payload = await api("/api/family/override", { method: "POST", body: JSON.stringify(body) });
+    store.familyPreview = payload;
+    store.familyDraft = blankFamilyDraft(payload.override);
+    renderStep();
+    foot(clear ? "已恢复为自动生成，下次运行生效" : "家庭设定已保存，下次运行生效", "ok");
+  } catch (err) {
+    foot((clear ? "恢复失败：" : "保存失败：") + err.message, "err");
+  }
+}
+
+function bindFamilyCard() {
+  const body = $("#stepBody");
+  if (!body || !store.familyDraft) return;
+  const d = store.familyDraft;
+
+  const status = body.querySelector("[data-fam-status]");
+  if (status) status.addEventListener("change", () => { d.marital_status = status.value; });
+
+  body.querySelectorAll('input[name="famPartnerMode"]').forEach((el) => {
+    el.addEventListener("change", () => { d.partnerMode = el.value; renderStep(); });
+  });
+  const partnerAgent = body.querySelector("[data-fam-partner-agent]");
+  if (partnerAgent) partnerAgent.addEventListener("change", () => {
+    d.partnerAgentId = partnerAgent.value ? Number(partnerAgent.value) : null;
+  });
+  const partnerRole = body.querySelector("[data-fam-partner-role]");
+  if (partnerRole) partnerRole.addEventListener("change", () => { d.partnerRole = partnerRole.value; });
+  const gName = body.querySelector("[data-fam-partner-name]");
+  if (gName) gName.addEventListener("input", () => { d.partnerGhost.name = gName.value; });
+  const gGender = body.querySelector("[data-fam-partner-gender]");
+  if (gGender) gGender.addEventListener("change", () => { d.partnerGhost.gender = gGender.value; });
+  const gAge = body.querySelector("[data-fam-partner-age]");
+  if (gAge) gAge.addEventListener("input", () => { d.partnerGhost.age = Number(gAge.value) || 0; });
+
+  body.querySelectorAll("[data-fam-manual]").forEach((el) => {
+    el.addEventListener("change", () => {
+      const kind = el.dataset.famManual;
+      d[kind] = el.checked ? (d[kind] || []) : null;
+      renderStep();
+    });
+  });
+  body.querySelectorAll("[data-fam-add]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const kind = el.dataset.famAdd;
+      d[kind] = d[kind] || [];
+      d[kind].push(kind === "children"
+        ? { name: "", gender: "男", age: 6, coresident: true, role: "child" }
+        : { name: "", gender: "女", age: 68, coresident: true, role: "mother" });
+      renderStep();
+    });
+  });
+  const personRef = (el) => {
+    const list = d[el.dataset.famKind];
+    return Array.isArray(list) ? list[Number(el.dataset.idx)] : null;
+  };
+  body.querySelectorAll("[data-fam-name]").forEach((el) => {
+    el.addEventListener("input", () => { const p = personRef(el); if (p) p.name = el.value; });
+  });
+  body.querySelectorAll("[data-fam-gender]").forEach((el) => {
+    el.addEventListener("change", () => { const p = personRef(el); if (p) p.gender = el.value; });
+  });
+  body.querySelectorAll("[data-fam-age]").forEach((el) => {
+    el.addEventListener("input", () => { const p = personRef(el); if (p) p.age = Number(el.value) || 0; });
+  });
+  body.querySelectorAll("[data-fam-role]").forEach((el) => {
+    el.addEventListener("change", () => { const p = personRef(el); if (p) p.role = el.value; });
+  });
+  body.querySelectorAll("[data-fam-coresident]").forEach((el) => {
+    el.addEventListener("change", () => { const p = personRef(el); if (p) p.coresident = el.checked; });
+  });
+  body.querySelectorAll("[data-fam-remove]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const list = d[el.dataset.famKind];
+      if (Array.isArray(list)) list.splice(Number(el.dataset.idx), 1);
+      renderStep();
+    });
+  });
+
+  const save = $("#saveFamilyBtn");
+  if (save) save.addEventListener("click", () => saveFamilyOverride(false));
+  const reset = $("#resetFamilyBtn");
+  if (reset) reset.addEventListener("click", () => saveFamilyOverride(true));
+}
+
 function stepSocial() {
   const social = store.detail && store.detail.social;
   const relations = store.socialDraft || [];
@@ -731,7 +1051,8 @@ function stepSocial() {
         return `<div class="bar-row"><div class="bl"><b>${v.cn}</b><small>${v.lo} → ${v.hi}</small></div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(val * 100)}%"></div></div></div>`;
       }).join("")}<p class="section-note" style="margin-top:10px">社交网络密度、同质性等在仿真中演化。</p></div>
     </div>
-    <div class="card"><h3>关系与亲密度 <span class="tag">${relations.length}</span></h3>${editor}</div>`;
+    <div class="card"><h3>关系与亲密度 <span class="tag">${relations.length}</span></h3>${editor}</div>
+    ${familyCard()}`;
 }
 
 async function saveRelations() {
@@ -1094,6 +1415,16 @@ function bindMemoryStep() {
 }
 
 function bindSocialStep() {
+  // Step 5 can be reached before the (async) preview has landed — or after a
+  // failed one. Kick it off lazily, guarded so a failure cannot loop.
+  if (!store.creating && store.currentId != null && !store.familyPreview && !store.familyLoading) {
+    store.familyLoading = true;
+    loadFamilyPreview().finally(() => {
+      store.familyLoading = false;
+      if (store.step === 5) renderStep();
+    });
+  }
+  bindFamilyCard();
   const redrawRings = () => {
     const viz = $("#dunbarViz");
     if (viz) viz.innerHTML = dunbarSVG(store.socialDraft || []);

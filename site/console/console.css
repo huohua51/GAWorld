@@ -62,9 +62,18 @@ body {
   letter-spacing: 0.3px;
 }
 
+/* The tab strip is what gives way when the bar runs out of room, so the brand
+   and the right-hand controls stay put. */
 .tabs {
   display: flex;
   gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
@@ -108,8 +117,16 @@ body {
   opacity: 0.55;
 }
 
-.open-new {
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-left: auto;
+}
+
+.open-new {
+  flex-shrink: 0;
+  white-space: nowrap;
   color: rgba(242, 250, 246, 0.9);
   text-decoration: none;
   font-size: 13px;
@@ -122,6 +139,52 @@ body {
 
 .open-new:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+
+/* --------------------------------------------------------- language switch */
+.lang-switch {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(10, 74, 55, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.lang-btn {
+  padding: 4px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(242, 250, 246, 0.82);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.lang-btn:hover:not(.is-active) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.lang-btn.is-active {
+  background: var(--card);
+  color: var(--green-deep);
+}
+
+.lang-btn:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 1px;
+}
+
+/* In English the Chinese label is the primary one, so the English subtitle
+   under each tab would just repeat it. */
+html[lang="en"] .tab .en {
+  display: none;
 }
 
 /* ---------------------------------------------------------------- frames */
@@ -160,7 +223,8 @@ body {
 
   .brand,
   .tabs,
-  .open-new {
+  .open-new,
+  .bar-right {
     flex-shrink: 0;
   }
 }

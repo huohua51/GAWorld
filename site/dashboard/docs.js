@@ -101,6 +101,15 @@
       tags: ["external", "外部系统", "接入"],
     },
     {
+      id: "parallel-worlds",
+      path: "/docs/PARALLEL_WORLDS_TUTORIAL.md",
+      title: "平行世界教程",
+      en: "Parallel Worlds",
+      group: "专题教程",
+      summary: "同一批人换一件事：多分支反事实实验怎么设计、怎么读分叉图、为什么先跑安慰剂。",
+      tags: ["parallel", "counterfactual", "平行世界", "对照", "反事实"],
+    },
+    {
       id: "openclaw",
       path: "/docs/OPENCLAW_INTEGRATION.md",
       title: "OpenClaw 接入",
@@ -162,6 +171,15 @@
       group: "设计文档",
       summary: "群体智能体的建模思路与分阶段实施计划。",
       tags: ["design", "group", "设计"],
+    },
+    {
+      id: "family-design",
+      path: "/docs/FAMILY_DESIGN.md",
+      title: "家庭系统设计",
+      en: "Family / Household Design",
+      group: "设计文档",
+      summary: "婚姻状态怎么抽样、家庭怎么影响日程与账目、以及为什么这样接钩子。",
+      tags: ["design", "family", "household", "家庭", "设计"],
     },
     {
       id: "social-network-design",

@@ -8,6 +8,7 @@
   var TABS = [
     { id: "dashboard", src: "/dashboard" },
     { id: "simviz", src: "/site/simviz/index.html" },
+    { id: "worlds", src: "/site/dashboard/worlds.html" },
     { id: "analytics", src: "/site/dashboard/analytics.html" },
     { id: "studio", src: "/site/dashboard/studio.html" },
     { id: "population", src: "/site/dashboard/population.html" },
@@ -38,6 +39,22 @@
     framesEl.appendChild(iframe);
     frames[tab.id] = iframe;
     return iframe;
+  }
+
+  // Language switch. Each page reads the saved language from localStorage on
+  // load (same origin, so the value is shared); the broadcast below is what
+  // updates the frames that are already open.
+  function initLangSwitch() {
+    var buttons = [
+      { el: document.getElementById("lang-zh-btn"), locale: "zh-CN" },
+      { el: document.getElementById("lang-en-btn"), locale: "en" },
+    ];
+    buttons.forEach(function (item) {
+      if (!item.el) return;
+      item.el.addEventListener("click", function () {
+        if (typeof window.setLocale === "function") window.setLocale(item.locale);
+      });
+    });
   }
 
   function activate(id) {
@@ -74,5 +91,6 @@
     activate(currentTabId());
   });
 
+  initLangSwitch();
   activate(currentTabId());
 })();

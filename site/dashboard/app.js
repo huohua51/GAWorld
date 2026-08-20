@@ -17,6 +17,14 @@ const state = {
   running: false,
   pollTimer: null,
   avatarCache: new Map(),
+  // Run log accumulated across status polls: `offset` is the byte position the
+  // server already sent us, so each poll only brings back what was appended.
+  // Null offset asks for a full (re)load.
+  runLog: { text: "", offset: null, size: 0, skipped: 0 },
+  // Household assignment for the current run, read from the recorder output.
+  // Null until the first fetch; `{available:false}` once we know a run has
+  // not produced any yet.
+  family: null,
 };
 
 const els = {
@@ -53,6 +61,9 @@ const els = {
   simRosterCount: document.getElementById("simRosterCount"),
   toggleSimBtn: document.getElementById("toggleSimBtn"),
   refreshAgentBtn: document.getElementById("refreshAgentBtn"),
+  familyOverview: document.getElementById("familyOverview"),
+  familyDetail: document.getElementById("familyDetail"),
+  refreshFamilyBtn: document.getElementById("refreshFamilyBtn"),
   interviewContext: document.getElementById("interviewContext"),
   interviewQuestions: document.getElementById("interviewQuestions"),
   interviewBtn: document.getElementById("interviewBtn"),
@@ -89,6 +100,8 @@ const els = {
   rawDownloadBtn: document.getElementById("rawDownloadBtn"),
   reloadStatusBtn: document.getElementById("reloadStatusBtn"),
   runLogBox: document.getElementById("runLogBox"),
+  runLogMeta: document.getElementById("runLogMeta"),
+  exportRunLogBtn: document.getElementById("exportRunLogBtn"),
 };
 
 // Terrain-map rendering (avatars, trails, landmarks, zoom/pan) is provided by
@@ -364,6 +377,7 @@ async function selectAgent(agentId) {
   updateToggleSimBtn();
   renderSimRoster();
   renderTrace();
+  renderFamilyDetail();
   try {
     await loadProfile();
     await loadMemory();
@@ -523,6 +537,194 @@ function renderMarkdown(md) {
 function renderProfileView() {
   if (!els.profileView) return;
   els.profileView.innerHTML = renderMarkdown(state.profileText);
+}
+
+// ---------------------------------------------------------------------------
+// 家庭结构 card
+//
+// Reads `/api/family/overview`, which serves the recorder output of the last
+// run rather than re-deriving households on request: the assignment the agents
+// are actually living in is the one worth showing, and re-deriving it would
+// silently disagree with the run whenever the config changed since it started.
+// ---------------------------------------------------------------------------
+
+const HOUSEHOLD_TYPE_ZH = {
+  single: "独居",
+  shared: "合租",
+  with_parents: "与父母同住",
+  cohabit: "未婚同居",
+  couple: "夫妻二人",
+  nuclear: "核心家庭",
+  single_parent: "单亲家庭",
+  multigen: "三代同堂",
+};
+
+const MARITAL_STATUS_ZH = {
+  never: "未婚",
+  married: "已婚",
+  divorced: "离异",
+  widowed: "丧偶",
+};
+
+const FAMILY_ROLE_ZH = {
+  spouse: "配偶",
+  partner: "伴侣",
+  child: "子女",
+  father: "父亲",
+  mother: "母亲",
+  parent: "父母",
+  sibling: "兄弟姐妹",
+  ex: "前任",
+  roommate: "室友",
+};
+
+function familyTypeLabel(key) {
+  return HOUSEHOLD_TYPE_ZH[key] || key || "?";
+}
+
+async function loadFamily() {
+  try {
+    state.family = await api("/api/family/overview");
+  } catch (error) {
+    // A run that never started has no records; that is not an error worth
+    // shouting about in the message line.
+    state.family = { available: false, error: error.message };
+  }
+  renderFamilyCard();
+}
+
+function renderFamilyCard() {
+  renderFamilyOverview();
+  renderFamilyDetail();
+}
+
+function renderFamilyOverview() {
+  if (!els.familyOverview) return;
+  const data = state.family;
+  if (!data || !data.available) {
+    els.familyOverview.innerHTML = "";
+    return;
+  }
+  const summary = data.summary || {};
+  const types = summary.household_types || {};
+  const statuses = summary.marital_statuses || {};
+  const people = Number(summary.agents || (data.agents || []).length) || 0;
+  const single = Number(statuses.never || 0);
+
+  const stat = (label, value, hint) =>
+    `<div class="family-stat" title="${escapeHtml(hint || "")}">
+       <span class="family-stat-value">${escapeHtml(value)}</span>
+       <span class="family-stat-label">${escapeHtml(label)}</span>
+     </div>`;
+
+  const stats = [
+    stat(tr("family.stat.households", "户"), summary.households || (data.households || []).length,
+      "本次运行里一共有多少个住在一起的家庭单元"),
+    stat(tr("family.stat.couples", "仿真内夫妻"), summary.in_sim_couples || 0,
+      "配偶同样是本次运行里的居民，两人会真的在家里碰面、互相影响"),
+    stat(tr("family.stat.with_children", "有子女"), summary.with_children || 0,
+      "有孩子的居民人数。孩子会占用日程，也会花钱"),
+    stat(tr("family.stat.single", "单身"), people ? `${single}/${people}` : single,
+      "婚姻状态为未婚的居民占比"),
+  ].join("");
+
+  const total = Object.values(types).reduce((sum, n) => sum + Number(n || 0), 0);
+  const order = Object.keys(types).sort((a, b) => Number(types[b]) - Number(types[a]));
+  const bar = total
+    ? order
+        .map((key, index) => {
+          const count = Number(types[key] || 0);
+          const pct = ((count / total) * 100).toFixed(1);
+          return `<span class="family-bar-seg" data-seg="${index % 6}" style="width:${pct}%"
+                        title="${escapeHtml(familyTypeLabel(key))} ${count} 户（${pct}%）"></span>`;
+        })
+        .join("")
+    : "";
+  const legend = order
+    .map(
+      (key, index) =>
+        `<span class="family-legend-item"><i data-seg="${index % 6}"></i>${escapeHtml(
+          familyTypeLabel(key)
+        )} <b>${Number(types[key] || 0)}</b></span>`
+    )
+    .join("");
+
+  els.familyOverview.innerHTML =
+    `<div class="family-stats">${stats}</div>` +
+    (total
+      ? `<div class="family-bar">${bar}</div><div class="family-legend">${legend}</div>`
+      : "");
+}
+
+function familyMemberChip(member) {
+  const role = FAMILY_ROLE_ZH[member.role] || member.role || "";
+  const age = Number(member.age || 0);
+  const where = member.coresident ? "同住" : "不同住";
+  const inSim = member.kind === "agent";
+  return `<li class="family-member${member.coresident ? " is-coresident" : ""}">
+      <span class="family-member-role">${escapeHtml(role)}</span>
+      <span class="family-member-name">${escapeHtml(member.name || "")}</span>
+      <span class="family-member-meta">${age ? age + "岁 · " : ""}${escapeHtml(where)}${
+        inSim ? " · 也在本次仿真中" : ""
+      }</span>
+    </li>`;
+}
+
+function renderFamilyDetail() {
+  if (!els.familyDetail) return;
+  const data = state.family;
+  if (!data || !data.available) {
+    els.familyDetail.innerHTML = "";
+    return;
+  }
+  const agentId = Number(state.selectedAgentId);
+  const row = (data.agents || []).find((item) => Number(item.agent_id) === agentId);
+  if (!row) {
+    els.familyDetail.innerHTML = `<p class="family-note">${escapeHtml(
+      tr("family.not_in_run", "这位居民没有参与上一轮运行，因此没有家庭记录。")
+    )}</p>`;
+    return;
+  }
+
+  const members = Array.isArray(row.members) ? row.members : [];
+  const coresident = members.filter((m) => m.coresident);
+  const elsewhere = members.filter((m) => !m.coresident);
+  const finance = (data.finance || {})[row.household_id];
+
+  const tags =
+    `<span class="family-tag">${escapeHtml(
+      MARITAL_STATUS_ZH[row.marital_status] || row.marital_status || "?"
+    )}</span>` +
+    `<span class="family-tag">${escapeHtml(familyTypeLabel(row.household_type))}</span>` +
+    (Number(row.care_load) > 0
+      ? `<span class="family-tag subtle" title="照护负担：孩子和老人占掉的精力，0 到 1">照护负担 ${Number(
+          row.care_load
+        ).toFixed(2)}</span>`
+      : "");
+
+  const group = (title, list) =>
+    list.length
+      ? `<div class="family-group"><p class="family-group-title">${escapeHtml(title)}</p>
+           <ul class="family-members">${list.map(familyMemberChip).join("")}</ul></div>`
+      : "";
+
+  const money =
+    finance && (finance.dependant_cost || finance.partner_transfer)
+      ? `<p class="family-note">本轮累计：养育与赡养支出 <b>¥${Number(
+          finance.dependant_cost || 0
+        ).toFixed(2)}</b>${
+          finance.partner_transfer
+            ? `，伴侣之间互相补贴 <b>¥${Number(finance.partner_transfer).toFixed(2)}</b>`
+            : ""
+        }（共 ${Number(finance.days || 0)} 天）。</p>`
+      : "";
+
+  els.familyDetail.innerHTML =
+    `<div class="family-head-row"><strong>${escapeHtml(row.name || "")}</strong>${tags}</div>` +
+    (row.brief ? `<p class="family-brief">${escapeHtml(row.brief)}</p>` : "") +
+    group(tr("family.coresident", "住在一起"), coresident) +
+    group(tr("family.elsewhere", "不同住的家人"), elsewhere) +
+    money;
 }
 
 // The homepage shows profiles read-only; editing lives in Agent Studio.
@@ -877,6 +1079,9 @@ async function runSimulation(reset = false) {
   message(reset ? "正在重置并启动仿真..." : __("sim.starting"));
   const payload = { reset, config: configPayloadFromForm() };
   await api("/api/run/start", { method: "POST", body: JSON.stringify(payload) });
+  // A new run truncates the log file, so the offset we hold no longer maps to
+  // anything — drop it and let the next poll reload from the top.
+  resetRunLog();
   state.follow = true;
   message("仿真已启动，地图将实时跟随最新帧");
   await refreshStatus();
@@ -888,13 +1093,69 @@ async function stopSimulation() {
   await refreshStatus();
 }
 
+function resetRunLog() {
+  state.runLog = { text: "", offset: null, size: 0, skipped: 0 };
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// The status poll ships only the bytes appended since our offset, so the panel
+// accumulates the full log instead of the trailing window it used to show.
+function applyRunLog(status) {
+  const text = status.log_tail || "";
+  if (status.log_append) {
+    if (text) state.runLog.text += text;
+  } else {
+    state.runLog.text = text;
+    // Only a full reload can drop the head of the log, so the notice about it
+    // survives the appends that follow.
+    state.runLog.skipped = Number(status.log_skipped_bytes || 0);
+  }
+  state.runLog.offset = Number(status.log_offset || 0);
+  state.runLog.size = Number(status.log_size || 0);
+  setLogText(els.runLogBox, state.runLog.text || __("run_log.no_log"));
+  renderRunLogMeta();
+}
+
+function renderRunLogMeta() {
+  const { text, size, skipped } = state.runLog;
+  if (!size) {
+    els.runLogMeta.textContent = "";
+    return;
+  }
+  const lines = text ? text.replace(/\n$/, "").split("\n").length : 0;
+  const parts = [window.__f("run_log.meta", { lines, size: formatBytes(size) })];
+  if (skipped) parts.push(window.__f("run_log.truncated", { size: formatBytes(skipped) }));
+  els.runLogMeta.textContent = parts.join(" · ");
+}
+
+function exportRunLog() {
+  if (!state.runLog.size) {
+    message(__("run_log.no_log"), "error");
+    return;
+  }
+  // The server streams the untruncated log as Markdown and names the file via
+  // Content-Disposition, so nothing has to be buffered in the page.
+  const link = document.createElement("a");
+  link.href = "/api/run/log/export";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  message(__("run_log.exported"));
+}
+
 async function refreshStatus() {
-  const status = await api("/api/run/status");
+  const offset = state.runLog.offset;
+  const status = await api(`/api/run/status${offset == null ? "" : `?log_offset=${offset}`}`);
   state.running = Boolean(status.running);
   syncRunButtons();
   els.runStatusBadge.textContent = status.running ? __("sim.running") : status.returncode == null ? __("sim.not_run") : __("sim.finished") + " " + status.returncode;
   els.runStatusBadge.className = `status-badge ${status.running ? "running" : status.returncode === 0 ? "done" : status.returncode ? "error" : ""}`;
-  setLogText(els.runLogBox, status.log_tail || __("run_log.no_log"));
+  applyRunLog(status);
   if (status.running) loadTrace(false).catch(() => {});
 }
 
@@ -1107,9 +1368,13 @@ function bindEvents() {
     message("轨迹已刷新");
   }));
   els.reloadStatusBtn.addEventListener("click", withBusy(els.reloadStatusBtn, async () => {
+    // An explicit refresh reloads the whole log, so a panel that missed polls
+    // (or a log rotated behind our back) recovers.
+    resetRunLog();
     await refreshStatus();
     message("运行状态已刷新");
   }));
+  els.exportRunLogBtn.addEventListener("click", exportRunLog);
   els.agentSelect.addEventListener("change", () => selectAgent(els.agentSelect.value));
   if (els.simRosterList) {
     els.simRosterList.addEventListener("click", (event) => {
@@ -1129,6 +1394,12 @@ function bindEvents() {
     await loadProfile();
     message("Profile 已刷新");
   }));
+  if (els.refreshFamilyBtn) {
+    els.refreshFamilyBtn.addEventListener("click", withBusy(els.refreshFamilyBtn, async () => {
+      await loadFamily();
+      message("家庭结构已刷新");
+    }));
+  }
   els.reloadMemoryBtn.addEventListener("click", withBusy(els.reloadMemoryBtn, async () => {
     await loadMemory();
     if (!els.rawModal.hidden) renderRawModal();
@@ -1235,6 +1506,7 @@ async function init() {
     ["人物列表", loadAgents],
     ["人生事件", loadLifeEvents],
     ["Profile", loadProfile],
+    ["家庭", loadFamily],
     ["记忆", loadMemory],
     ["运行状态", refreshStatus],
   ];

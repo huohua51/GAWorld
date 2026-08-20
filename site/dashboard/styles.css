@@ -674,6 +674,13 @@ body.is-running .map-panel { border-color: rgba(14, 122, 88, 0.55); box-shadow: 
 }
 .run-log { min-height: 480px; }
 
+.run-log-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* --------------------------------------------------------------- toast */
 
 .toast {
@@ -699,6 +706,99 @@ body.is-running .map-panel { border-color: rgba(14, 122, 88, 0.55); box-shadow: 
 .toast.error { background: #6c2323; color: #ffe3e3; }
 .toast.success { background: var(--green-deep); }
 
+/* ---------------------------------------------------------- 家庭结构 card */
+
+.family-panel .family-overview { margin-top: 6px; }
+
+.family-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.family-stat {
+  background: var(--green-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.family-stat-value { font-size: 19px; font-weight: 650; color: var(--green-deep); line-height: 1.1; }
+.family-stat-label { font-size: 11px; color: var(--muted); }
+
+/* Household-type mix. Hand-written, like every other chart in this
+   directory — the dashboard has no build step and a CDN chart library would
+   cost it its offline usability. */
+.family-bar {
+  display: flex;
+  height: 10px;
+  margin-top: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--line);
+}
+.family-bar-seg { display: block; height: 100%; min-width: 2px; }
+.family-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.family-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.family-legend-item i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.family-legend-item b { color: var(--ink); font-weight: 600; }
+
+[data-seg="0"] { background: #0e7a58; }
+[data-seg="1"] { background: #3c5a68; }
+[data-seg="2"] { background: #d6a81e; }
+[data-seg="3"] { background: #7fa88f; }
+[data-seg="4"] { background: #a8746b; }
+[data-seg="5"] { background: #6b7f9e; }
+
+.family-detail { margin-top: 12px; }
+.family-detail:empty::before {
+  content: attr(data-empty);
+  color: var(--muted);
+  font-size: 12px;
+}
+.family-head-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.family-tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  border: 1px solid var(--line);
+}
+.family-tag.subtle { background: transparent; color: var(--muted); }
+.family-brief {
+  margin: 6px 0 2px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.family-group { margin-top: 8px; }
+.family-group-title { margin: 0 0 4px; font-size: 11px; color: var(--muted); }
+.family-members { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.family-member {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  font-size: 12px;
+}
+.family-member.is-coresident { border-left: 3px solid var(--green); }
+.family-member-role { color: var(--muted); font-size: 11px; min-width: 3.4em; }
+.family-member-name { font-weight: 600; }
+.family-member-meta { color: var(--muted); font-size: 11px; margin-left: auto; }
+.family-note { margin: 8px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+
 /* ---------------------------------------------------------- responsive */
 
 @media (max-width: 1280px) {
@@ -714,43 +814,12 @@ body.is-running .map-panel { border-color: rgba(14, 122, 88, 0.55); box-shadow: 
   .panel { padding: 13px; }
   .workspace-masonry { columns: 1; }
   .memory-grid, .event-grid { grid-template-columns: 1fr; }
+  .family-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .timeline { grid-template-columns: 1fr; }
   .toolbar-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .toolbar-sliders { grid-template-columns: 1fr; }
 }
 
-.lang-switcher-wrap {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  margin-left: auto;
-  padding: 12px 24px;
-}
-
-.lang-switcher {
-  width: 40px;
-  height: 40px;
-  border: 2px solid var(--line);
-  border-radius: 50%;
-  background: #fffef9;
-  color: var(--muted);
-  font-weight: 900;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.lang-switcher:hover {
-  border-color: var(--green);
-  color: var(--green);
-}
-
-.lang-switcher.active {
-  background: var(--green);
-  color: white;
-  border-color: var(--green);
-}
+/* The language switcher now lives in the console shell top bar
+   (site/console/console.css). */
 

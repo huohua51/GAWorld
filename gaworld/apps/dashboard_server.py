@@ -29,6 +29,9 @@ DASHBOARD_CONFIG_PATH = os.path.join(REPO_ROOT, "dashboard_config.json")
 PROFILE_PATH = os.path.join(REPO_ROOT, CONFIG.get("md_path", "data/hangzhou_profiles_with_names.md"))
 STATE_CSV_PATH = os.path.join(REPO_ROOT, CONFIG.get("csv_path", "data/hangzhou_agents_state_init.csv"))
 ECONOMY_SNAPSHOT_PATH = os.path.join(REPO_ROOT, "output", "economy", "wealth_snapshot.csv")
+#: Kernel Recorder output (one JSONL per table). Panels that read a plugin's
+#: recorded stream resolve it from here so tests can redirect it.
+RECORDS_DIR = os.path.join(REPO_ROOT, "output", "records")
 SKILLS_DIR = os.path.join(REPO_ROOT, CONFIG.get("skills", {}).get("global_dir", "data/skills"))
 CAPABILITIES_CACHE_PATH = os.path.join(
     REPO_ROOT, CONFIG.get("real_work", {}).get("capabilities_cache", "output/work/capabilities.json")
@@ -38,6 +41,10 @@ RELAY_STATE_PATH = os.path.join(
     CONFIG.get("distributed", {}).get("server", {}).get("state_path", "output/distributed/relay_state.json"),
 )
 RUN_LOG_PATH = os.path.join(REPO_ROOT, "output", "dashboard", "simulation_run.log")
+#: Upper bound for the first (non-incremental) run-log read. Later polls only
+#: ship the bytes appended since the client's offset, so this only caps how far
+#: back a freshly opened page starts; the Markdown export is never truncated.
+RUN_LOG_VIEW_MAX_BYTES = 8 * 1024 * 1024
 PROFILE_HEADER_RE = re.compile(r"^## Profile\s+(\d+)\s*[｜|]\s*(.+?)\s*$", re.MULTILINE)
 
 # The nine normalized [0,1] state variables that seed each agent. Order matters
@@ -1151,6 +1158,99 @@ def _tail_text(path, max_chars=12000):
     return data.decode("utf-8", errors="replace")
 
 
+def _decode_log_bytes(data, aligned):
+    """Decode a run-log slice without splitting a multi-byte UTF-8 character.
+
+    Returns ``(text, consumed)``: `consumed` counts the bytes the text covers
+    (including any dropped leading fragment) so the caller can keep the next
+    read starting on a character boundary. `aligned` says the slice already
+    starts on one, which is true for every incremental read.
+    """
+    skipped = 0
+    if not aligned:
+        while skipped < len(data) and 0x80 <= data[skipped] < 0xC0:
+            skipped += 1
+        data = data[skipped:]
+    pending = 0
+    for back in range(1, min(4, len(data)) + 1):
+        byte = data[-back]
+        if byte < 0x80:
+            break
+        if byte >= 0xC0:
+            width = 2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
+            if back < width:
+                pending = back
+            break
+    if pending:
+        data = data[:-pending]
+    return data.decode("utf-8", errors="replace"), skipped + len(data)
+
+
+def _run_log_slice(path, offset=None):
+    """Read the run log from `offset`, or its tail when `offset` is unusable.
+
+    The browser polls status every couple of seconds, so it sends the offset it
+    already has and only receives what was appended since — that is what lets
+    the panel hold the entire log instead of a trailing window.
+    """
+    if not os.path.exists(path):
+        return {"text": "", "append": False, "offset": 0, "size": 0, "skipped": 0}
+    size = os.path.getsize(path)
+    append = offset is not None and 0 <= offset <= size
+    start = offset if append else max(0, size - RUN_LOG_VIEW_MAX_BYTES)
+    with open(path, "rb") as f:
+        f.seek(start)
+        data = f.read()
+    text, consumed = _decode_log_bytes(data, aligned=append or start == 0)
+    return {
+        "text": text,
+        "append": append,
+        "offset": start + consumed,
+        "size": size,
+        # Only a replacement read can drop the head of the log; on an append
+        # `start` is just where the client left off, nothing was omitted.
+        "skipped": 0 if append else start,
+    }
+
+
+def _run_log_markdown():
+    """Render the complete run log as a Markdown document for download."""
+    status = _run_status()
+    path = status["log_path"] or RUN_LOG_PATH
+    text = ""
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            text = f.read().decode("utf-8", errors="replace")
+    if status["running"]:
+        process_state = "running"
+    elif status["returncode"] is not None:
+        process_state = f"exited with code {status['returncode']}"
+    else:
+        process_state = "not started"
+    # A log can legitimately contain backticks, so the fence has to outrun the
+    # longest run of them in the body.
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    lines = [
+        "# GAWorld Run Log",
+        "",
+        f"- Exported at: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- Log file: `{os.path.relpath(path, REPO_ROOT)}`",
+        f"- Started at: {status['started_at'] or '-'}",
+        f"- Process state: {process_state}",
+        f"- Size: {status['log_size']} bytes",
+        "",
+        "## Output",
+        "",
+        fence + "text",
+        text.rstrip("\n") if text.strip() else "(empty)",
+        fence,
+        "",
+    ]
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return "\n".join(lines), f"gaworld-run-log-{stamp}.md"
+
+
 def _memory_payload(agent_id):
     memory_dir = _effective_config().get("memory_dir", "output/memory")
     base = os.path.join(REPO_ROOT, memory_dir)
@@ -1196,16 +1296,25 @@ def _save_agent_goals_payload(agent_id, payload):
     return normalized
 
 
-def _run_status():
+def _run_status(log_offset=None):
     proc = RUN_STATE.get("process")
     running = bool(proc and proc.poll() is None)
     code = None if not proc else proc.poll()
+    log_path = RUN_STATE.get("log_path") or RUN_LOG_PATH
+    chunk = _run_log_slice(log_path, log_offset)
     return {
         "running": running,
         "returncode": code,
         "started_at": RUN_STATE.get("started_at"),
         "log_path": RUN_STATE.get("log_path"),
-        "log_tail": _tail_text(RUN_STATE.get("log_path", RUN_LOG_PATH), max_chars=16000),
+        # `log_append` tells the client whether to append `log_tail` to what it
+        # already shows or replace it. Clients that send no offset always get a
+        # replacement, so the field stays backwards compatible.
+        "log_tail": chunk["text"],
+        "log_append": chunk["append"],
+        "log_offset": chunk["offset"],
+        "log_size": chunk["size"],
+        "log_skipped_bytes": chunk["skipped"],
     }
 
 
@@ -1504,6 +1613,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _download_response(self, data, content_type, filename):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(data)
+
     def _read_json_body(self):
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length <= 0:
@@ -1522,10 +1639,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             payload, status = population_api.handle_get(path, query)
             return self._json_response(payload, status=status)
+        if path.startswith("/api/family"):
+            from gaworld.apps import family_api
+
+            payload, status = family_api.handle_get(path, query)
+            return self._json_response(payload, status=status)
         if path.startswith("/api/external-systems"):
             from gaworld.apps import external_systems_api
 
             payload, status = external_systems_api.handle_get(path, query)
+            return self._json_response(payload, status=status)
+        if path.startswith("/api/parallel-worlds"):
+            from gaworld.apps import parallel_worlds_api
+
+            payload, status = parallel_worlds_api.handle_get(path, query)
             return self._json_response(payload, status=status)
         if path.startswith("/api/settings"):
             from gaworld.apps import settings_api
@@ -1575,7 +1702,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self._json_response({"error": "Unknown analytics section"}, status=404)
             return self._json_response(payload)
         if path == "/api/run/status":
-            return self._json_response(_run_status())
+            raw_offset = (query.get("log_offset") or [""])[0].strip()
+            return self._json_response(_run_status(int(raw_offset) if raw_offset else None))
+        if path == "/api/run/log/export":
+            markdown, filename = _run_log_markdown()
+            return self._download_response(
+                markdown.encode("utf-8"), "text/markdown; charset=utf-8", filename
+            )
         if path == "/api/trace/meta":
             return self._json_response(_latest_trace_meta())
         if path == "/api/replay/runs":
@@ -1628,10 +1761,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
             body, status = population_api.handle_post(path, payload)
             return self._json_response(body, status=status)
+        if path.startswith("/api/family"):
+            from gaworld.apps import family_api
+
+            body, status = family_api.handle_post(path, payload)
+            return self._json_response(body, status=status)
         if path.startswith("/api/external-systems"):
             from gaworld.apps import external_systems_api
 
             body, status = external_systems_api.handle_post(path, payload)
+            return self._json_response(body, status=status)
+        if path.startswith("/api/parallel-worlds"):
+            from gaworld.apps import parallel_worlds_api
+
+            body, status = parallel_worlds_api.handle_post(path, payload)
             return self._json_response(body, status=status)
         if path.startswith("/api/settings"):
             from gaworld.apps import settings_api
