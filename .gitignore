@@ -195,3 +195,9 @@ cython_debug/
 /output/video/
 /output/
 data/twin_bindings.json
+
+# Local scratch / archives (not for version control)
+/tmp/
+/output_archive_202606/
+/_to_delete/
+.claude/settings.local.json
