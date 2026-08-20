@@ -42,14 +42,51 @@ from gaworld.settings.overrides import load_env_override, load_environment_confi
 
 _LOG = get_logger("gaworld.dashboard.settings")
 
-#: Top-level keys the panel refuses to edit even though they are in the tree.
-#: ``llm.providers`` holds inline ``api_key`` values for local backends; the
-#: rest of ``llm`` (routing) stays editable.
+#: Top-level keys the generic tree editor refuses to write even though they are
+#: in the tree. ``llm.providers`` holds inline ``api_key`` values for local
+#: backends, so a free-form patch into it is a credential write path; the rest
+#: of ``llm`` (routing) stays editable. Providers are edited instead through
+#: :func:`save_provider`, which takes a fixed field set and no key material.
 _READ_ONLY_PATHS: frozenset[str] = frozenset({"llm.providers"})
 
 #: Env var names whose value must never be echoed, matched case-insensitively
 #: as a substring. Everything else (log level, base URLs) shows in full.
 _SECRET_HINT = re.compile(r"key|token|secret|password|auth", re.IGNORECASE)
+
+#: A provider name becomes a dotted config path and a DOM id, so keep it to the
+#: characters that are unambiguous in both.
+_PROVIDER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+#: Editable keys per backend type, with the coercion each one needs. Anything
+#: else in an incoming provider block is dropped rather than written through —
+#: same stance as ``_coerce_like``: a typo must not plant a key the router
+#: never reads.
+#:
+#: ``api_key`` is deliberately absent. ``dashboard_config.json`` is a tracked
+#: file, so a key typed into this panel would land in git; the panel takes an
+#: env var *name* instead and reports whether it is set.
+_PROVIDER_FIELDS: dict[str, dict[str, str]] = {
+    "ollama": {"url": "str", "model": "str", "timeout": "int"},
+    "openai": {
+        "base_url": "str",
+        "model": "str",
+        "api_key_env": "str",
+        "timeout": "int",
+        "stream": "bool",
+        "max_tokens": "int",
+        "temperature": "float",
+    },
+    "anthropic": {
+        "base_url": "str",
+        "model": "str",
+        "api_key_env": "str",
+        "timeout": "int",
+        "max_tokens": "int",
+    },
+}
+
+#: Which field carries the endpoint, per type — required alongside ``model``.
+_PROVIDER_ENDPOINT = {"ollama": "url", "openai": "base_url", "anthropic": "base_url"}
 
 
 def _ds():
@@ -272,6 +309,188 @@ def _raw_files() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# LLM providers
+# ---------------------------------------------------------------------------
+
+
+def _providers(tree: dict[str, Any]) -> dict[str, Any]:
+    block = (tree.get("llm") or {}).get("providers")
+    return block if isinstance(block, dict) else {}
+
+
+def _redact(tree: dict[str, Any]) -> dict[str, Any]:
+    """Copy ``tree`` with inline provider keys masked.
+
+    Two local backends ship a literal ``api_key`` in the Python defaults, so the
+    unredacted tree hands them to every browser that opens the panel — against
+    this module's own "secrets are reported as present/absent" rule. Masking on
+    the wire only; :func:`save_config` still coerces against the real config.
+    """
+    providers = _providers(tree)
+    if not any(isinstance(cfg, dict) and cfg.get("api_key") for cfg in providers.values()):
+        return tree
+    out = dict(tree)
+    out["llm"] = dict(out["llm"])
+    out["llm"]["providers"] = {
+        name: (dict(cfg, api_key="••••••") if isinstance(cfg, dict) and cfg.get("api_key") else cfg)
+        for name, cfg in providers.items()
+    }
+    return out
+
+
+def _choice_map(tree: dict[str, Any]) -> dict[str, list[str]]:
+    """Dotted path -> the closed set of values it may take.
+
+    Only routing today. Routing values *are* provider names, and a free-text box
+    for one is a trap: a typo reads as a valid config right up until the run
+    dies on "Provider 'ollama_gemm4' not found".
+    """
+    names = sorted(_providers(tree))
+    if not names:
+        return {}
+    routing = (tree.get("llm") or {}).get("routing") or {}
+    choices = {"llm.routing.default": names}
+    for task in (routing.get("tasks") or {}):
+        choices[f"llm.routing.tasks.{task}"] = names
+    for agent in (routing.get("agents") or {}):
+        choices[f"llm.routing.agents.{agent}"] = names
+    return choices
+
+
+def _provider_view(tree: dict[str, Any]) -> list[dict[str, Any]]:
+    """Provider rows for the picker card: what it is, where it points, is it usable.
+
+    The key is reported as *which env var* and *is it set* — never the value.
+    """
+    routing = (tree.get("llm") or {}).get("routing") or {}
+    layer = _ds()._dashboard_config()
+    added = set(_providers(layer))
+    rows = []
+    for name, cfg in sorted(_providers(tree).items()):
+        if not isinstance(cfg, dict):
+            continue
+        p_type = str(cfg.get("type") or "")
+        envs = [str(item) for item in (cfg.get("api_key_envs") or []) if item]
+        if cfg.get("api_key_env") and str(cfg["api_key_env"]) not in envs:
+            envs.insert(0, str(cfg["api_key_env"]))
+        rows.append(
+            {
+                "name": name,
+                "type": p_type,
+                "model": str(cfg.get("model") or ""),
+                "endpoint": str(cfg.get(_PROVIDER_ENDPOINT.get(p_type, "base_url")) or ""),
+                "timeout": cfg.get("timeout"),
+                "api_key_envs": envs,
+                # Inline keys are the local-backend placeholders; "has a key" is
+                # all the browser needs to know about them.
+                "key_ready": bool(cfg.get("api_key")) or any(os.environ.get(n) for n in envs),
+                "needs_key": p_type in ("openai", "anthropic", "claude"),
+                "editable": name in added,
+                "is_default": name == routing.get("default"),
+            }
+        )
+    return rows
+
+
+def _coerce_field(value: Any, kind: str, path: str) -> Any:
+    if kind == "bool":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("true", "1", "yes", "on")
+        raise ValueError(f"{path} 必须是 true/false")
+    if kind in ("int", "float"):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{path} 必须是数字") from None
+        if number != number or number in (float("inf"), float("-inf")):
+            raise ValueError(f"{path} 必须是有限数字")
+        return int(number) if kind == "int" else number
+    return str(value)
+
+
+def _clean_provider(payload: Any) -> tuple[str, dict[str, Any]]:
+    """Validate an incoming provider block down to ``(name, config)``.
+
+    Raises :class:`ValueError` with a message meant to be shown as-is.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("provider 必须是一个对象")
+    name = str(payload.get("name") or "").strip()
+    if not _PROVIDER_NAME.match(name):
+        raise ValueError("后端名称只能用字母、数字、下划线和短横线，且以字母或数字开头。")
+    body = payload.get("config")
+    if not isinstance(body, dict):
+        raise ValueError("provider 配置必须是一个对象")
+    p_type = str(body.get("type") or "").strip().lower()
+    if p_type == "claude":
+        p_type = "anthropic"
+    if p_type not in _PROVIDER_FIELDS:
+        raise ValueError("后端类型只支持：" + "、".join(sorted(_PROVIDER_FIELDS)))
+    fields = _PROVIDER_FIELDS[p_type]
+    cfg: dict[str, Any] = {"type": p_type}
+    for key, kind in fields.items():
+        if key not in body:
+            continue
+        value = body[key]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue  # an empty box means "leave it to the code default"
+        cfg[key] = _coerce_field(value, kind, f"{name}.{key}")
+    if "api_key" in body:
+        raise ValueError(
+            "不接受在这里填密钥：dashboard_config.json 会进版本库。"
+            "请填「密钥环境变量」的名字，并在 .env 里配好它的值。"
+        )
+    if not cfg.get("model"):
+        raise ValueError("必须填模型名（model）。")
+    endpoint = _PROVIDER_ENDPOINT[p_type]
+    if not cfg.get(endpoint):
+        raise ValueError(f"必须填接口地址（{endpoint}）。")
+    return name, cfg
+
+
+def save_provider(payload: dict[str, Any]) -> dict[str, Any]:
+    """Add or replace one ``llm.providers`` entry in the override file.
+
+    Replaces rather than deep-merges: a provider block is a single coherent
+    unit, and merging would leave the previous ``api_key_env`` or ``stream``
+    behind after the user cleared the box.
+    """
+    name, cfg = _clean_provider(payload)
+    ds = _ds()
+    current = ds._dashboard_config()
+    current.setdefault("llm", {}).setdefault("providers", {})[name] = cfg
+    ds._atomic_write_json(ds.DASHBOARD_CONFIG_PATH, current)
+    _LOG.info("llm provider saved: %s (%s)", name, cfg["type"])
+    return _wire_safe({"saved": True, "name": name, **overview()})
+
+
+def test_provider(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run one real generation against a saved provider or an unsaved draft.
+
+    The draft path is the point: it lets someone find out the endpoint or model
+    name is wrong *before* committing it to the config file.
+    """
+    from gaworld.llm.providers import probe_provider
+
+    if not isinstance(payload, dict):
+        raise ValueError("请求体必须是一个对象")
+    if isinstance(payload.get("config"), dict):
+        # A draft is tested before it has a name; borrow one so the shared
+        # validation still runs on everything that does matter.
+        name, cfg = _clean_provider(dict(payload, name=payload.get("name") or "draft"))
+    else:
+        name = str(payload.get("name") or "").strip()
+        cfg = _providers(_ds()._effective_config()).get(name)
+        if not isinstance(cfg, dict):
+            raise ValueError(f"没有名为 {name} 的后端。")
+    result = probe_provider(cfg)
+    _LOG.info("llm provider probe: %s ok=%s", name, result.get("ok"))
+    return _wire_safe({"name": name, **result})
+
+
+# ---------------------------------------------------------------------------
 # Overview
 # ---------------------------------------------------------------------------
 
@@ -302,12 +521,15 @@ def overview() -> dict[str, Any]:
     return _wire_safe(
         {
             "sections": sections,
-            "tree": effective,
-            "defaults": defaults,
+            "tree": _redact(effective),
+            "defaults": _redact(defaults),
             "sources": _source_map(),
             "layers": layers,
             "docs": _doc_map(effective),
             "read_only": sorted(_READ_ONLY_PATHS),
+            "choices": _choice_map(effective),
+            "providers": _provider_view(effective),
+            "provider_types": sorted(_PROVIDER_FIELDS),
             "env": _env_snapshot(),
             "files": _raw_files(),
         }
@@ -444,6 +666,10 @@ def handle_post(path: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int
             return reset_paths(payload), 200
         if path == "/api/settings/reset-all":
             return reset_all(), 200
+        if path == "/api/settings/llm/provider":
+            return save_provider(payload), 200
+        if path == "/api/settings/llm/test":
+            return test_provider(payload), 200
     except (ValueError, TypeError) as exc:
         return {"error": str(exc)}, 400
     except OSError as exc:
@@ -458,4 +684,6 @@ __all__ = [
     "reset_all",
     "reset_paths",
     "save_config",
+    "save_provider",
+    "test_provider",
 ]

@@ -250,6 +250,161 @@ class ResetTests(unittest.TestCase):
         self.assertIn("error", body)
 
 
+class LlmProviderTests(unittest.TestCase):
+    """选后端 / 加后端 / 测连通性 — the three things the tree editor can't express."""
+
+    def test_routing_paths_carry_the_provider_names_as_a_closed_set(self):
+        # A free-text routing value is a typo away from a run that dies on
+        # "Provider not found" after the config has already been saved.
+        with _TempRepo():
+            payload = api.overview()
+        names = payload["choices"]["llm.routing.default"]
+        self.assertIn("ollama_gemma4", names)
+        self.assertEqual(sorted(payload["tree"]["llm"]["providers"]), names)
+        # Per-task routing is the same closed set, not a different one.
+        self.assertEqual(names, payload["choices"]["llm.routing.tasks.schedule"])
+
+    def test_provider_rows_report_key_readiness_without_the_key(self):
+        secret = "sk-must-not-travel-9876543210"
+        os.environ["MINIMAX_API_KEY"] = secret
+        try:
+            with _TempRepo():
+                payload = api.overview()
+                blob = json.dumps(payload, ensure_ascii=False)
+        finally:
+            os.environ.pop("MINIMAX_API_KEY", None)
+        row = next(item for item in payload["providers"] if item["name"] == "minimax")
+        self.assertTrue(row["needs_key"])
+        self.assertTrue(row["key_ready"])
+        self.assertEqual(["MINIMAX_API_KEY"], row["api_key_envs"])
+        self.assertNotIn(secret, blob)
+
+    def test_inline_provider_keys_are_masked_on_the_wire(self):
+        # Two local backends ship a literal api_key in the Python defaults, and
+        # this payload is served to any browser that can reach the port.
+        with _TempRepo():
+            payload = api.overview()
+        self.assertEqual("••••••", payload["tree"]["llm"]["providers"]["omlx_qwen"]["api_key"])
+        self.assertEqual("••••••", payload["defaults"]["llm"]["providers"]["omlx_qwen"]["api_key"])
+        # Masking is on the wire only — the real value still reaches the router.
+        self.assertEqual("omlx-local", ds._effective_config()["llm"]["providers"]["omlx_qwen"]["api_key"])
+
+    def test_added_provider_lands_in_the_override_file_and_the_choices(self):
+        with _TempRepo() as repo:
+            result = api.save_provider(
+                {
+                    "name": "my_local",
+                    "config": {"type": "ollama", "url": "http://127.0.0.1:11434/api/generate",
+                               "model": "qwen3.5:9b", "timeout": "600"},
+                }
+            )
+            saved = repo.config()
+        self.assertEqual(
+            {"type": "ollama", "url": "http://127.0.0.1:11434/api/generate",
+             "model": "qwen3.5:9b", "timeout": 600},
+            saved["llm"]["providers"]["my_local"],
+        )
+        self.assertIsInstance(saved["llm"]["providers"]["my_local"]["timeout"], int)
+        # A backend you cannot then select is not added.
+        self.assertIn("my_local", result["choices"]["llm.routing.default"])
+        row = next(item for item in result["providers"] if item["name"] == "my_local")
+        self.assertTrue(row["editable"])
+
+    def test_saving_a_provider_replaces_the_block_instead_of_merging_it(self):
+        # Deep-merging would leave a cleared api_key_env behind, so the backend
+        # keeps authenticating with a credential the user believes they removed.
+        with _TempRepo(
+            dashboard_config={"llm": {"providers": {"cloud": {
+                "type": "openai", "base_url": "https://a/v1", "model": "m", "api_key_env": "OLD_KEY"}}}}
+        ) as repo:
+            api.save_provider(
+                {"name": "cloud", "config": {"type": "openai", "base_url": "https://b/v1", "model": "m2"}}
+            )
+            saved = repo.config()
+        self.assertNotIn("api_key_env", saved["llm"]["providers"]["cloud"])
+        self.assertEqual("https://b/v1", saved["llm"]["providers"]["cloud"]["base_url"])
+
+    def test_a_plaintext_key_is_refused_rather_than_written_to_a_tracked_file(self):
+        with _TempRepo():
+            with self.assertRaises(ValueError) as caught:
+                api.save_provider(
+                    {"name": "cloud", "config": {"type": "openai", "base_url": "https://a/v1",
+                                                 "model": "m", "api_key": "sk-leak"}}
+                )
+            self.assertFalse(os.path.exists(ds.DASHBOARD_CONFIG_PATH))
+        self.assertIn("密钥", str(caught.exception))
+
+    def test_incomplete_or_unsupported_providers_are_refused(self):
+        with _TempRepo():
+            for bad in (
+                {"name": "x", "config": {"type": "ollama", "url": "http://a"}},          # no model
+                {"name": "x", "config": {"type": "ollama", "model": "m"}},               # no endpoint
+                {"name": "x", "config": {"type": "telepathy", "model": "m"}},            # unknown type
+                {"name": "bad name", "config": {"type": "ollama", "url": "u", "model": "m"}},
+            ):
+                with self.assertRaises(ValueError, msg=bad):
+                    api.save_provider(bad)
+            self.assertFalse(os.path.exists(ds.DASHBOARD_CONFIG_PATH))
+
+    def test_deleting_an_added_provider_reuses_the_reset_path(self):
+        # The panel's 删除 button posts to /api/settings/reset; a provider added
+        # here is just another override, so removal is the same pruning.
+        with _TempRepo(
+            dashboard_config={"llm": {"providers": {"mine": {"type": "ollama", "url": "u", "model": "m"}}}}
+        ) as repo:
+            result = api.reset_paths({"paths": ["llm.providers.mine"]})
+            saved = repo.config()
+        self.assertEqual(["llm.providers.mine"], result["removed"])
+        self.assertEqual({}, saved)
+        self.assertNotIn("mine", result["choices"]["llm.routing.default"])
+
+    def test_probe_of_an_unreachable_backend_is_a_verdict_not_an_exception(self):
+        # The button must always answer. An exception here would leave the row
+        # stuck on 正在调用… with no explanation.
+        with _TempRepo():
+            result = api.test_provider(
+                {"name": "draft", "config": {"type": "ollama", "model": "nope",
+                                             "url": "http://127.0.0.1:1/api/generate", "timeout": 2}}
+            )
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["error"])
+
+    def test_probe_names_the_missing_env_var_instead_of_reporting_a_401(self):
+        os.environ.pop("GAWORLD_TEST_ABSENT_KEY", None)
+        with _TempRepo():
+            result = api.test_provider(
+                {"config": {"type": "openai", "model": "m", "base_url": "https://example.invalid/v1",
+                            "api_key_env": "GAWORLD_TEST_ABSENT_KEY"}}
+            )
+        self.assertFalse(result["ok"])
+        self.assertIn("GAWORLD_TEST_ABSENT_KEY", result["error"])
+
+    def test_probing_an_unknown_saved_provider_is_a_400_not_a_crash(self):
+        with _TempRepo():
+            body, status = api.handle_post("/api/settings/llm/test", {"name": "ghost"})
+        self.assertEqual(400, status)
+        self.assertIn("ghost", body["error"])
+
+    def test_the_probe_takes_one_shot_while_the_simulator_still_retries(self):
+        # The router's three-with-backoff is right for a long run and wrong for
+        # a button: it turns an unreachable endpoint into a minute of silence.
+        from gaworld.llm import providers
+
+        cfg = {"type": "ollama", "url": "http://127.0.0.1:1/api/generate", "model": "m"}
+        self.assertEqual(1, providers.build_provider(cfg, attempts=1).attempts)
+        self.assertEqual(3, providers.build_provider(cfg).attempts)
+
+    def test_the_probe_builds_the_same_object_the_router_uses(self):
+        # A probe with its own hand-rolled request would keep passing after the
+        # router's construction drifted — the one failure it exists to catch.
+        from gaworld.llm import providers
+
+        cfg = ds._effective_config()["llm"]["providers"]["minimax"]
+        built = providers.build_provider(cfg)
+        self.assertIsInstance(built, type(providers.LLM_ROUTER.providers["minimax"]))
+        self.assertEqual(providers.LLM_ROUTER.providers["minimax"].base_url, built.base_url)
+
+
 class SecretTests(unittest.TestCase):
     def test_secret_env_values_are_masked_and_never_appear_in_the_payload(self):
         secret = "sk-do-not-echo-0123456789"
@@ -407,6 +562,23 @@ class PanelWiringTests(unittest.TestCase):
         self.assertIn("function esc(text)", source)
         self.assertIn("esc(helpText(path, value))", source)
         self.assertIn("esc(item.name)", source)
+
+    def test_the_llm_panel_wires_all_three_actions(self):
+        source = self._read("site", "dashboard", "settings.js")
+        # Pick a backend: a closed-set <select>, fed by the backend's choices.
+        self.assertIn("function choicesFor(path)", source)
+        self.assertIn("function optionsHtml(options, current)", source)
+        self.assertIn("<select data-kind=", source)
+        # Add one, and probe one — saved or still a draft.
+        self.assertIn("/api/settings/llm/provider", source)
+        self.assertIn("/api/settings/llm/test", source)
+        self.assertIn("function draftPayload()", source)
+
+    def test_the_panel_never_offers_a_plaintext_key_box(self):
+        # dashboard_config.json is tracked; a key typed here would land in git.
+        source = self._read("site", "dashboard", "settings.js")
+        self.assertIn('field("api_key_env", "密钥环境变量"', source)
+        self.assertNotIn('data-draft="api_key"', source)
 
     def test_every_field_gets_a_tooltip_even_without_curated_text(self):
         # The fallback (path / type / default / source) is what makes the

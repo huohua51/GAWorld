@@ -99,6 +99,10 @@ def llm_settings() -> dict[str, Any]:
                 "tasks": {
                     "schedule": "ollama_gemma4",
                 },
+                # Tried in order after the primary fails. gemma4:e4b is small
+                # enough to answer inside its timeout when a bigger local model
+                # stalls, so one slow call no longer aborts a whole run.
+                "fallback": ["ollama_gemma4"],
             },
         },
     }

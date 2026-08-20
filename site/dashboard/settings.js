@@ -29,6 +29,27 @@
 
   var SOURCE_SHORT = { dashboard: "已改", env: "环境变量", env_file: "环境文件" };
 
+  var PROVIDER_TYPES = {
+    ollama: {
+      label: "本地 Ollama",
+      endpoint: "http://localhost:11434/api/generate",
+      needsKey: false,
+      note: "本地 Ollama 服务。地址填到 /api/generate 为止，模型名要和 ollama list 里的完全一致。",
+    },
+    openai: {
+      label: "OpenAI 兼容接口",
+      endpoint: "https://api.openai.com/v1",
+      needsKey: true,
+      note: "任何 OpenAI 兼容的接口都走这一类：官方 OpenAI、vLLM、LM Studio、omlx 等。地址填到 /v1 为止，不含 /chat/completions。",
+    },
+    anthropic: {
+      label: "Anthropic 兼容接口",
+      endpoint: "https://api.anthropic.com",
+      needsKey: true,
+      note: "Anthropic Messages 接口，MiniMax 的 anthropic 端点也走这一类。地址不含 /v1/messages，代码会自己拼。",
+    },
+  };
+
   var state = {
     data: null,
     tab: null,
@@ -37,6 +58,8 @@
     dirty: {},   // "economy.macro.initial_inflation_rate" -> value
     invalid: {}, // 同 key，JSON 文本框解析不了时为 true
     busy: false,
+    probes: {},  // 后端名 -> {busy|ok|error}，测试结果就地更新，不重绘整页
+    draft: { type: "ollama", name: "", endpoint: "", model: "", api_key_env: "", timeout: "" },
   };
 
   /* ----------------------------------------------------------------- utils */
@@ -107,6 +130,12 @@
 
   function defaultFor(path) {
     return at(state.data ? state.data.defaults : null, path);
+  }
+
+  /** 闭集取值（目前只有模型路由）。没有就返回 null，走原来的自由文本框。 */
+  function choicesFor(path) {
+    var map = (state.data && state.data.choices) || {};
+    return has(map, path) ? map[path] : null;
   }
 
   function isReadOnly(path) {
@@ -221,6 +250,18 @@
       '<code class="set-path">' + esc(path.split(".").pop()) + "</code>" + badges(path) + "</span>";
   }
 
+  /** 下拉选项。当前值不在清单里也要列出来并标明 ——
+   *  悄悄显示成另一个后端，比显示一个坏值更危险。 */
+  function optionsHtml(options, current) {
+    var list = options.slice();
+    var stale = current && list.indexOf(current) < 0;
+    if (stale) list.unshift(current);
+    return list.map(function (name) {
+      return '<option value="' + esc(name) + '"' + (name === current ? " selected" : "") + ">" +
+        esc(name) + (stale && name === current ? "（清单里没有这个后端）" : "") + "</option>";
+    }).join("");
+  }
+
   /** 搜索命中判断：标签、路径、说明都算。 */
   function matches(path) {
     if (!state.query) return true;
@@ -277,6 +318,11 @@
 
     if (typeof value === "string") {
       var text = String(currentValue(path, value));
+      var options = choicesFor(path);
+      if (options) {
+        return '<label class="' + fieldClass(path) + '">' + labelCell(path, value) +
+          '<select data-kind="text"' + attrs + ">" + optionsHtml(options, text) + "</select></label>";
+      }
       if (text.length > 80) {
         return '<label class="' + fieldClass(path) + '">' + labelCell(path, value) +
           '<textarea data-kind="text"' + attrs + ">" + esc(text) + "</textarea></label>";
@@ -293,19 +339,142 @@
       '<textarea data-kind="json"' + attrs + ">" + esc(json) + "</textarea></label>";
   }
 
+  /* ---------------------------------------------------------- 语言模型卡片 */
+
+  /* 这一段是整个面板里唯一一处手写表单，因为「模型」这一项的三件事都是通用树渲染
+   * 不可能长出来的：选后端要的是闭集下拉而不是自由文本、加后端要的是一次写进一整
+   * 个块、测连通性根本不是配置读写。其余 500 多项仍然走下面的通用渲染。 */
+
+  function providerRows() {
+    return (state.data && state.data.providers) || [];
+  }
+
+  function probeHtml(probe) {
+    if (!probe) return "";
+    if (probe.busy) return '<span class="llm-result is-busy">正在调用…</span>';
+    if (probe.ok) {
+      return '<span class="llm-result is-ok">✓ 通了 · ' + probe.latency_ms + " ms" +
+        (probe.sample ? " · 回答：" + esc(probe.sample) : "") + "</span>";
+    }
+    return '<span class="llm-result is-bad">✗ ' + esc(probe.error || "调用失败") + "</span>";
+  }
+
+  function renderPicker() {
+    var path = "llm.routing.default";
+    var value = String(currentValue(path, at(state.data.tree, path) || ""));
+    var options = choicesFor(path) || [];
+    var help = "所有没有单独指定的任务都用这个后端，它决定了绝大部分成本。" +
+      "选完要点右下角「保存配置」才会写进 dashboard_config.json，并在下一次启动仿真时生效。" +
+      "个别任务想用别的后端，去下面的 llm → routing → tasks。";
+    return '<div class="llm-card llm-pick">' +
+      '<h3>用哪个大模型<span class="help-tip" data-help="' + esc(help) + '"></span></h3>' +
+      '<label class="' + fieldClass(path) + '">' +
+      '<span class="set-label">默认后端<code class="set-path">' + esc(path) + "</code>" + badges(path) + "</span>" +
+      '<select data-kind="text" data-path="' + esc(path) + '">' + optionsHtml(options, value) + "</select></label>" +
+      '<p class="set-hint">改动会进入右侧「待保存的修改」，点「保存配置」生效。</p></div>';
+  }
+
+  function renderProviderList() {
+    var rows = providerRows().map(function (item) {
+      var meta = [
+        item.type,
+        item.model,
+        item.endpoint,
+        item.timeout ? "超时 " + item.timeout + "s" : "",
+      ].filter(Boolean).map(esc).join(" · ");
+      var key = "";
+      if (item.needs_key) {
+        key = item.key_ready
+          ? '<span class="llm-key is-ok">密钥已就绪</span>'
+          : '<span class="llm-key is-bad">缺密钥：' +
+            esc(item.api_key_envs.join("、") || "未指定环境变量") + "</span>";
+      }
+      return '<div class="llm-row' + (item.is_default ? " is-default" : "") + '">' +
+        '<div class="llm-row-head"><b>' + esc(item.name) + "</b>" +
+        (item.is_default ? '<span class="set-badge is-dashboard">默认</span>' : "") +
+        (item.editable ? '<span class="set-badge is-dashboard">本面板添加</span>' : "") +
+        key + "</div>" +
+        '<div class="llm-row-meta">' + meta + "</div>" +
+        '<div class="llm-row-actions">' +
+        '<button type="button" class="button subtle" data-test-provider="' + esc(item.name) + '">测试连通性</button>' +
+        (item.editable
+          ? '<button type="button" class="button subtle" data-drop-provider="' + esc(item.name) +
+            '" title="把它从 dashboard_config.json 里删掉">删除</button>'
+          : "") +
+        '<span class="llm-slot" data-result="' + esc(item.name) + '">' +
+        probeHtml(state.probes[item.name]) + "</span></div></div>";
+    }).join("");
+    var help = "「测试连通性」会真的向这个后端发一次极短的生成请求 —— 只有真发一次才分得清" +
+      "「连得上」和「连得上但模型没拉下来 / 密钥被拒 / 只吐思考不吐正文」。它不改任何配置。";
+    return '<div class="llm-card">' +
+      "<h3>已配置的后端 <span class=\"set-count\">" + providerRows().length + "</span>" +
+      '<span class="help-tip" data-help="' + esc(help) + '"></span></h3>' +
+      (rows || '<p class="set-hint">还没有任何后端。</p>') + "</div>";
+  }
+
+  function renderAddForm() {
+    var draft = state.draft;
+    var spec = PROVIDER_TYPES[draft.type] || PROVIDER_TYPES.ollama;
+    var types = Object.keys(PROVIDER_TYPES).map(function (id) {
+      return '<option value="' + id + '"' + (id === draft.type ? " selected" : "") + ">" +
+        esc(PROVIDER_TYPES[id].label) + "（" + id + "）</option>";
+    }).join("");
+    function field(key, label, placeholder, help) {
+      return '<label class="llm-field"><span>' + esc(label) +
+        '<span class="help-tip" data-help="' + esc(help) + '"></span></span>' +
+        '<input type="text" data-draft="' + key + '" value="' + esc(draft[key]) +
+        '" placeholder="' + esc(placeholder) + '" /></label>';
+    }
+    return '<div class="llm-form">' +
+      '<label class="llm-field"><span>类型<span class="help-tip" data-help="' + esc(spec.note) +
+      '"></span></span><select data-draft="type">' + types + "</select></label>" +
+      field("name", "名称", "例如 my_local_qwen",
+        "在配置里引用这个后端时用的名字，也是上面下拉里显示的名字。只能用字母、数字、下划线、短横线。") +
+      field("model", "模型名", draft.type === "ollama" ? "qwen3.5:9b" : "gpt-5.4",
+        "后端自己认识的模型标识，必须和服务端完全一致。写错了「测试连通性」会直接告诉你。") +
+      field("endpoint", "接口地址", spec.endpoint,
+        "留空就用默认地址：" + spec.endpoint) +
+      (spec.needsKey
+        ? field("api_key_env", "密钥环境变量", "MY_PROVIDER_API_KEY",
+            "填环境变量的「名字」，不是密钥本身。dashboard_config.json 会进版本库，" +
+            "所以这里不接受明文密钥。把值写进仓库根目录的 .env，重启仿真进程后即可生效；" +
+            "「环境变量」页签能看到它有没有被读到。")
+        : "") +
+      field("timeout", "超时（秒）", spec.needsKey ? "120" : "600",
+        "单次调用等多久。本地模型慢，通常要 600；云端 120 足够。留空用代码默认值。") +
+      '<div class="llm-form-actions">' +
+      '<button type="button" class="button subtle" id="llmDraftTest">先测一下</button>' +
+      '<button type="button" class="button primary" id="llmDraftSave">添加</button>' +
+      '<span class="llm-slot" id="llmDraftResult">' + probeHtml(state.probes.__draft) + "</span></div></div>";
+  }
+
+  function renderAddCard() {
+    var help = "新后端会写进 dashboard_config.json 的 llm.providers 里，立刻出现在上面的下拉中，" +
+      "并在下一次启动仿真时可用。密钥只收环境变量名，不收明文。";
+    return '<div class="llm-card">' +
+      '<h3>添加本地或云端模型<span class="help-tip" data-help="' + esc(help) + '"></span></h3>' +
+      '<div id="llmAddBox">' + renderAddForm() + "</div></div>";
+  }
+
+  function renderLlmPanel() {
+    return renderPicker() + renderProviderList() + renderAddCard();
+  }
+
   /* ------------------------------------------------------------ 各页签内容 */
 
   function renderSection(section) {
     var tree = state.data.tree;
+    var head = section.id === "llm" ? renderLlmPanel() : "";
     var body = section.keys.map(function (key) {
       return renderNode(key, tree[key], key, 0);
     }).join("");
     if (!body) {
+      if (head) return '<p class="set-section-help">' + esc(section.help) + "</p>" + head;
       return '<p class="set-hint">' +
         (state.query ? "这一分区里没有匹配「" + esc(state.query) + "」的配置项。" : "这一分区里没有可显示的配置项。") +
         "</p>";
     }
-    return '<p class="set-section-help">' + esc(section.help) + "</p>" + body;
+    return '<p class="set-section-help">' + esc(section.help) + "</p>" + head + body;
   }
 
   /** 搜索时跨分区平铺，因为想调「通胀」的人不该先知道它属于哪个分区。 */
@@ -528,6 +697,16 @@
     } else {
       state.dirty[path] = value;
     }
+    // 默认后端在页面上有两个控件（顶部的选择器和下面的 routing 树），它们绑同一个
+    // 路径。不同步的话，面板会同时显示两个互相矛盾的「当前值」。
+    var twins = document.querySelectorAll('[data-path="' + path + '"]');
+    for (var i = 0; i < twins.length; i++) {
+      if (twins[i] === el) continue;
+      if (twins[i].type === "checkbox") twins[i].checked = el.checked;
+      else twins[i].value = el.value;
+      var twinField = twins[i].closest(".set-field");
+      if (twinField) twinField.classList.toggle("is-dirty", has(state.dirty, path));
+    }
     var field = el.closest(".set-field");
     if (field) {
       field.classList.toggle("is-dirty", has(state.dirty, path));
@@ -606,6 +785,62 @@
     }).catch(function () {});
   }
 
+  /* -------------------------------------------------------- 语言模型的动作 */
+
+  /** 测试结果就地更新：整页重绘会把用户正在填的表单和滚动位置一起清掉。 */
+  function paintProbe(key) {
+    var slot = key === "__draft" ? $("llmDraftResult") : document.querySelector('[data-result="' + key + '"]');
+    if (slot) slot.innerHTML = probeHtml(state.probes[key]);
+  }
+
+  function probe(key, payload) {
+    var label = key === "__draft" ? "待添加的后端" : "后端「" + key + "」";
+    state.probes[key] = { busy: true };
+    paintProbe(key);
+    api("POST", "/api/settings/llm/test", payload).then(function (result) {
+      state.probes[key] = result;
+      paintProbe(key);
+      status(result.ok ? label + "：连通，用时 " + result.latency_ms + " ms。" : label + "：没连上，看那一行的红字。",
+        result.ok ? "ok" : "bad");
+    }).catch(function (err) {
+      state.probes[key] = { ok: false, error: String((err && err.message) || err) };
+      paintProbe(key);
+    });
+  }
+
+  /** 表单 -> provider 配置块。地址的键名随类型变，所以在这里而不是在后端拍板。 */
+  function draftPayload() {
+    var draft = state.draft;
+    var spec = PROVIDER_TYPES[draft.type] || PROVIDER_TYPES.ollama;
+    var config = { type: draft.type, model: draft.model.trim() };
+    config[draft.type === "ollama" ? "url" : "base_url"] = draft.endpoint.trim() || spec.endpoint;
+    if (spec.needsKey && draft.api_key_env.trim()) config.api_key_env = draft.api_key_env.trim();
+    if (draft.timeout.trim()) config.timeout = draft.timeout.trim();
+    return { name: draft.name.trim(), config: config };
+  }
+
+  function addProvider() {
+    var payload = draftPayload();
+    api("POST", "/api/settings/llm/provider", payload).then(function (result) {
+      state.draft = { type: state.draft.type, name: "", endpoint: "", model: "", api_key_env: "", timeout: "" };
+      delete state.probes.__draft;
+      absorb(result);
+      status("已添加后端「" + result.name + "」。它已经写进 dashboard_config.json，" +
+        "可以在上面的下拉里选它，也可以点它那一行的「测试连通性」。", "ok");
+    }).catch(function () {});
+  }
+
+  function dropProvider(name) {
+    if (!window.confirm("将把后端「" + name + "」从 dashboard_config.json 里删掉。\n\n继续？")) return;
+    // 复用通用的 reset：删一个覆盖项本来就是「把这个路径从覆盖文件里剪掉」。
+    api("POST", "/api/settings/reset", { paths: ["llm.providers." + name] }).then(function (result) {
+      delete state.probes[name];
+      absorb(result);
+      status(result.removed.length ? "已删除后端「" + name + "」。" : "这个后端不在覆盖文件里，删不掉。",
+        result.removed.length ? "ok" : "warn");
+    }).catch(function () {});
+  }
+
   function load() {
     status("正在读取配置…");
     api("GET", "/api/settings/overview").then(function (payload) {
@@ -624,7 +859,42 @@
     var kind = event.target.getAttribute && event.target.getAttribute("data-kind");
     if (kind && kind !== "bool") onFieldChange(event);
   });
+  // 新增表单的输入只记进 state.draft，不触发重绘 —— 边打字边重绘会把光标弹走。
+  body.addEventListener("input", function (event) {
+    var key = event.target.getAttribute && event.target.getAttribute("data-draft");
+    if (key && key !== "type") state.draft[key] = event.target.value;
+  });
+  body.addEventListener("change", function (event) {
+    if (!event.target.getAttribute) return;
+    if (event.target.getAttribute("data-draft") !== "type") return;
+    // 换类型要换字段（本地后端没有密钥环境变量）和占位提示，只重画这一张表单。
+    state.draft.type = event.target.value;
+    var box = $("llmAddBox");
+    if (box) {
+      box.innerHTML = renderAddForm();
+      if (window.HelpTips) window.HelpTips.scan(box);
+    }
+  });
+
   body.addEventListener("click", function (event) {
+    var test = event.target.closest("[data-test-provider]");
+    if (test) {
+      probe(test.getAttribute("data-test-provider"), { name: test.getAttribute("data-test-provider") });
+      return;
+    }
+    var drop = event.target.closest("[data-drop-provider]");
+    if (drop) {
+      dropProvider(drop.getAttribute("data-drop-provider"));
+      return;
+    }
+    if (event.target.id === "llmDraftTest") {
+      probe("__draft", draftPayload());
+      return;
+    }
+    if (event.target.id === "llmDraftSave") {
+      addProvider();
+      return;
+    }
     var target = event.target.closest("[data-revert]");
     if (!target) return;
     event.preventDefault();

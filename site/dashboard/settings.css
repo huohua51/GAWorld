@@ -138,6 +138,70 @@
 }
 .set-revert:hover { color: var(--green, #0e7a58); border-color: var(--green, #0e7a58); }
 
+/* ---- 语言模型：选后端 / 加后端 / 测连通性 ---- */
+
+.llm-card {
+  margin: 0 0 14px; padding: 12px 14px;
+  border: 1px solid var(--line, #dde6de); border-radius: 10px; background: #fbfdfb;
+}
+.llm-card > h3 {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0 0 10px; font-size: 13.5px; color: var(--ink, #17251f);
+}
+.llm-pick .set-field { margin: 0; padding: 0; }
+.llm-pick select {
+  width: 100%; margin-top: 5px; padding: 8px 10px;
+  border: 1px solid var(--line, #dde6de); border-radius: 7px;
+  background: #fff; color: var(--ink, #17251f); font-size: 14px; font-weight: 600;
+}
+.set-field > select {
+  width: 100%; margin-top: 5px; padding: 7px 10px;
+  border: 1px solid var(--line, #dde6de); border-radius: 7px;
+  background: #fff; color: var(--ink, #17251f); font-size: 13px;
+}
+.set-field > select:focus, .llm-pick select:focus { outline: none; border-color: var(--green, #0e7a58); }
+.set-field > select:disabled { background: #f2f4f3; color: var(--muted, #66746c); cursor: not-allowed; }
+.llm-pick .set-hint { margin: 8px 0 0; }
+
+.llm-row {
+  padding: 9px 10px; border: 1px solid var(--line, #dde6de);
+  border-radius: 8px; background: #fff; margin-bottom: 8px;
+}
+.llm-row.is-default { border-color: rgba(19, 121, 91, 0.45); }
+.llm-row-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; }
+.llm-row-head b { color: var(--ink, #17251f); }
+.llm-row-meta {
+  margin-top: 3px; font-size: 11.5px; color: var(--muted, #66746c);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
+}
+.llm-row-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.llm-row-actions .button { padding: 4px 10px; font-size: 12px; }
+.llm-key { font-size: 11px; font-weight: 700; }
+.llm-key.is-ok { color: var(--green, #0e7a58); }
+.llm-key.is-bad { color: #b06a1f; }
+
+.llm-slot { flex: 1 1 200px; min-width: 0; }
+.llm-result { font-size: 11.5px; line-height: 1.6; word-break: break-word; }
+.llm-result.is-ok { color: var(--green, #0e7a58); }
+.llm-result.is-bad { color: #c04545; }
+.llm-result.is-busy { color: var(--muted, #66746c); }
+
+.llm-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.llm-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.llm-field > span {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12.5px; font-weight: 600; color: var(--ink, #17251f);
+}
+.llm-field input, .llm-field select {
+  width: 100%; padding: 7px 10px; font-size: 13px;
+  border: 1px solid var(--line, #dde6de); border-radius: 7px;
+  background: #fff; color: var(--ink, #17251f);
+}
+.llm-field input:focus, .llm-field select:focus { outline: none; border-color: var(--green, #0e7a58); }
+.llm-form-actions {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
 /* ---- 搜索结果 ---- */
 
 .set-search-group { margin-bottom: 18px; }

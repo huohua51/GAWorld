@@ -91,10 +91,11 @@ def _retrying(
 class OllamaProvider:
     """Simple wrapper for Ollama-compatible text generation."""
 
-    def __init__(self, url, model, timeout=120):
+    def __init__(self, url, model, timeout=600, attempts=3):
         self.url = url
         self.model = model
         self.timeout = timeout
+        self.attempts = attempts
 
     def call(self, prompt):
         payload = {
@@ -131,10 +132,11 @@ class OllamaProvider:
                 raise requests.exceptions.ReadTimeout(
                     f"Ollama provider timed out while calling model '{self.model}'. "
                     f"Current timeout={self.timeout}s. "
-                    f"If this model is slow locally, increase config.py -> llm.providers timeout."
+                    f"If this model is slow locally, raise the provider's timeout "
+                    f"(配置面板 -> 模型后端, or llm.providers in dashboard_config.json)."
                 ) from exc
 
-        return _retrying(_do, provider=f"ollama:{self.model}", task="")
+        return _retrying(_do, attempts=self.attempts, provider=f"ollama:{self.model}", task="")
 
 
 class OpenAIProvider:
@@ -150,14 +152,17 @@ class OpenAIProvider:
         stream=False,
         max_tokens=None,
         temperature=None,
+        attempts=3,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.api_key_env = api_key_env
         self.api_key = api_key or os.getenv(api_key_env)
         self.timeout = timeout
         self.stream = bool(stream)
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.attempts = attempts
 
     def call(self, prompt):
         headers = {
@@ -245,8 +250,12 @@ class OpenAIProvider:
             return data["choices"][0]["message"]["content"]
 
         if self.stream:
-            return _retrying(_do_streaming, provider=f"openai:{self.model}", task="")
-        return _retrying(_do_blocking, provider=f"openai:{self.model}", task="")
+            return _retrying(
+                _do_streaming, attempts=self.attempts, provider=f"openai:{self.model}", task=""
+            )
+        return _retrying(
+            _do_blocking, attempts=self.attempts, provider=f"openai:{self.model}", task=""
+        )
 
     def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
         """Call OpenAI-compatible /embeddings endpoint.
@@ -303,7 +312,9 @@ class AnthropicProvider:
         authorization_scheme=None,
         include_x_api_key=True,
         authorization_retry_schemes=None,
+        attempts=3,
     ):
+        self.attempts = attempts
         self.base_url = base_url.rstrip("/")
         self.model = model
         env_names = list(api_key_envs or [])
@@ -348,6 +359,7 @@ class AnthropicProvider:
 
         return _retrying(
             lambda: self._call_once(payload),
+            attempts=self.attempts,
             provider=f"anthropic:{self.model}",
             task="",
         )
@@ -426,6 +438,119 @@ class AnthropicProvider:
         ) from last_exc
 
 
+def build_provider(cfg: dict[str, Any], *, attempts: int = 3):
+    """Instantiate one backend from its ``llm.providers`` block, or ``None``.
+
+    Factored out of :meth:`LLMRouter._init_providers` so the 配置 panel's
+    connectivity check builds the *same* object the simulator will use. A probe
+    that talked to the endpoint through its own hand-rolled request would go on
+    passing after the router's construction drifted — which is precisely the
+    failure a "测试连通性" button is supposed to catch.
+
+    ``attempts`` is threaded through so the probe can ask for a single shot:
+    the router's three-with-backoff turns an unreachable endpoint into a
+    minute of silence in a UI that promised an answer.
+    """
+    p_type = cfg.get("type")
+    if p_type == "ollama":
+        return OllamaProvider(
+            cfg.get("url", "http://localhost:11434/api/generate"),
+            cfg["model"],
+            # Local models are slow: a 12B answer takes ~75s on this machine and
+            # long agent prompts run several times that, so a low default only
+            # produces ReadTimeout mid-run.
+            timeout=cfg.get("timeout", 600),
+            attempts=attempts,
+        )
+    if p_type == "openai":
+        return OpenAIProvider(
+            cfg.get("base_url", "https://api.openai.com/v1"),
+            cfg["model"],
+            api_key=cfg.get("api_key"),
+            api_key_env=cfg.get("api_key_env", "OPENAI_API_KEY"),
+            timeout=cfg.get("timeout", 120),
+            stream=cfg.get("stream", False),
+            max_tokens=cfg.get("max_tokens"),
+            temperature=cfg.get("temperature"),
+            attempts=attempts,
+        )
+    if p_type in ("claude", "anthropic"):
+        return AnthropicProvider(
+            cfg.get("base_url", "https://api.anthropic.com"),
+            cfg["model"],
+            api_key=cfg.get("api_key") or cfg.get("ANTHROPIC_AUTH_TOKEN"),
+            api_key_env=cfg.get("api_key_env", "ANTHROPIC_API_KEY"),
+            api_key_envs=cfg.get("api_key_envs"),
+            anthropic_version=cfg.get("anthropic_version", "2023-06-01"),
+            timeout=cfg.get("timeout", 120),
+            max_tokens=cfg.get("max_tokens", 512),
+            system=cfg.get("system"),
+            beta=cfg.get("anthropic_beta"),
+            authorization_bearer=cfg.get("authorization_bearer", False),
+            authorization_scheme=cfg.get("authorization_scheme"),
+            include_x_api_key=cfg.get("include_x_api_key", True),
+            authorization_retry_schemes=cfg.get("authorization_retry_schemes"),
+            attempts=attempts,
+        )
+    return None
+
+
+#: Prompt for :func:`probe_provider`. Short enough to cost nothing, explicit
+#: enough that a backend answering *anything* proves the round trip works.
+_PROBE_PROMPT = "Reply with the single word: OK"
+
+
+def probe_provider(cfg: dict[str, Any], *, timeout: int = 30) -> dict[str, Any]:
+    """One real generation against ``cfg``. Never raises — the verdict is data.
+
+    Deliberately a *real* call rather than a socket/HTTP-200 check: the ways an
+    LLM backend is "reachable but useless" (model name not pulled, key rejected,
+    reasoning budget consumed before any text) all return a healthy connection
+    and would pass any cheaper test.
+
+    ``timeout`` caps the configured one rather than replacing it, so a provider
+    deliberately set to 10s is not probed for 30.
+    """
+    name = str(cfg.get("model") or "")
+    p_type = str(cfg.get("type") or "")
+    if not p_type:
+        return {"ok": False, "error": "没有填 type（后端类型）。"}
+    probe_cfg = dict(cfg)
+    probe_cfg["timeout"] = min(int(cfg.get("timeout") or timeout), timeout)
+    try:
+        provider = build_provider(probe_cfg, attempts=1)
+    except KeyError:
+        return {"ok": False, "error": "没有填 model（模型名）。"}
+    if provider is None:
+        return {"ok": False, "error": f"不支持的后端类型：{p_type}"}
+    # Checked before the call so a missing key reads as "set this env var"
+    # rather than as the backend's own 401.
+    if isinstance(provider, (OpenAIProvider, AnthropicProvider)) and not provider.api_key:
+        envs = getattr(provider, "api_key_envs", None) or [getattr(provider, "api_key_env", "")]
+        return {
+            "ok": False,
+            "error": "没有拿到密钥：环境变量 " + "、".join(n for n in envs if n) + " 没有设置。"
+            "请在仓库根目录的 .env 里配好，然后重启仿真进程。",
+        }
+    started = time.perf_counter()
+    try:
+        reply = provider.call(_PROBE_PROMPT)
+    except Exception as exc:  # every transport/auth/shape failure is a verdict
+        detail = str(exc)
+        return {
+            "ok": False,
+            "latency_ms": int((time.perf_counter() - started) * 1000),
+            "error": detail if len(detail) <= 600 else detail[:600] + "…",
+        }
+    text = str(reply or "").strip()
+    return {
+        "ok": True,
+        "latency_ms": int((time.perf_counter() - started) * 1000),
+        "model": name,
+        "sample": text if len(text) <= 200 else text[:200] + "…",
+    }
+
+
 class LLMRouter:
     """Lightweight router for selecting providers by task or agent."""
 
@@ -438,44 +563,11 @@ class LLMRouter:
         providers = {}
         llm_cfg = self.config.get("llm", {})
         for name, cfg in llm_cfg.get("providers", {}).items():
-            p_type = cfg.get("type")
-            if p_type == "ollama":
-                providers[name] = OllamaProvider(
-                    cfg.get("url", "http://localhost:11434/api/generate"),
-                    cfg["model"],
-                    timeout=cfg.get("timeout", 120),
-                )
-            elif p_type == "openai":
-                providers[name] = OpenAIProvider(
-                    cfg.get("base_url", "https://api.openai.com/v1"),
-                    cfg["model"],
-                    api_key=cfg.get("api_key"),
-                    api_key_env=cfg.get("api_key_env", "OPENAI_API_KEY"),
-                    timeout=cfg.get("timeout", 120),
-                    stream=cfg.get("stream", False),
-                    max_tokens=cfg.get("max_tokens"),
-                    temperature=cfg.get("temperature"),
-                )
-            elif p_type in ("claude", "anthropic"):
-                providers[name] = AnthropicProvider(
-                    cfg.get("base_url", "https://api.anthropic.com"),
-                    cfg["model"],
-                    api_key=cfg.get("api_key") or cfg.get("ANTHROPIC_AUTH_TOKEN"),
-                    api_key_env=cfg.get("api_key_env", "ANTHROPIC_API_KEY"),
-                    api_key_envs=cfg.get("api_key_envs"),
-                    anthropic_version=cfg.get("anthropic_version", "2023-06-01"),
-                    timeout=cfg.get("timeout", 120),
-                    max_tokens=cfg.get("max_tokens", 512),
-                    system=cfg.get("system"),
-                    beta=cfg.get("anthropic_beta"),
-                    authorization_bearer=cfg.get("authorization_bearer", False),
-                    authorization_scheme=cfg.get("authorization_scheme"),
-                    include_x_api_key=cfg.get("include_x_api_key", True),
-                    authorization_retry_schemes=cfg.get("authorization_retry_schemes"),
-                )
-            else:
-                print(f"⚠️ 跳过不支持的 LLM provider 类型: {name} ({p_type})")
+            provider = build_provider(cfg)
+            if provider is None:
+                print(f"⚠️ 跳过不支持的 LLM provider 类型: {name} ({cfg.get('type')})")
                 continue
+            providers[name] = provider
         if not providers:
             raise ValueError("No LLM providers configured.")
         return providers

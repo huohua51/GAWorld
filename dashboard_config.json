@@ -1,16 +1,29 @@
 {
   "llm": {
     "routing": {
-      "default": "minimax",
       "tasks": {
-        "schedule": "minimax"
+        "schedule": "MiniMax-M3"
+      },
+      "default": "MiniMax-M3"
+    },
+    "providers": {
+      "gemma4-12b": {
+        "type": "ollama",
+        "url": "http://localhost:11434/api/generate",
+        "model": "gemma4:12b",
+        "timeout": 600
+      },
+      "MiniMax-M3": {
+        "type": "anthropic",
+        "base_url": "https://api.minimaxi.com/anthropic",
+        "model": "MiniMax-M3"
       }
     }
   },
   "sim_days": 2,
-  "seconds_per_day": 5,
+  "seconds_per_day": 30,
   "agent_ids": [
-    41
+    37
   ],
   "simulate_realtime": true,
   "time_step_minutes": null,
