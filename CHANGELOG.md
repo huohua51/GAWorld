@@ -4,6 +4,150 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — 2026-08-13 — 家庭系统：居民不再全员单身，生活开始发生在家里
+
+### Added
+
+- **`gaworld/family/`：户（household）作为一等实体。** 在这之前，51 个居民**事实上全是单身**：
+  profile 文本里几乎没有婚育描述，`build_agent()` 没有任何家庭字段，而
+  `social/network.py` 里的 `spouse` / `child` 角色只存在于每个 agent 各自 LLM 生成的
+  场外名单里——它的确定性 fallback 只播种父母和老同学，**从不生成配偶或子女**，
+  而且 A 的配偶和 B 毫无关系。现在婚姻状态按 `年龄段 × 性别` 的四类分布
+  （未婚/已婚/离异/丧偶）采样，年龄和居住区匹配得上的 agent 在**仿真内**配成夫妻，
+  配不上的补场外配偶；子女、同住长辈、不同住的父母、合租室友随之生成。
+  八种户型（独居/合租/与父母同住/未婚同居/夫妻二人/核心家庭/单亲/三代同堂）是分配的
+  **读数**而不是预设的配额——先定户型再填人正是 `population/network.py` 记录过的失效模式。
+- **共居是分界线。** 同户的 in-sim agent 共享同一个 `locations["home"]` 节点。
+  没有这一步，一对"夫妻"只是两个地址相同的陌生人；共享 home 之后，
+  现有的 co-location 循环才会真的产生家庭互动。
+- **家庭日程（`duties.py`）。** 接送幼儿园、陪写作业、照料同住老人、给父母打电话、
+  和伴侣一起吃晚饭——按同住人口和工作日/周末生成，作为高承诺事项注入日程 prompt。
+  `care_load()` 把照护负担折成 0..1 的标量供状态和财务层消费；有同住伴侣时负担乘 0.62，
+  单亲全额承担。
+- **家庭财务（`finance.py`），守恒。** 子女和长辈的开销按**收入**在同户挣钱的人之间分摊，
+  走经济模块自己的支出路径（新增公开入口 `economy.finance.charge_external_expense()`），
+  钱像普通消费一样进 firms 池；伴侣之间在一方现金见底时互相补窟窿，是纯转移。
+  共享边界很讲究：夫妻**共享**子女和同住老人（重复计算会让学费翻倍），
+  但**各自**赡养自己的父母。
+- **家庭事件是共享的（`events.py`）。** 孩子发烧是**一个**事件，同一个 tick 同时落到父母
+  两人身上——这正是按 agent 独立生成的 ghost 事件表达不了的东西，也是"家庭值得建模成户"
+  的根本理由。事件投进现有人生事件队列，免费继承记忆写入、余波衰减和面板时间线；
+  模板按家庭构成 gating，没有孩子的人抽不到"孩子发烧"。户内情绪传染作为**收敛项**
+  `w × (对方 − 自己)` 施加，所以一个人人平静的家不会凭空漂移。
+- **`CONFIG["family"]`**（`gaworld/settings/family.py`）：婚姻状态分布表、配对、生育、
+  共居、责任、财务、事件七组旋钮，全部可覆盖，可做低生育率之类的政策实验。
+  设计文档 `docs/FAMILY_DESIGN.md`；`tests/test_family.py`（47 项）+
+  `tests/test_family_integration.py`（2 项，跑真实 `run_simulation`）。
+
+### Changed
+
+- `FamilyPlugin` 的钩子点是被排序约束逼出来的，不是随便挑的：建户必须在 `agents.built`
+  （唯一能安全改写 `locations["home"]` 的时刻），但**亲属关系边只能在 `on_simulation_start`
+  写入**——两者之间仿真会重置/重载 `agent["relationships"]` 再去问 LLM 要场外名单，
+  写早了会被静默丢弃。日终结算挂 priority `-10`（经济插件是 0），并顺手算好**明天**的
+  家庭责任，因为日程是在 `on_day_start` **之前**生成的。
+- `social/network.py`：`ROLE_CONFIG` 增加 `roommate`（合租是杭州年轻租客的默认形态，
+  室友是单身 agent 在家唯一会见到的人）；场外名单 prompt 现在会被告知已确定的家庭状况，
+  并被要求不要另编配偶/子女。prompt 省 token，`ties.reconcile_ghost_kin()` 保证一致性——
+  一个关系字典里有两个互相矛盾的配偶，比没有配偶更糟。
+- `generative_city_sim.py` 三处 prompt 的角色资料各加一行「家庭状况」，
+  daily-routine prompt 增加「今日家庭责任」段与相应约束，周末改写 prompt 增加家庭优先约束。
+
+### Web 界面
+
+- **配置 → 家庭与户。** 配置面板由 `gaworld/settings/config_docs.py` 的 `SECTIONS` 注册表
+  生成，tooltip 从 settings 模块的注释里抽。**把片段加进 `defaults.py` 却不注册到这里，
+  结果是整个子系统在浏览器里完全不存在**——从 Python 看却一切正常。七组旋钮现在都能在面板上调，
+  操作者会去拧的那些配了中文说明；`in_sim_pair_share` 的说明里明写了它是建模取舍而非人口学事实，
+  免得被当成实测值。新增的
+  `test_every_config_fragment_has_a_panel_section` 是这条的回归闸：**任何**无人认领的顶层配置键
+  都会让它失败。
+- **主面板「家庭结构」卡片。** 概览（户数 / 仿真内夫妻 / 有子女 / 单身占比 + 户型分布条）
+  加上跟随选中居民的详情（同住成员、不同住的家人、本轮养育与赡养支出）。
+  数据走 `GET /api/family/overview`（`gaworld/apps/family_api.py`，沿用 `population_api`
+  的委托模块惯例，`dashboard_server.py` 只加四行转发），读的是 recorder 落盘的
+  `family.{summary,household,agent}.jsonl` 而**不在请求时重新推导**——
+  配置在开跑之后改过的话，重新推导会显示一个 agent 并没有生活在其中的家。
+  图表照例手写，这个目录没有构建步骤。
+- **智能体工作台 → 社交·关系：家庭编辑面板。** 这里有个本质约束：家庭在每次运行开始时
+  按 (名单, 配置, 种子) 重新推导，`on_simulation_start` 会覆盖 `relationships`——
+  所以工作台里的编辑**不能是"改结果"**，那样的修改会在第二天早上凭空消失。面板写的是
+  **覆盖项**（`gaworld/family/overrides.py` → `data/family_overrides.json`），
+  分配器在分配过程中读取，因此户型、共居、日程、记账全都跟着走，和抽样出来的家庭走同一条路。
+  可编辑：婚姻状态、伴侣（自动 / 无 / 指定一位仿真内居民 / 场外人物）、子女、同住长辈。
+  **三态是承重的**：未勾选 = 抽样，勾选后空列表 = 固定为没有——合并两者会把"这对夫妻
+  没有孩子"静默变成"给他们生几个"，前后端两侧都有测试锁着。
+  指定仿真内配偶是对另一个人的声明：双向生效、共享住处、**绕过年龄差限制**（操作者是在
+  故意覆盖人口学）、被抢走配偶的居民自动退回场外配偶、互相矛盾的指定按 id 解析并在面板上
+  显式报出。修掉一个自己造的坑：指定场外配偶时 agent 仍留在贪心匹配池里，会被匹配给
+  仿真内的另一个人，覆盖被静默忽略。
+  面板读 `GET /api/family/preview`，它**故意重新推导**——和家庭卡片刚好相反，
+  因为两者问的不是同一个问题：卡片问"这一轮跑的是什么家庭"，编辑器问"我保存之后下一轮会怎样"。
+- **文档面板**列出 `FAMILY_DESIGN.md`。
+- 测试：`tests/test_family_overrides.py`（25 项，覆盖层——重点不是"存下来了"而是
+  **存下来的东西挺过了重新分配**）、`site/dashboard/studio-family.test.js`（10 项）、
+  `tests/test_dashboard_family.py`（35 项）+ `site/dashboard/family-card.test.js`
+  （6 项 `node --test`，把卡片切出来配桩 DOM 渲染，含一条 XSS 用例——居民名字来自可编辑的
+  profile）+ 一条集成测试，真跑一轮再用 API 读回来，**把插件写出的形状和面板期待的形状对上**。
+  两边各自的单元测试都绿、面板却空白，是这类改动最典型的失败方式。
+
+### Known limits
+
+- 没有独立的「家庭」console tab（户列表、关系图、事件时间线）；家庭卡片没有在真实浏览器里点过。
+- 同性伴侣未建模；家庭结构在一次 run 内是静态的（没有结婚/离婚/生育真的改变户）；
+  子女和长辈始终是 ghost，不进认知管线。
+- `pairing.in_sim_pair_share`（默认 0.6）是**建模旋钮不是人口学事实**：
+  从 1200 万人里抽 51 个人，他们互为夫妻的真实概率约等于 0。调到 0.0 可得人口学纯净的跑法。
+
+## [Unreleased] — 2026-08-08 — Parallel worlds: change an event, watch the histories split
+
+### Added
+
+- **`gaworld/parallel/`: N-world counterfactuals.** `compare-event` could fork exactly two runs —
+  one with an event, one without — and diff their last row. That is the degenerate case of the
+  question worth asking: given the same city, the same residents and the same seed, *how far apart
+  do histories drift when you change what happens to them, and when do they start to drift?* An
+  experiment now holds up to eight worlds, each with its own event list, and a world may also carry
+  a `config` patch — which is how you model a policy rather than an incident. `spec` validates the
+  design and builds the per-world overrides, `runner` forks the worlds through a small pool (eight
+  concurrent LLM-driven simulations starve a laptop and rate-limit a provider; a run that thrashes
+  is worse than a run that queues), `analysis` turns the finished artifacts into a report.
+- **Divergence over time, not only at the end.** The report reconstructs every world's per-step
+  metric trajectory, measures its distance from the baseline at each step, and reports the step at
+  which that distance first *stays* above a threshold — a single tick above the line is the LLM
+  being non-deterministic, not two histories parting ways. It also measures the same distance per
+  agent at the end, because a population mean averages away the residents an intervention actually
+  landed on. Written out as `report.json`, `divergence_metrics.csv` and `divergence_summary.md`.
+- **平行世界 / Parallel Worlds console tab** (`site/dashboard/worlds.html`). The left column designs
+  the experiment — worlds, and the events inside them, with presets, copy-a-world, and a baseline
+  picker; the right column reads one back: a branch diagram where distance from the trunk *is* the
+  divergence, per-metric trajectories with the event days marked and a hover readout, the
+  divergence curves with their split points, the end-state delta table, and a per-resident
+  "who was changed" table. Worlds can be toggled in and out of every chart from the legend. Charts
+  are hand-written SVG — this directory has no build step, and a CDN chart library would cost the
+  dashboard its offline usability.
+- **`GET/POST /api/parallel-worlds/*`** and `gaworld/apps/parallel_worlds_api.py`: overview,
+  experiment listing, report, spec preview, and start/status/stop for the run job. One experiment
+  runs at a time (a second start is a 409, not a silently oversubscribed machine), and progress is
+  read per world out of its own `run.log` because the simulator writes the state history only at
+  the very end of a run.
+- **`parallel-worlds` CLI subcommand**, taking the same JSON spec the panel posts, so an experiment
+  designed in the browser runs headless and vice versa.
+- **Existing `compare-event` output is adapted, not migrated.** Every
+  `output/comparisons/<ts>_<slug>/{without_event,with_event}` tree is presented as a two-world
+  experiment built on the fly, so years of old counterfactuals open in the new visualiser with
+  nothing rewritten on disk. Trees that never produced a state history are listed and flagged
+  rather than hidden — `output/` accumulates the shells of runs that died, and opening on the
+  newest one would show an empty page for no reason.
+
+### Fixed
+
+- **A forked world no longer wipes the operator's live diaries and life events.** `reset` clears
+  `diary_output_dir` and the life-event directory too, and neither was redirected — at their
+  defaults both point into the shared `output/` tree. The per-world overrides now isolate them
+  along with memory, logs, state, network, environment and the vector DB. (`compare-event` has the
+  same gap; it is untouched here because the benchmark reads its output layout.)
+
 ## [Unreleased] — 2026-08-02 — Analyse any recorded run, not just the current one
 
 ### Added

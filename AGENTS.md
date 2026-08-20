@@ -15,6 +15,7 @@ GAWorld/
 │   ├── economy/              # 经济模块（finance.py + plugin.py）
 │   ├── env/                  # 环境系统（system.py）
 │   ├── events/               # 生命事件（life.py + plugin.py）
+│   ├── family/               # 家庭与户（assign/overrides/ties/duties/finance/events + plugin.py）
 │   ├── io/                   # IO 工具（avatar.py, http_guard.py, web_scrape.py）
 │   ├── llm/                  # LLM 提供商（providers.py）
 │   ├── memory/               # 记忆系统（store, experience, consolidation, decay, …）

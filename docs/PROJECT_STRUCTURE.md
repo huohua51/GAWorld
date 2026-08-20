@@ -39,6 +39,18 @@ CLI/backward-compat entrypoints until their callers have been migrated.
 - `gaworld/io/`: IO helpers such as HTTP guards and web scraping.
 - `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, progress updates, day-end forgetting decay, and interest-set evolution (retirement + social contagion).
 - `gaworld/work/`: real-work task routing, queueing, adapters, and market data.
+- `gaworld/family/`: households as a first-class entity. `schema.py` owns the
+  data model and config resolution; `assign.py` samples a marital status per
+  agent (age x gender), pairs whoever matches in-sim, and derives children,
+  co-resident elders and flatmates — household *type* is a read-out of the
+  result, never a quota chosen up front. `overrides.py` is the operator-pinned
+  layer (`data/family_overrides.json`) consulted *during* assignment, so a
+  family pinned in Agent Studio survives the re-assignment that happens at the
+  start of every run. `ties.py` writes kin edges in the shape
+  `social/network.py` already expects and prunes LLM-invented spouses that
+  contradict them; `duties.py`, `finance.py` and `events.py` turn the household
+  into schedule pressure, conserving household spending, and shared family
+  events plus in-household emotional contagion. `plugin.py` wires all of it.
 - `gaworld/population/`: parameterised population synthesis. `schema.py` owns the
   knob contract (`PopulationSpec`, presets) and the pure-maths feasibility
   precheck; `synth.py` IPF-fits a joint attribute table with structural zeros and
@@ -58,6 +70,20 @@ CLI/backward-compat entrypoints until their callers have been migrated.
   `plugin.py` (`GroupPlugin`, observational cohort telemetry).
   CLIs: `python -m gaworld.group`, `python -m gaworld.group.validate`.
   Design + measured results: [`GROUP_AGENT_DESIGN.md`](GROUP_AGENT_DESIGN.md).
+- `gaworld/parallel/`: parallel-world (multi-branch counterfactual) experiments —
+  a *fork* of the existing run, not a change to it, so single runs are
+  unaffected by construction. `spec.py` validates an experiment (2–8 worlds,
+  each with its own events and optional config patch) and builds the per-world
+  overrides that isolate every path a run writes to; `runner.py` forks the
+  worlds as subprocesses through a bounded pool, samples progress out of each
+  world's `run.log`, and persists the manifest and report; `analysis.py`
+  reconstructs per-step trajectories, measures each world's distance from the
+  baseline at every step (with a "crosses and stays" split-point rule) and the
+  same distance per agent at the end. CLI: `python generative_city_sim.py
+  parallel-worlds --spec worlds.json`. Panel backend:
+  `gaworld/apps/parallel_worlds_api.py`, which also adapts legacy
+  `output/comparisons/` trees into the same view.
+  See [`PARALLEL_WORLDS_TUTORIAL.md`](PARALLEL_WORLDS_TUTORIAL.md).
 - `gaworld/skills/`: per-agent Skill subsystem — global library at `data/skills/`, private skills under `output/memory/agent_<id>_skills/`, and experience-to-skill consolidation. See [`SKILL_SYSTEM.md`](SKILL_SYSTEM.md).
 - `gaworld/world/local_physical.py`: per-node occupancy / opening-hours snapshots and crowd-surge anomaly detection injected into perception. See [`physical_env_perception_changelog.md`](physical_env_perception_changelog.md).
 - `gaworld/memory/spatial_preferences.py`: learned location-avoidance preferences (recency-decayed), persisted to `output/memory/agent_<id>_env_preferences.json`.
@@ -70,6 +96,10 @@ CLI/backward-compat entrypoints until their callers have been migrated.
   `running` sessions as `interrupted` without discarding their transcript or
   artifacts.
 - `gaworld/apps/`: runnable local servers and dashboard backend entrypoints.
+  `family_api.py` is the family backend — the dashboard card reads the
+  *recorded* run while the Studio editor deliberately re-derives the
+  assignment, because those answer different questions ("what is this run
+  living in?" vs "what will next run look like if I save this?").
   `population_api.py` is the Population Studio backend — a *delegate* module, so
   `dashboard_server.py` only gains a prefix-forwarding branch for
   `/api/population/*` rather than another subsystem's routes. It reads path

@@ -55,6 +55,7 @@ Across days, the simulator accumulates:
 - Policy events and environment events
 - PolicySim-inspired recommendation / exposure intervention metrics
 - Closed-loop economy simulation with money conservation: sector pools (firms/government/bank), real tax & social-insurance withholding, cash-constrained consumption with credit, common-market-factor investment, agent-to-agent payment routing and friend loans, macro cycles
+- Households and family life: marital status sampled by age band x gender (never married / married / divorced / widowed); residents who match are married *inside the simulation* and **share one home node**, and everyone else gets off-screen family. Children, co-resident elders and flatmates follow. Household type (living alone / flatshare / with parents / cohabiting / couple / nuclear / single-parent / multigenerational) is a **read-out** of the assignment rather than a quota chosen up front. The household then drives the schedule (school runs, homework, elder care, being home for dinner), the ledger (childcare and elder support split by income, partners covering each other's cash shortfalls — all money-conserving), shared family events (one child's fever lands on both parents in the same tick) and in-household emotional contagion. Adjust the population-level distribution from the config panel, or pin one resident's family in Agent Studio so it survives across runs
 - Realistic location system with category-based spatial matching, transport cost calculation, rush-hour and weather effects, and commute memory
 - Dynamic behavior system: mood-driven spontaneous urges, social encounter chains, need-based interrupts, environment event cascades, and commitment-aware schedule interruption
 - Physical environment perception and reactive replanning: per-node crowding / opening-hours awareness, anomaly detection, same-day interval replanning, and learned location-avoidance preferences
@@ -71,6 +72,7 @@ Across days, the simulator accumulates:
 - Group-mode validation gate (L1–L4): a paired experiment that measures what the cohort approximation costs — distributional distance, network co-movement, tail retention, and causal response to a policy shock — with thresholds set relative to the reference tier's own cross-seed noise rather than arbitrary constants. Exits non-zero when a dividing-line layer fails, so it can gate CI
 - Population Studio: a 5-step dashboard panel for generating a population, running group mode over it, and reading the validation verdict, with live feasibility prechecks that name the conflicting knob
 - External Systems panel: observe and edit the world itself — the money system (macro cycle, sector pools, the daily money-conservation audit, wealth distribution and Gini), the external-environment generator, and the outward service connections. Config forms are generated from the config's own JSON shape (~150 knobs, and adding a knob needs no panel code), and a monetary intervention can be queued against a **running** simulation for it to consume at the next day boundary; injecting into a sector pool moves the conservation baseline with it, so the audit records a deliberate injection as an injection rather than as a leak
+- Parallel Worlds: fork one city into N histories that share the cohort, the seed, the horizon and the model, and differ only in what happens — each world carries its own event list (and optionally its own config patch, for a policy rather than an incident) and runs in a fully isolated memory / state / log tree. The report measures each world's distance from the baseline at every step, so it answers *when* two histories split rather than only how far apart they ended, and names the individual residents an intervention actually landed on. Designed and read interactively in the console's 平行世界 tab; every world's trace stays replayable frame by frame, and existing `compare-event` runs are adapted into the same view without being rewritten on disk
 - Distributed multi-machine mode with relay-based communication
 
 ## Architecture: Microkernel + Plugins
@@ -129,6 +131,7 @@ code.
 - `gaworld/economy/finance.py`: personal finance + macro cycles (tax, social insurance, Engel spending, investment, shock events)
 - `gaworld/policy/intervention.py`: PolicySim-style recommendation / exposure intervention metrics, stance, risk
 - `gaworld/events/life.py`: scheduled life events (birthday, illness, job change, off-screen ghost-event queue)
+- `gaworld/family/`: households — marital-status sampling, in-sim pairing, co-residence, family duties, conserving household spending, shared family events, and the operator-pinned override layer
 - `gaworld/distributed/comm.py`: multi-machine relay client
 - `gaworld/interests.py`: per-agent interest and skill-growth profile derivation, persistence, matching, progress updates
 - `gaworld/work/`: real-work task system (runtime, worker pool, queue, market, router, adapters)
@@ -143,7 +146,8 @@ code.
 - `data/citymap.md`: city map data
 - `scripts/`: launch and developer utilities
 - `docs/`: tutorials, integration notes, design docs, refactor history (`REFACTOR_PLAN.md`, `REFACTOR_BASELINE.md`, `PROJECT_STRUCTURE.md`)
-- `site/dashboard/`: local dashboard frontend (console `index.html` + Agent Studio `studio.html` + Population Studio `population.html` + External Systems `external.html`)
+- `gaworld/parallel/`: parallel-world experiments — `spec` (world/event validation + per-world isolation overrides), `runner` (forks N worlds through a small pool, tracks progress), `analysis` (per-step divergence, split points, per-agent movers)
+- `site/dashboard/`: local dashboard frontend (console `index.html` + Agent Studio `studio.html` + Population Studio `population.html` + External Systems `external.html` + Parallel Worlds `worlds.html`)
 - `site/simviz/`: playback viewer
 - `output/`: generated artifacts
 
@@ -266,6 +270,36 @@ python generative_city_sim.py compare-event \
 The comparison report includes regular city-state metrics and intervention metrics such as
 `stance_score`, `toxicity_score`, `misinformation_risk`, `cross_viewpoint_exposure`, and
 `intervention_reward`.
+
+Run more than two branches — a baseline, several intervention strengths, a placebo — from one spec:
+
+```bash
+cat > worlds.json <<'JSON'
+{
+  "name": "Traffic restriction dosage",
+  "sim_days": 3,
+  "worlds": [
+    {"label": "Baseline", "events": []},
+    {"label": "Mild", "events": [
+      {"day": 2, "time": "07:00", "name": "Traffic restriction",
+       "description": "Odd-even plates at peak hours; commutes get slightly longer."}]},
+    {"label": "Severe", "events": [
+      {"day": 2, "time": "07:00", "name": "Full traffic control",
+       "description": "Arterial roads closed; some residents cannot reach work at all."}]}
+  ]
+}
+JSON
+
+python generative_city_sim.py parallel-worlds --spec worlds.json --seed 42 --fast
+```
+
+Every world shares the cohort, the seed, the horizon and the model, and runs in its own isolated
+memory / state / log tree. The report (`output/parallel_worlds/<id>/`) measures each world's
+distance from the baseline at *every* step, so it reports when the histories split, not only how
+far apart they ended, plus which individual residents the event actually landed on. A world may
+also carry a `config` patch instead of (or alongside) events, which is how you model a policy
+rather than an incident. The same experiments are designed and read interactively in the console's
+**平行世界 / Parallel Worlds** tab. Full walkthrough: [Parallel Worlds Tutorial](./docs/PARALLEL_WORLDS_TUTORIAL.md) (in Chinese).
 
 Generate a city map:
 
@@ -429,6 +463,51 @@ daily audit records a deliberate injection as an injection rather than as money 
 
 Full walkthrough: [External Systems Tutorial](./docs/EXTERNAL_SYSTEMS_TUTORIAL.md) (in Chinese).
 
+### Parallel Worlds
+
+Where the other panels look at one world, this one looks at several at once. Console tab
+(**平行世界 / Parallel Worlds**) or directly at
+`http://127.0.0.1:8766/site/dashboard/worlds.html`. The page is **design on the left, read on the
+right**.
+
+The left column defines what the worlds differ by: shared settings (days, seed, cohort, model,
+concurrency — deliberately *not* per-world, because holding them fixed is what makes the
+comparison attributable), then one card per world with its label, a baseline radio, and its event
+list (day / time / name / description). Three presets — layoff shock, traffic-restriction dosage,
+placebo control — fill the form in one click. A world can be duplicated with its events, and can
+also carry a `config` patch, which is how you model a policy rather than an incident.
+
+The right column reads one experiment back:
+
+- **Branch diagram** — each world's distance from the trunk *is* its divergence; a hollow node
+  marks the step its history split, a solid dot marks an event
+- **Trajectory comparison** — one metric's population mean per world, with the event days marked
+  and a hover readout; "只看与基准的差" subtracts the baseline so a small effect is still legible
+- **Divergence from baseline** — the per-step distance curves and the split threshold
+- **End-state deltas** and **who was changed** — the per-metric table, and the per-resident table
+  that a population mean would have averaged away
+
+Legend chips toggle a world out of all four charts at once. Every world is a full simulation, so
+each one links out to the frame-by-frame replay page.
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | `/api/parallel-worlds/overview` | defaults, providers, presets, past experiments, current job |
+| GET | `/api/parallel-worlds/experiment?root=…` | the full divergence report for one experiment |
+| GET | `/api/parallel-worlds/job` | job status, with a live per-world snapshot while running |
+| POST | `/api/parallel-worlds/preview` | validate a spec and echo the plan without running anything |
+| POST | `/api/parallel-worlds/start` / `/stop` | fork the worlds / stop them |
+
+One experiment runs at a time — a second start is a `409` rather than an oversubscribed machine —
+and a world that fails does not take the others down: the report is still written, and the reason
+(quota, unreachable model) is shown verbatim with its log path.
+
+⚠️ Run a **placebo world** before drawing conclusions. Cognition is LLM-driven, so two identically
+configured worlds do not produce identical histories; the placebo's divergence is your noise
+floor, and a real effect has to clear it.
+
+Full walkthrough: [Parallel Worlds Tutorial](./docs/PARALLEL_WORLDS_TUTORIAL.md) (in Chinese).
+
 ## Configuration
 
 All base settings live in `config.py`.
@@ -497,6 +576,42 @@ and headline-like sources, applies local exposure-control heuristics, injects th
 perception, and records stance / toxicity / misinformation / cross-viewpoint reward metrics.
 
 This feature does not perform SFT/DPO model training and does not call external moderation APIs.
+
+### Family / Households
+
+Before this feature every resident was, in effect, single: the profiles barely
+mention marriage or children, `build_agent()` had no family fields, and the
+`spouse` / `child` roles in the social module existed only inside each agent's
+own LLM-generated off-screen roster — whose deterministic fallback **never
+produced a spouse or a child**, and where A's spouse had no relationship to B.
+
+Households are now a first-class entity, assigned *status first, structure
+second*: marital status is sampled by age band x gender, whoever matches is
+paired in-sim (everyone else gets an off-screen spouse), and only then are
+children and co-resident elders derived. **Household type is a read-out, never
+a quota** — planning household counts from type shares and then filling them is
+the failure mode where the type knobs and the age pyramid disagree and one of
+them silently loses.
+
+| Layer | What it does |
+|---|---|
+| Ties | Family edges are written in the shape the social module already understands, so kin roles inherit its decay, obligation floor and Dunbar protection; LLM-invented spouses that contradict the assignment are pruned |
+| Co-residence | Members of one household share a single `home` node — the line between a family and two strangers with matching addresses |
+| Schedule | School runs, homework, elder care, calling your parents, being home for dinner; weekday and weekend differ |
+| Ledger | Childcare and elder support are split by **income** through the economy's own expense path (conserving); partners top each other up when one runs short (a pure transfer) |
+| Events | A child's fever is **one** event that lands on both parents in the same tick |
+| Emotion | Co-resident family members' mood and stress converge; a household where everyone is calm produces no drift at all |
+
+`family.pairing.in_sim_pair_share` (default `0.6`) is a **modelling knob, not a
+demographic fact**: two people drawn from a 12-million-person city are almost
+never married to each other, and pairing them buys in-sim family interaction.
+Set it to `0.0` for a demographically pure run.
+
+Population-level distributions live in the dashboard's 配置 → 家庭与户 section;
+a single resident's family can be pinned in Agent Studio step 5, which writes
+`data/family_overrides.json` — consulted *during* assignment, so a pinned family
+survives the re-assignment that happens at the start of every run. See
+[Family Design](./docs/FAMILY_DESIGN.md) (in Chinese).
 
 ### Economy Module
 
@@ -849,8 +964,10 @@ Generated artifacts are written under `output/`, including:
 - [Real Work — Usage](./docs/REAL_WORK_USAGE.md) · [Design](./docs/REAL_WORK_DESIGN.md)
 - [Physical Environment Perception & Reactive Replanning](./docs/physical_env_perception_changelog.md)
 - [Social Network — Design](./docs/SOCIAL_NETWORK_DESIGN.md) · [Tutorial](./docs/SOCIAL_NETWORK_TUTORIAL.md)
+- [Family / Households — Design](./docs/FAMILY_DESIGN.md) (in Chinese; marital sampling, co-residence, family duties and spending, the override layer and the Studio editor)
 - [Group Simulation — Tutorial](./docs/GROUP_SIMULATION_TUTORIAL.md) · [Design](./docs/GROUP_AGENT_DESIGN.md) (population synthesis, cohort mode, the L1–L4 validation gate)
 - [External Systems — Tutorial](./docs/EXTERNAL_SYSTEMS_TUTORIAL.md) (in Chinese; observing and editing the money system, the external environment and outward services, plus runtime intervention)
+- [Parallel Worlds — Tutorial](./docs/PARALLEL_WORLDS_TUTORIAL.md) (in Chinese; multi-branch counterfactuals — designing an experiment, reading the divergence charts, dose-response designs, and why to run a placebo world first)
 - [Project Structure](./docs/PROJECT_STRUCTURE.md)
 - [Repository Guidelines](./AGENTS.md)
 - [Changelog](./CHANGELOG.md)

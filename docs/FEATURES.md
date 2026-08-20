@@ -14,15 +14,18 @@
 | 从社交内容创建智能体 | 用社媒页面或文本生成新 agent 画像 | `python generative_city_sim.py create-agent-from-social --url "..."` / `--file ... --name "..."` |
 | RAG 外部知识注入 | 向某 agent 注入外部信息以改变其认知 | `python generative_city_sim.py rag-add --agent-id 31 --text "..."` / `rag-import --file ...` |
 | 事件对照实验 | 在"有事件 / 无事件"两分支并行仿真并出对比报告 | `python generative_city_sim.py compare-event --event-name "..." --sim-days 3 --seed 42` |
+| 平行世界实验 | 一次实验最多 8 个世界，共用同一批居民 / 种子 / 天数 / 模型，各带自己的事件表（或 `config` 补丁）；报告给出逐步偏离度、分叉点与逐人影响，而不只是终值差 | `python generative_city_sim.py parallel-worlds --spec worlds.json`；详见 [平行世界教程](PARALLEL_WORLDS_TUTORIAL.md) |
 | 本地 Dashboard | 配置编辑、运行控制、记忆查看、访谈、日志查看 | `python generative_city_sim.py dashboard --port 8766` → `http://127.0.0.1:8766/dashboard` |
 | Dashboard 智能体互动 | 对两位或更多居民建立双向好友关系；启动独立于主仿真的多轮讨论，并实时观察发言、摘要与完整记录 | Dashboard「智能体互动」面板；会话与事件写入 `CONFIG["collaboration"]["sessions_dir"]` |
 | Dashboard 合作任务 | 多智能体按“规划 → 分工执行 → 同伴审阅/修订 → 汇总”完成任务，展示可观测事件与 Markdown 产物 | 控制台「合作任务」页签 → `/site/dashboard/collaboration.html`；产物位于 `<sessions_dir>/<session_id>/artifacts/` |
 | Agent Studio | 单智能体 7 步可视化构建/查看：身份、九维状态（可编辑雷达）、技能、记忆、Dunbar 社交、行为、复核部署；写回 CSV+profile，可创建新 agent | 控制台工具栏「Agent Studio ↗」→ `http://127.0.0.1:8766/site/dashboard/studio.html` |
+| 智能体工作台家庭编辑 | 逐人指定婚姻状态、伴侣（可指定名单里的另一位居民 / 场外人物）、子女与同住长辈；保存为覆盖项，**跨运行生效**并优先于自动抽样，可一键恢复自动生成 | 控制台「Agent Studio ↗」→ 第 5 步「社交 · 关系」；写入 `data/family_overrides.json` |
 | 参数化人口合成 | 按人口学旋钮生成整座小镇（年龄金字塔、家庭结构、就业、收入基尼、社交图），产出与现有格式完全一致的状态 CSV + profile MD | `python -m gaworld.population --size 500 --seed 42 --out data/town`；`--check` 只预览不写文件 |
 | 群体（cohort）模拟 | 把人口划分成群体，每群每天 1 次 LLM 调用 + 按预算实体化少数个体，实现大规模人群的低成本模拟 | `python -m gaworld.group --size 500 --days 7 --no-llm`；`--focal 7,42` 全程跟踪指定居民；`--network-coupling 0.7` 开社交图耦合（不开则验证门 L2 不通过）；不加 `--no-llm` 会真的调 LLM，运行前先打印预估次数 |
 | 群体模式验证门 | L1–L4 配对实验，量化 cohort 近似的代价并给出"能回答哪类研究问题"的结论；分水岭层不过时退出码为 1 | `python -m gaworld.group.validate --size 100 --days 14 --network-coupling 0.7` |
 | Population Studio | 5 步可视化：选模板（预设带说明）→ 人口结构（目标 vs 实际 + 金字塔/洛伦兹/度分布）→ 心理状态（均值雷达 + P25–P75）→ 跑模拟（可选后端模型）→ 检查结果（白话判定 + 文件可直接点开）；指标统一中英文双标 | 控制台「人口与群体」页签 → `http://127.0.0.1:8766/site/dashboard/population.html` |
 | 外部系统观测台 | 观察并编辑世界本身：货币系统（宏观周期、部门池、货币守恒审计、财富分布与基尼）、外部环境生成器（自然/经济/政策/科技事件时间线与生成参数）、对外服务（连通性即时探测、LLM 路由、外部信息源）。配置表单按配置自身的 JSON 形状生成，约 150 个旋钮可编辑；另可对**跑着的**仿真排一次货币干预（改宏观状态 / 给部门池注资），由仿真在下一个日边界消费。指标与旋钮几乎都带 hover 白话说明（`?` 悬停，说的是「改了会怎样」而非复述标题） | 控制台「外部系统」页签 → `http://127.0.0.1:8766/site/dashboard/external.html`；详见 [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md) |
+| 平行世界实验台 | 左边设计实验（世界、事件、模板、基准），右边读结果：分叉图（离主干的远近＝偏离程度）、逐指标走向对比（可只看与基准的差）、偏离曲线与分叉点、终局差异表、「谁被改变了」逐人表。图例可逐个世界开关；每个世界的轨迹仍可逐帧回放；已有的 compare-event 结果会被当场适配进同一视图 | 控制台「平行世界」页签 → `http://127.0.0.1:8766/site/dashboard/worlds.html`；详见 [平行世界教程](PARALLEL_WORLDS_TUTORIAL.md) |
 | 轨迹回放查看器 | 可视化回放智能体移动轨迹；顶部「运行」下拉可选择任意一次已记录的仿真：当前运行（实时）、历史归档运行（`output/visualization/runs/<run_id>/`）、compare-event 等场景运行；`?run=<id>` 可分享指定运行 | `python generative_city_sim.py serve-viz --port 8000` → `/site/simviz/index.html`（Dashboard 内为「仿真回放」页签） |
 | 分布式 relay | 多机协同仿真，各节点处理本地 agent 子集 | `python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877` |
 | 城市地图生成 | 用自然语言描述生成城市地图（节点 / 道路 / 地铁） | `python scripts/generate_citymap.py --description "..."` |
@@ -42,6 +45,7 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 | 动态行为系统 | 承诺度感知中断、情绪即兴行为、社交偶遇链、环境事件级联、需求中断与日程恢复 | `CONFIG["dynamic_behavior"]["enabled"]` |
 | 兴趣爱好与技能成长 | 为每个 agent 派生成长画像并动态演化（幂律学习、里程碑、遗忘衰减、发展四阶段、社交兴趣传染），影响日程、动作权重与工作选择 | `CONFIG["interests"]["enabled"]`（日终机制见 `interests.decay` / `interests.evolution`）；产物 `output/memory/agent_<id>_growth.json` |
 | 社交网络 | 关系衰减、Dunbar 分层、off-screen ghost 事件 | 自动运行；`gaworld/social/network.py`；产物 `output/network/` |
+| 家庭与户 | 按年龄段 × 性别抽样婚姻状态（未婚/已婚/离异/丧偶），匹配得上的居民在仿真内配成夫妻并**共享同一个住处**，配不上的补场外家人；子女、同住长辈、合租室友随之生成。家庭进入日程（接送、陪写作业、照料老人、回家吃晚饭）、账本（育儿与赡养开销按收入分摊、伴侣互相补现金缺口，全程守恒）、事件（同一件事同一 tick 落到全家人身上）与户内情绪传染 | `CONFIG["family"]`（配置面板「家庭与户」分区）；产物 `output/records/family.*.jsonl`；详见 [家庭系统设计](FAMILY_DESIGN.md) |
 | 生命事件 | 生日、疾病、换工作等调度事件 | 自动运行；`gaworld/events/life.py` |
 | 政策 / 环境事件 | 政策冲击与环境扰动注入仿真 | `CONFIG["policy_events"]`；`gaworld/env/system.py`；产物 `output/environment/timeline.jsonl` |
 | PolicySim 干预评估 | 本地无网络评估推荐 / 曝光，记录立场 / 毒性 / 误信息 / 跨观点 / 奖励指标 | `CONFIG["intervention"]["enabled"]`；产物 `output/intervention/intervention_metrics.csv` |
@@ -89,5 +93,7 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 - [物理环境感知与反应式重规划](physical_env_perception_changelog.md)
 - [Skill 系统](SKILL_SYSTEM.md) · [真实工作系统使用](REAL_WORK_USAGE.md)
 - [群体模拟教程](GROUP_SIMULATION_TUTORIAL.md) · [群体模拟设计](GROUP_AGENT_DESIGN.md)
+- [家庭系统设计](FAMILY_DESIGN.md)（婚姻抽样、共居、家庭日程与账目、覆盖层与工作台编辑面板）
 - [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)（货币系统 / 外部环境 / 对外服务的观察与编辑）
+- [平行世界教程](PARALLEL_WORLDS_TUTORIAL.md)（多分支反事实实验：设计、读图、剂量反应与安慰剂对照）
 - [项目结构](PROJECT_STRUCTURE.md) · [中文 README](../README.zh-CN.md) · [English README](../README.md)

@@ -132,6 +132,22 @@ python generative_city_sim.py compare-event \
 再记录 `stance_score`、`toxicity_score`、`misinformation_risk`、
 `cross_viewpoint_exposure` 和 `intervention_reward`。
 
+### 7.1 两个以上分支：平行世界
+
+要比的不止"有 / 无"，而是**几种强度**，或者想知道两段历史**从哪一步开始**分开，
+就用平行世界——一次实验最多 8 个世界，共用同一批居民和同一个种子，只有事件不同：
+
+```bash
+python generative_city_sim.py parallel-worlds --spec worlds.json
+```
+
+控制台「**平行世界**」页签是它的交互式版本：左边加世界、加事件，右边看分叉图、
+逐指标走向、偏离曲线和「谁被改变了」。已有的 `compare-event` 结果也会自动出现在那里。
+
+⚠️ 做结论前先跑一个**安慰剂世界**（一个没有实质影响的事件）量出噪声底噪——
+LLM 驱动的认知有随机性，配置相同的两个世界也不会跑出完全相同的历史。
+完整教程见[平行世界教程](PARALLEL_WORLDS_TUTORIAL.md)。
+
 ## 8. 生成新城市地图（可选）
 
 ```bash
@@ -201,7 +217,22 @@ python generative_city_sim.py dashboard --port 8766
 消费，适合临时制造一次衰退或财政刺激。完整教程见
 [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)。
 
-## 13. 想扩展 GAWorld？
+## 13. 想让居民有家庭？
+
+默认就有。跑起来之后控制台会打印 `👪 家庭结构已生成：…`——按年龄段抽出来的婚姻状态，
+匹配得上的居民在仿真内配成夫妻并共享同一个住处，配不上的补场外家人，
+子女和同住长辈随之生成。家庭会进日程（接送、陪写作业、回家吃晚饭）、
+进账本（育儿与赡养开销）、也会以整家为单位发生事件。
+
+想改整体分布（婚配率、生育率、共居比例），去 Dashboard 的「配置」→「家庭与户」；
+想精确指定某个人的家庭（"让 12 号和 27 号是夫妻，有一个 5 岁女儿"），
+去「Agent Studio ↗」第 5 步「社交 · 关系」。后者写成覆盖项，跨运行生效。
+
+⚠️ 日程有缓存：改完家庭想看到日程真的变化，先 `reset` 再 `run`。
+
+完整说明见[完整教程 5.7 节](TUTORIAL.v2.md#57-家庭与户)与[家庭系统设计](FAMILY_DESIGN.md)。
+
+## 14. 想扩展 GAWorld？
 
 所有子系统都运行在微内核插件接口上：写一个 `gaworld.kernel.Plugin`
 子类 + `CONFIG["plugins"]` 一行声明即可加新子系统，不用改核心代码；

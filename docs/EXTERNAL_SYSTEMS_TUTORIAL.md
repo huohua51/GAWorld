@@ -486,4 +486,5 @@ dashboard_config.json               面板保存的配置覆盖
 - [经济/货币系统改进讨论纪要](./proposals/2026-07-04-currency-system-panel.md)——
   部门池、守恒、信贷、共同市场因子这些设计的来龙去脉
 - [群体模拟教程](./GROUP_SIMULATION_TUTORIAL.md) · [项目结构](./PROJECT_STRUCTURE.md)
+- [平行世界教程](./PARALLEL_WORLDS_TUTORIAL.md)（要做**严格可复现**的对照实验时用它，而不是干预队列）
 - 测试：`tests/test_dashboard_external_systems.py`、`site/dashboard/external.test.js`
