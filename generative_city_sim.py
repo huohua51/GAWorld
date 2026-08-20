@@ -5288,6 +5288,51 @@ def _cli_compare_event(args):
                 f"event={item['event_final']:.4f}, delta={item['delta_final']:.4f}"
             )
 
+def _cli_parallel_worlds(args):
+    """Run N worlds from a JSON experiment file.
+
+    ``compare-event`` stays as-is (two worlds, its own output layout, the
+    benchmark reads it); this is the generalised form for three or more
+    branches, and it shares its engine with the console's Parallel Worlds
+    panel so a spec written here opens there and vice versa.
+    """
+    from gaworld.parallel import ExperimentRunner, normalize_experiment, prepare_experiment
+    from gaworld.parallel.analysis import summarize_report
+
+    with open(args.spec, encoding="utf-8") as f:
+        payload = json.load(f)
+    if args.sim_days is not None:
+        payload["sim_days"] = int(args.sim_days)
+    if args.seed is not None:
+        payload["seed"] = int(args.seed)
+    if args.llm_provider:
+        payload["llm_provider"] = args.llm_provider
+    if args.fast:
+        payload["fast"] = True
+
+    spec = normalize_experiment(payload)
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    manifest = prepare_experiment(
+        spec, repo_root, output_root=args.output_root, base_config=CONFIG
+    )
+    print(f"实验目录：{manifest['root']}")
+    for world in spec.worlds:
+        marker = "（基准）" if world.id == spec.baseline_id else ""
+        events = "；".join(
+            f"Day {item['day']} {item['time']} {item['name']}" for item in world.events
+        ) or "无事件"
+        print(f"  - {world.label}{marker}：{events}")
+
+    runner = ExperimentRunner(manifest, repo_root, max_parallel=spec.max_parallel)
+    report = runner.run(
+        on_progress=lambda progress, message: print(f"[{progress:6.1%}] {message}")
+    )
+    print("\n✅ 平行世界实验完成")
+    for line in summarize_report(report):
+        print(f"- {line}")
+    print(f"\n报告：{os.path.join(manifest['root'], 'divergence_summary.md')}")
+
+
 def _build_arg_parser():
     import argparse
     parser = argparse.ArgumentParser(description="GAWorld simulator")
@@ -5410,6 +5455,34 @@ def _build_arg_parser():
         action="store_true",
         help="Fast mode: deterministic cognition + skip daily summary/diary + 3-agent cohort "
              "(fewer LLM calls; trades fidelity for speed, e.g. for local models).",
+    )
+
+    parallel_worlds = subparsers.add_parser(
+        "parallel-worlds",
+        help="Run N parallel worlds from a JSON spec and report how far each drifts from the baseline",
+    )
+    parallel_worlds.add_argument(
+        "--spec",
+        required=True,
+        help='Experiment JSON: {"name":…, "worlds":[{"label":…, "events":[{"day":…,"time":…,'
+             '"name":…,"description":…}]}, …]}',
+    )
+    parallel_worlds.add_argument("--sim-days", type=int, default=None, help="Override simulation days")
+    parallel_worlds.add_argument("--seed", type=int, default=None, help="Random seed shared by every world")
+    parallel_worlds.add_argument(
+        "--llm-provider",
+        default=None,
+        help="Force every world to use the same provider name",
+    )
+    parallel_worlds.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: deterministic cognition + skip daily summary/diary + 3-agent cohort",
+    )
+    parallel_worlds.add_argument(
+        "--output-root",
+        default="output/parallel_worlds",
+        help="Output root for experiment artifacts",
     )
 
     serve_viz = subparsers.add_parser(
@@ -5568,6 +5641,10 @@ def _main():
 
     if args.command == "compare-event":
         _cli_compare_event(args)
+        return
+
+    if args.command == "parallel-worlds":
+        _cli_parallel_worlds(args)
         return
 
     if args.command == "serve-viz":
