@@ -77,6 +77,10 @@ ROLE_CONFIG: dict[str, dict[str, Any]] = {
     "client":          {"decay_rate": 0.009, "obligation_base": 0.40, "protected": False, "channels": ["face", "chat"], "category": "work"},
 
     # --- community ---
+    # A flatmate is the one person a single agent sees at home every day, so
+    # the tie decays slowly and runs face-to-face — closer to kin than to a
+    # neighbour, without the obligation.
+    "roommate":        {"decay_rate": 0.004, "obligation_base": 0.30, "protected": False, "channels": ["face", "chat"], "category": "community"},
     "neighbor":        {"decay_rate": 0.010, "obligation_base": 0.28, "protected": False, "channels": ["face"], "category": "community"},
     "online_friend":   {"decay_rate": 0.020, "obligation_base": 0.15, "protected": False, "channels": ["chat"], "category": "community"},
     "acquaintance":    {"decay_rate": 0.018, "obligation_base": 0.18, "protected": False, "channels": ["chat", "face"], "category": "community"},
@@ -335,15 +339,28 @@ def bootstrap_social_roster(
 
 def _build_backstory_prompt(agent: dict[str, Any]) -> str:
     fields = []
-    for key in ("name", "age", "job", "living", "residence", "personality", "values", "daily_life"):
+    for key in ("name", "age", "job", "living", "residence", "personality", "values", "daily_life", "family"):
         val = _strip(agent.get(key, ""))
         if val:
             fields.append(f"- {key}: {val}")
     profile_text = "\n".join(fields) if fields else "(无)"
+    # When the family module has already assigned a household, the roster must
+    # not contradict it — an invented second spouse is worse than none. The
+    # constraint is stated here *and* enforced afterwards by
+    # ``gaworld.family.ties.reconcile_ghost_kin``; the prompt saves tokens,
+    # the code guarantees consistency.
+    family_rule = ""
+    if _strip(agent.get("family", "")):
+        family_rule = (
+            "\n注意：该居民的婚姻与家庭状况已在上面的 family 字段中确定，"
+            "**不要**再编造配偶、伴侣、子女或前任；只补充父母、兄弟姐妹、"
+            "朋友、同学、前同事、邻居等其他关系。\n"
+        )
     return (
         "你在为一个生活模拟里的虚拟居民补全场外社交档案。"
         "请基于该居民的个人资料，编造一个可信的、不在本模拟内的熟人网络。\n\n"
-        f"居民资料：\n{profile_text}\n\n"
+        f"居民资料：\n{profile_text}\n"
+        f"{family_rule}\n"
         f"{_BACKSTORY_SCHEMA_HINT}"
     )
 

@@ -1249,6 +1249,26 @@ def _record_expense(econ, category, amount, sectors=None):
     _sector_add(sectors, "firms", value)
 
 
+def charge_external_expense(agent, category, amount, context=None):
+    """Public entry point for other subsystems to book a *conserving* expense.
+
+    Used by e.g. the family module to bill a household for childcare or elder
+    care. The money leaves the agent's checking account and accrues to the
+    firms pool exactly like ordinary consumption, so currency conservation
+    still holds. Returns the amount actually charged (0.0 when there is no
+    economy state to charge).
+    """
+    econ = agent.get("economy") if isinstance(agent, dict) else None
+    if not isinstance(econ, dict) or "daily_expense_by_category" not in econ:
+        return 0.0
+    value = round(max(0.0, _to_float(amount, 0.0)), 2)
+    if value <= 0:
+        return 0.0
+    sectors = _economy_state(context).get("sectors") if isinstance(context, dict) else None
+    _record_expense(econ, category, value, sectors)
+    return value
+
+
 def _apply_cash_constraint(econ, expense_map, cfg):
     """Scale discretionary spending down when liquidity is tight.
 

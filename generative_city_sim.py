@@ -1181,6 +1181,7 @@ def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, da
         f"职业：{agent.get('job', '')}",
         f"性格与情绪特征：{agent.get('personality', '')}",
         f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"家庭状况：{agent.get('family', '') or '（无家庭记录）'}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
     routine_text = json.dumps(
@@ -1222,8 +1223,9 @@ def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, da
 1) 仅改活动文本，时间点必须与输入完全一致。
 2) 至少改写 1 个非睡眠活动，使其体现角色的个体偏好（职业压力、性格、兴趣习惯）。
 3) {work_rule}
-4) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
-5) 仅输出 JSON，不要其他文字。
+4) 若“家庭状况”里有同住的伴侣、子女或长辈，周末活动应优先落到家庭场景（带孩子、陪长辈、家务采买、家庭聚餐），而不是纯个人休闲。
+5) 输出 JSON 数组，每项为 ["HH:MM","活动"] 或 {{"time":"HH:MM","activity":"活动"}}。
+6) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="weekend_routine", agent_id=agent["id"])
     candidate = _parse_schedule(response)
@@ -1570,8 +1572,10 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
         f"职业：{agent.get('job', '')}",
         f"性格与情绪特征：{agent.get('personality', '')}",
         f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"家庭状况：{agent.get('family', '') or '（无家庭记录）'}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
+    family_duty_text = str(agent.get("family_today", "") or "")
     base_text = json.dumps(
         [{"time": t, "activity": a} for t, a in base_schedule],
         ensure_ascii=False,
@@ -1602,6 +1606,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 {recent_events_text}
 {aftermath_text}
 {social_pulse_text}
+{family_duty_text}
 可参考的近期记忆：{memory_hint}
 可参考的额外信息：{external_hint}
 今日行为意图：{intent_hint}
@@ -1624,7 +1629,8 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
 10) “事件余波”仍在持续时，应让今日日程为其让路：影响很强时明显收缩高强度/高承诺活动并保留恢复、善后或处理时段，影响消退时逐步恢复常态；不要凭空编造事件未提及的细节。
 11) “近期社交脉动”里有强互动对象时，可在合适时段加入跟进社交（约见、电话、回信等）；如最近无社交，可适度补一次轻量联络。
 12) 若“当前人生与阶段目标”不为“无”，日程应自然服务于当前短期目标（每天推进 0-2 个即可，不要堆砌）；疲惫、突发事件或周末休整时目标推进可让位。
-13) 仅输出 JSON，不要其他文字。
+13) 若“今日家庭责任”不为空，这些是高承诺事项：接送、照料、家庭聚餐要落到具体时段，且不能被兴趣或加班随意挤掉；单亲或无人分担时更要优先满足。
+14) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="daily_routine", agent_id=agent["id"])
     schedule = _parse_schedule(response)
@@ -1673,6 +1679,7 @@ def generate_schedule(agent):
         f"职业：{agent.get('job', '')}",
         f"性格与情绪特征：{agent.get('personality', '')}",
         f"日常生活与习惯：{agent.get('daily_life', '')}",
+        f"家庭状况：{agent.get('family', '') or '（无家庭记录）'}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
     memory_hits = retrieve_relevant_memories(agent, "日程安排", max_items=VECTOR_DB_TOP_K)
@@ -1694,7 +1701,8 @@ def generate_schedule(agent):
 4) 若角色为退休/无业/待业/失业/家庭主妇/家庭主夫/已退休，不出现“工作/通勤/上班/加班”等活动。
 5) 若角色为学生，优先出现“上课/学习/实验”等活动；若作息偏晚，适度延后。
 6) 若兴趣与技能成长画像不为“无”，把个人时间具体化为 0-2 个兴趣爱好或技能发展活动。
-7) 仅输出 JSON，不要其他文字。
+7) 若“家庭状况”里有同住的伴侣、子女或长辈，基础日程要留出固定的家庭时段（接送、晚饭、照料），并据此约束加班与夜间活动。
+8) 仅输出 JSON，不要其他文字。
 """
     response = call_llm(prompt, task="schedule", agent_id=agent["id"])
     schedule = _parse_schedule(response)

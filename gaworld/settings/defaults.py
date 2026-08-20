@@ -8,6 +8,7 @@ from typing import Any
 from .behavior import human_realism_settings, intervention_settings, news_settings
 from .economy import economy_settings
 from .environment import environment_settings
+from .family import family_settings
 from .integrations import integration_settings
 from .llm import llm_settings
 from .runtime import simulation_settings
@@ -24,6 +25,7 @@ def build_default_config() -> dict[str, Any]:
         intervention_settings(),
         human_realism_settings(),
         economy_settings(),
+        family_settings(),
         integration_settings(),
     ):
         config.update(fragment)

@@ -35,6 +35,7 @@ from typing import Any
 from .behavior import human_realism_settings, intervention_settings, news_settings
 from .economy import economy_settings
 from .environment import environment_settings
+from .family import family_settings
 from .integrations import integration_settings
 from .llm import llm_settings
 from .runtime import simulation_settings
@@ -110,6 +111,14 @@ SECTIONS: tuple[tuple[str, str, Any, str, str], ...] = (
         "经济系统",
         "钱的规则：个税、社保、消费结构、投资收益、信贷、宏观周期。改的是下一次运行的"
         "规则；要动正在跑的那一轮，去「外部系统 → 货币系统」排干预。",
+    ),
+    (
+        "family",
+        "family",
+        family_settings,
+        "家庭与户",
+        "谁结了婚、谁还单身、谁跟父母住、谁在带娃。婚姻状态按年龄段抽样，家庭再决定日程里"
+        "的接送与晚饭、账上的育儿与赡养开销、以及一家人共担的突发事件。改的是下一次运行。",
     ),
     (
         "integrations",
@@ -295,6 +304,55 @@ MANUAL_HELP: dict[str, str] = {
     "external_environment_service": "从外部服务拿环境事件，而不是本机生成。多机联跑时让所有节点看到同一个世界。",
     "external_environment_service.fallback_to_empty": "服务不通时当作「今天没事发生」继续跑，而不是让整轮仿真失败。",
     "environment": "旧版环境事件（保留兼容）。新逻辑在 external_environment 里；两边都开会同时产生事件。",
+    # ---- 家庭与户 ----
+    "family": "家庭系统总开关。关掉就回到改动前的状态：所有居民都是单身，日程和账目里没有家人。",
+    "family.seed": "换一个数字就重抽一批家庭。同一个种子下，同一位居民每次运行都是同一个家。",
+    "family.overrides_path": "在「智能体工作台 → 社交·关系」里手工指定的家庭存在这个文件里。家庭每次运行都会重新生成，这个文件里的记录优先于自动抽样，所以手工指定的家庭不会被冲掉。删掉文件就等于全部恢复自动生成。",
+    "family.marital_status_bands": "每个年龄段里未婚/已婚/离异/丧偶各占多少。这张表决定了「有多少人还是单身」——想让全城更晚婚，把 25-34 段的 never 调高。",
+    "family.pairing.in_sim_pair_share": "多少比例的已婚居民，配偶是名单里的另一位居民（而不是场外的人）。注意：从一座千万人口的城市里抽几十个人，他们互为夫妻的真实概率约等于 0——这个值是为了让家庭互动发生在仿真内部而做的取舍，不是人口学事实。调到 0 就是人口学纯净的跑法：所有配偶都在场外。",
+    "family.pairing.max_age_gap": "两位居民能配成夫妻的最大年龄差。调小了能配上的对数会变少，剩下的人会拿到场外配偶。",
+    "family.fertility.p_any_child": "各年龄段「至少有一个孩子」的概率。整体调低就是一次低生育率实验——孩子少了，日程里的接送和账上的育儿开销会跟着一起变。",
+    "family.fertility.coresident_child_max_age": "超过这个岁数的孩子算已经独立搬出去：还是亲人，但不再共居、不再产生带娃责任和开销。",
+    "family.coresidence.with_parents_local": "本地户籍的未婚居民有多少和父母同住。外地户籍走下面那个值，两者差距很大是刻意的。",
+    "family.coresidence.multigen_with_young_child": "有学龄前孩子时，老人搬来同住帮忙带的概率。三代同堂在中国城市多半是「有人得看孩子」带来的，不是凭空的户型占比。",
+    "family.duties.max_per_day": "一天最多往日程提示里塞几条家庭责任。调大了日程会被家务填满，调到 0 等于只保留家庭关系、不影响日程。",
+    "family.finance.pooling_rate": "伴侣手头紧时，另一方最多拿出自己富余现金的多大比例去补。这是两人账户之间的转账，不凭空产生钱。",
+    "family.finance.child_cost_monthly": "每个孩子每月的花销（托育、学费、杂项）。这笔钱按收入在家里挣钱的人之间分摊，走的是经济模块正常的支出通道。",
+    "family.finance.elder_support_monthly": "给不同住的老人每月寄多少赡养费。父母年龄到了下面那个阈值才开始算。",
+    "family.events.daily_probability": "每户每天发生一件家庭事件的概率（孩子发烧、夫妻吵架、家庭聚餐……）。事件会同时落到全家人身上。",
+    "family.events.contagion_weight": "同住家人之间情绪和压力的互相影响强度。它是「向对方靠拢」而不是凭空加减：全家都平静时不会产生任何漂移。调到 0 就关掉传染。",
+    "family.cohabitation": "未婚但住在一起的那部分人。他们拿到的是「伴侣」而不是「配偶」，也不会有共同子女。",
+    "family.cohabitation.share": "这个年龄区间内的未婚居民里，有多少和伴侣同居。",
+    "family.pairing": "怎么给已婚居民找配偶。同性伴侣未建模；实在配不上的人会拿到一位场外配偶，而不是被退回单身。",
+    "family.pairing.prefer_in_sim": "先尝试在参与仿真的居民之间配对。关掉之后所有配偶都在场外，家里就不会有另一个会自己行动的人。",
+    "family.pairing.spouse_age_gap_mean": "场外配偶比本人大几岁（男方年长为正）。仿真内配对用的是两人的真实年龄，不受这个值影响。",
+    "family.pairing.same_district_bonus": "两人住在同一个城区时，配成夫妻的加权。调高会让夫妻更集中在同一片区。",
+    "family.fertility": "谁有孩子、有几个、孩子多大。这几个旋钮直接决定了日程里的接送和账上的育儿开销。",
+    "family.fertility.p_second_child": "已经有一个孩子的家庭再生第二个的比例。",
+    "family.fertility.p_third_child": "已经有两个孩子的家庭再生第三个的比例。",
+    "family.fertility.parent_age_at_first_birth": "父母生头胎时的年龄区间。孩子的岁数是从这里倒推的，所以调高会让孩子整体偏小。",
+    "family.coresidence": "谁和谁住在一起。同住是关键：只有共居的家人才会共享住处、产生日常照料、互相传染情绪。",
+    "family.coresidence.with_parents_migrant": "外地户籍的未婚居民和父母同住的比例。默认远低于本地户籍，这是刻意的。",
+    "family.coresidence.shared_rental_share": "既不和父母住、也没有伴侣的未婚居民里，有多少是合租而不是独居。合租的人在家里至少还有个室友。",
+    "family.coresidence.multigen_base": "没有幼儿时，老人搬来同住的概率。",
+    "family.coresidence.young_child_max_age": "多大以内算「需要有人全天看着」的幼儿。它同时影响三代同堂的概率和托育开销。",
+    "family.coresidence.elder_with_child_age": "居民本人到了这个岁数，就可能反过来和成年子女同住。",
+    "family.coresidence.elder_with_child_share": "到龄老人里有多少真的和成年子女住在一起。",
+    "family.duties": "家庭责任怎么进日程：接送、陪写作业、照料老人、回家吃晚饭。工作日和周末给的是不同的责任。",
+    "family.duties.school_age_max": "多大以内的孩子还需要接送和陪写作业。超过这个岁数只剩下「关心学业」这类轻责任。",
+    "family.duties.preschool_age_max": "多大以内算学龄前。学龄前的孩子最费时间也最费钱，还会拉高老人来同住帮忙的概率。",
+    "family.duties.elder_care_age": "同住的老人到了这个岁数就会产生实打实的照料责任（吃药、陪诊），而不只是一起吃饭。",
+    "family.finance": "家里的钱：养孩子、养老人，以及伴侣之间互相补窟窿。所有流水都守恒，不会凭空产生或消失。",
+    "family.finance.preschool_extra_monthly": "学龄前孩子在基础开销之外每月多花的钱（托班、看护）。",
+    "family.finance.elder_support_min_age": "父母到了这个岁数才开始需要赡养费。",
+    "family.finance.coresident_elder_monthly": "同住老人每月的花销。比寄出去的赡养费低，但不是零。",
+    "family.finance.shared_rent_discount": "多人同住时，一个人实际承担的房租相当于独居的百分之多少。",
+    "family.finance.spouse_bailout_enabled": "一方现金见底时，另一方先补上，而不是让他先去借钱。关掉之后夫妻就是各花各的。",
+    "family.finance.dual_income_security_bonus": "家里有第二份收入时，每天给经济安全感加多少。数值很小，靠的是长期累积的倾向而不是一次性冲击。",
+    "family.finance.sole_earner_stress": "独自养家时每天增加多少压力，按照护负担放大。",
+    "family.events": "家庭里发生的事，以及一家人情绪的互相影响。",
+    "family.events.contagion_enabled": "是否让同住家人之间的情绪和压力互相影响。",
+    "family.events.remote_contagion_weight": "不同住的家人（外地的成年子女、前任）的影响强度。默认比同住低一个数量级。",
 }
 
 #: Full dotted path (or bare last segment) -> Chinese label. Full path wins.
@@ -499,6 +557,32 @@ LABELS: dict[str, str] = {
     "external_environment_service": "外部环境服务（客户端）",
     "fallback_to_empty": "不可用时降级为空",
     "environment_server": "外部环境服务（本机服务端）",
+    # 家庭与户
+    "family": "家庭与户", "overrides_path": "手工指定的家庭（文件）",
+    "marital_status_bands": "婚姻状态分布（按年龄段）",
+    "cohabitation": "未婚同居", "age_min": "起始年龄", "age_max": "结束年龄", "share": "比例",
+    "pairing": "配偶匹配", "prefer_in_sim": "优先在仿真内配对",
+    "in_sim_pair_share": "仿真内配对比例", "max_age_gap": "最大年龄差",
+    "spouse_age_gap_mean": "夫妻年龄差均值", "same_district_bonus": "同区加权",
+    "fertility": "生育", "p_any_child": "有孩子的概率（按年龄段）",
+    "p_second_child": "生二孩概率", "p_third_child": "生三孩概率",
+    "parent_age_at_first_birth": "初育年龄区间", "coresident_child_max_age": "子女同住年龄上限",
+    "coresidence": "共居", "with_parents_local": "本地户籍与父母同住",
+    "with_parents_migrant": "外地户籍与父母同住", "shared_rental_share": "合租比例",
+    "multigen_base": "三代同堂基础概率", "multigen_with_young_child": "有幼儿时三代同堂概率",
+    "young_child_max_age": "幼儿年龄上限", "elder_with_child_age": "老人投靠子女年龄",
+    "elder_with_child_share": "老人与子女同住比例",
+    "duties": "家庭责任", "school_age_max": "学龄年龄上限", "preschool_age_max": "学龄前年龄上限",
+    "elder_care_age": "需照护的老人年龄",
+    "family.finance": "家庭财务", "pooling_rate": "伴侣互助比例",
+    "child_cost_monthly": "每孩月开销", "preschool_extra_monthly": "学龄前额外月开销",
+    "elder_support_monthly": "赡养费（月）", "elder_support_min_age": "开始赡养的年龄",
+    "coresident_elder_monthly": "同住老人月开销", "shared_rent_discount": "合租房租折扣",
+    "spouse_bailout_enabled": "伴侣补现金缺口", "dual_income_security_bonus": "双职工安全感加成",
+    "sole_earner_stress": "独自养家压力",
+    "family.events": "家庭事件", "daily_probability": "每户每日事件概率",
+    "contagion_enabled": "启用户内情绪传染", "contagion_weight": "同住传染强度",
+    "remote_contagion_weight": "异地家人传染强度",
 }
 
 

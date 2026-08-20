@@ -18,6 +18,7 @@ def builtin_plugins():
     from gaworld.collaboration.plugin import CollaborationPlugin
     from gaworld.economy.plugin import EconomyPlugin
     from gaworld.events.plugin import LifeEventsPlugin
+    from gaworld.family.plugin import FamilyPlugin
     from gaworld.interests_plugin import InterestsPlugin
     from gaworld.goals_plugin import GoalsPlugin
     from gaworld.policy.plugin import InterventionPlugin
@@ -32,6 +33,9 @@ def builtin_plugins():
         GoalsPlugin(),
         LifeEventsPlugin(),
         EconomyPlugin(),
+        # Family sits after Economy so its day-end billing (priority -10)
+        # lands on top of an already-settled day.
+        FamilyPlugin(),
         LocalPhysicalPlugin(),
         RealWorkPlugin(),
         DynamicBehaviorPlugin(),
