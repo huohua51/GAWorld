@@ -75,6 +75,92 @@ class TestTwinStore(unittest.TestCase):
         self.assertFalse(store.is_fresh(snapshot, now_ts=1000 + 31 * 60, ttl_minutes=30))
         self.assertFalse(store.is_fresh(None, now_ts=1000, ttl_minutes=30))
 
+    def test_delete_amendment_hides_the_report(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            store.append_amendment(7, "amend-1", "a", "delete", root=tmpdir)
+            self.assertEqual(store.load_reports(7, root=tmpdir), [])
+
+    def test_update_amendment_patches_whitelisted_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000, "work")], root=tmpdir)
+            store.append_amendment(
+                7, "amend-1", "a", "update",
+                patch={"action_tag": "meal", "note": "改了"}, root=tmpdir,
+            )
+            loaded = store.load_reports(7, root=tmpdir)
+            self.assertEqual(loaded[0]["action_tag"], "meal")
+            self.assertEqual(loaded[0]["note"], "改了")
+
+    def test_update_amendment_cannot_rewrite_location(self):
+        # Location is measured, not asserted. A wrong fix must be deleted,
+        # not edited, or the calibration corpus stops being a record of where
+        # anyone actually was.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            store.append_amendment(
+                7, "amend-1", "a", "update",
+                patch={"node_id": "somewhere-else", "loc": {"lat": 1, "lng": 2}},
+                root=tmpdir,
+            )
+            loaded = store.load_reports(7, root=tmpdir)
+            self.assertEqual(loaded[0]["node_id"], "home")
+            self.assertEqual(loaded[0]["loc"]["lat"], 30.27)
+
+    def test_amendments_are_not_returned_as_reports(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            store.append_amendment(7, "amend-1", "a", "update",
+                                   patch={"note": "x"}, root=tmpdir)
+            loaded = store.load_reports(7, root=tmpdir)
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0]["report_id"], "a")
+
+    def test_deleting_the_newest_report_promotes_the_previous_one(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(
+                7, [_report("a", 1000, "sleep"), _report("b", 2000, "work")],
+                root=tmpdir,
+            )
+            store.append_amendment(7, "amend-1", "b", "delete", root=tmpdir)
+            snapshot = store.read_snapshot(7, root=tmpdir)
+            self.assertEqual(snapshot["report_id"], "a")
+
+    def test_deleting_every_report_clears_the_snapshot(self):
+        # Otherwise the phone keeps showing a position the user just erased.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            store.append_amendment(7, "amend-1", "a", "delete", root=tmpdir)
+            self.assertIsNone(store.read_snapshot(7, root=tmpdir))
+
+    def test_amendment_is_idempotent_on_its_own_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            store.append_amendment(7, "amend-1", "a", "delete", root=tmpdir)
+            store.append_amendment(7, "amend-1", "a", "delete", root=tmpdir)
+            raw = store.load_raw(7, root=tmpdir)
+            self.assertEqual(len([r for r in raw if r.get("kind") == "amend"]), 1)
+
+    def test_last_amendment_wins(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            store.append_amendment(7, "m1", "a", "update",
+                                   patch={"note": "first"}, root=tmpdir)
+            store.append_amendment(7, "m2", "a", "update",
+                                   patch={"note": "second"}, root=tmpdir)
+            self.assertEqual(store.load_reports(7, root=tmpdir)[0]["note"], "second")
+
+    def test_a_deleted_report_id_is_still_deduped(self):
+        # Dedup must run against the raw log, not the folded view. A deleted
+        # report drops out of load_reports(), so deduping against that would
+        # let the offline queue re-append an id the server already saw.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            store.append_amendment(7, "amend-1", "a", "delete", root=tmpdir)
+            result = store.append_reports(7, [_report("a", 1000)], root=tmpdir)
+            self.assertEqual(result["accepted"], 0)
+            self.assertEqual(result["duplicates"], 1)
+
     def test_corrupt_line_does_not_break_loading(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store.append_reports(7, [_report("a", 1000)], root=tmpdir)

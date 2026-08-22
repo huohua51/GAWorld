@@ -18,6 +18,14 @@ import threading
 
 DEFAULT_ROOT = "output/twin"
 
+# What an `update` amendment is allowed to change.
+#
+# Location is deliberately absent. It came off the device sensor at a specific
+# moment; letting a user rewrite it turns measured data into asserted data, and
+# the calibration corpus silently stops being a record of where anyone actually
+# was. A wrong fix is deleted, not edited.
+PATCHABLE_FIELDS = ("action_tag", "note")
+
 # One lock for the whole subsystem. The server is threaded, and at this scale
 # (a handful of users) per-agent locks would add contention bookkeeping for no
 # measurable gain.
@@ -36,26 +44,57 @@ def _snapshot_path(agent_id, root=DEFAULT_ROOT):
     return os.path.join(agent_dir(agent_id, root=root), "snapshot.json")
 
 
-def load_reports(agent_id, root=DEFAULT_ROOT, since_ts=None):
-    """Return stored reports in file order, optionally newer than ``since_ts``."""
+def load_raw(agent_id, root=DEFAULT_ROOT):
+    """Every stored line, reports and amendments alike, in file order."""
     path = _reports_path(agent_id, root=root)
     if not os.path.exists(path):
         return []
-    reports = []
+    rows = []
     with open(path, "r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
             try:
-                record = json.loads(line)
+                rows.append(json.loads(line))
             except json.JSONDecodeError:
                 # A truncated write (killed process, full disk) must not make
                 # every later read fail. Skip the line and keep going.
                 continue
-            if since_ts is not None and float(record.get("ts", 0)) <= float(since_ts):
+    return rows
+
+
+def load_reports(agent_id, root=DEFAULT_ROOT, since_ts=None):
+    """Return effective reports: amendments folded in, deletions removed.
+
+    Folding at read time means every consumer — the mirror stage, perception
+    injection, the trail, calibration — sees corrected data without knowing
+    amendments exist.
+    """
+    rows = load_raw(agent_id, root=root)
+
+    # Later amendments supersede earlier ones for the same target.
+    amendments = {}
+    for row in rows:
+        if row.get("kind") == "amend" and row.get("target"):
+            amendments[str(row["target"])] = row
+
+    reports = []
+    for row in rows:
+        if row.get("kind") == "amend":
+            continue
+        amendment = amendments.get(str(row.get("report_id")))
+        if amendment is not None:
+            if amendment.get("op") == "delete":
                 continue
-            reports.append(record)
+            patch = amendment.get("patch") or {}
+            row = dict(row)
+            for key in PATCHABLE_FIELDS:
+                if key in patch:
+                    row[key] = patch[key]
+        if since_ts is not None and float(row.get("ts", 0)) <= float(since_ts):
+            continue
+        reports.append(row)
     return reports
 
 
@@ -65,10 +104,13 @@ def append_reports(agent_id, reports, root=DEFAULT_ROOT):
     Returns ``{"accepted": int, "duplicates": int}``.
     """
     with _LOCK:
+        # Dedup against the RAW log, not the folded view: a deleted report
+        # disappears from load_reports(), and deduping against that would let
+        # the offline queue re-append an id the server has already seen.
         existing = {
-            str(item.get("report_id"))
-            for item in load_reports(agent_id, root=root)
-            if item.get("report_id")
+            str(row.get("report_id"))
+            for row in load_raw(agent_id, root=root)
+            if row.get("report_id")
         }
         directory = agent_dir(agent_id, root=root)
         os.makedirs(directory, exist_ok=True)
@@ -92,10 +134,52 @@ def append_reports(agent_id, reports, root=DEFAULT_ROOT):
         return {"accepted": len(accepted), "duplicates": duplicates}
 
 
+def append_amendment(agent_id, amend_id, target, op, patch=None, root=DEFAULT_ROOT):
+    """Append a correction or deletion referencing an earlier report.
+
+    The log stays append-only and ``report_id`` stays the idempotency key;
+    corrections are new records that point back at an old one.
+    """
+    if op not in ("delete", "update"):
+        raise ValueError(f"unknown amendment op {op!r}")
+    clean = {}
+    for key in PATCHABLE_FIELDS:
+        if patch and key in patch:
+            clean[key] = patch[key]
+    record = {
+        "report_id": str(amend_id),
+        "kind": "amend",
+        "target": str(target),
+        "op": op,
+        "patch": clean,
+        "ts": 0,
+    }
+    with _LOCK:
+        existing = {
+            str(row.get("report_id"))
+            for row in load_raw(agent_id, root=root)
+            if row.get("report_id")
+        }
+        if record["report_id"] in existing:
+            return {"accepted": 0, "duplicates": 1}
+        directory = agent_dir(agent_id, root=root)
+        os.makedirs(directory, exist_ok=True)
+        with open(_reports_path(agent_id, root=root), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _refresh_snapshot(agent_id, root=root)
+        return {"accepted": 1, "duplicates": 0}
+
+
 def _refresh_snapshot(agent_id, root=DEFAULT_ROOT):
-    """Rewrite snapshot.json as the newest stored report by timestamp."""
+    """Rewrite snapshot.json as the newest *effective* report by timestamp."""
     reports = load_reports(agent_id, root=root)
     if not reports:
+        # Everything was deleted. Removing the file matters: leaving it would
+        # keep the phone showing a position the user just erased.
+        try:
+            os.remove(_snapshot_path(agent_id, root=root))
+        except OSError:
+            pass
         return
     newest = max(reports, key=lambda item: float(item.get("ts", 0)))
     directory = agent_dir(agent_id, root=root)
