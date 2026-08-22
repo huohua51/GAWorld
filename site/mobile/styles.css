@@ -55,6 +55,44 @@ h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
   margin: 0;
 }
 
+/* -- first-run intro ------------------------------------------------ */
+
+.intro-hero { padding: 8px 4px; }
+.hero { width: 100%; height: auto; display: block; }
+.hero-label { fill: var(--muted); font-size: 12px; }
+.hero-route { stroke: var(--line); stroke-width: 2; stroke-dasharray: 5 5; }
+.hero-stops circle { fill: var(--line); }
+.hero-you { fill: var(--accent); }
+.hero-agent { fill: var(--accent2); }
+.hero-link { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: 0.55; }
+
+/* `alternate` walks the route out and back, and the per-keyframe easing at
+   50% reads as a pause at the middle stop without extra keyframes. */
+.hero-convoy { animation: convoy 6s ease-in-out infinite alternate; }
+.hero-link { animation: uplink 1.4s linear infinite; }
+
+@keyframes convoy {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(120px); }
+  100% { transform: translateX(240px); }
+}
+@keyframes uplink {
+  0% { stroke-dashoffset: 16; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.intro-steps { list-style: none; margin: 0 0 16px; padding: 0; }
+.intro-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.intro-steps li:last-child { border-bottom: 0; }
+.intro-steps b { color: var(--accent); flex: none; width: 3em; font-size: 14px; }
+.intro-steps span { color: var(--muted); font-size: 14px; }
+
 .avatar-card { display: flex; gap: 14px; align-items: center; }
 .avatar { width: 84px; height: 84px; flex: none; }
 .avatar svg { width: 100%; height: 100%; display: block; }
@@ -81,9 +119,16 @@ h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
   50% { transform: scale(1.03); }
 }
 
-/* Respect users who ask the OS to reduce motion. */
+/* Respect users who ask the OS to reduce motion. The intro convoy is the
+   whole point of that screen, so it is parked mid-route rather than removed —
+   the diagram still reads, it just stops moving. */
 @media (prefers-reduced-motion: reduce) {
-  .avatar svg { animation: none !important; }
+  .avatar svg,
+  .hero-link { animation: none !important; }
+  .hero-convoy {
+    animation: none !important;
+    transform: translateX(120px);
+  }
 }
 
 .badge {

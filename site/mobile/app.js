@@ -9,6 +9,7 @@
 
   const core = window.GAWorldTwinCore;
   const TOKEN_KEY = "gaworld.twin.token";
+  const INTRO_KEY = "gaworld.twin.introSeen";
   const DB_NAME = "gaworld-twin";
   const STORE = "queue";
   const POLL_MS = 30000;
@@ -246,11 +247,23 @@
     });
   }
 
+  function showAuthGate() {
+    el("intro").hidden = true;
+    el("authGate").hidden = false;
+  }
+
+  function dismissIntro() {
+    localStorage.setItem(INTRO_KEY, "1");
+    showAuthGate();
+  }
+
   function signOut() {
     token = "";
     localStorage.removeItem(TOKEN_KEY);
     el("main").hidden = true;
-    el("authGate").hidden = false;
+    /* Signing out returns to the gate, not the intro: the user has already
+     * seen the explainer and just needs to re-enter a code. */
+    showAuthGate();
   }
 
   function signIn() {
@@ -273,6 +286,7 @@
   }
 
   function start() {
+    el("intro").hidden = true;
     el("authGate").hidden = true;
     el("main").hidden = false;
     renderTagGrid();
@@ -289,11 +303,18 @@
 
   function init() {
     el("codeSubmit").addEventListener("click", signIn);
+    el("introStart").addEventListener("click", dismissIntro);
     el("reportButton").addEventListener("click", submitReport);
     el("replayButton").addEventListener("click", replayTrail);
     window.addEventListener("online", flushQueue);
 
-    if (token) { start(); } else { el("authGate").hidden = false; }
+    if (token) {
+      start();
+    } else if (core.shouldShowIntro(!!token, !!localStorage.getItem(INTRO_KEY))) {
+      el("intro").hidden = false;
+    } else {
+      showAuthGate();
+    }
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js").catch(function () {});

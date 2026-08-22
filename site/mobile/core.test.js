@@ -134,6 +134,24 @@ test("syncLabel handles an agent that has never reported", () => {
 });
 
 
+test("intro shows only on a genuine first run", () => {
+  assert.equal(core.shouldShowIntro(false, false), true);
+});
+
+
+test("intro is skipped once it has been seen", () => {
+  assert.equal(core.shouldShowIntro(false, true), false);
+});
+
+
+test("intro never interrupts a user who already has a token", () => {
+  // Cleared storage or a new device can lose the "seen" flag. Re-explaining
+  // the product to a returning user is worse than never explaining it.
+  assert.equal(core.shouldShowIntro(true, false), false);
+  assert.equal(core.shouldShowIntro(true, true), false);
+});
+
+
 test("outOfMapNotice appears only for an out-of-map report", () => {
   assert.ok(core.outOfMapNotice({out_of_map: true}));
   assert.equal(core.outOfMapNotice({out_of_map: false}), "");

@@ -66,7 +66,11 @@ python3 -m gaworld.apps.twin_server --issue-code 1 --label "我"
 python3 -m gaworld.apps.twin_server --port 8767
 ```
 
-**第三步，浏览器打开** `http://127.0.0.1:8767/`，输入邀请码。
+**第三步，浏览器打开** `http://127.0.0.1:8767/`。
+
+首次打开会先看到一页**介绍**（现实与仿真两条同步轨迹的示意动画 + 三步说明），
+点「开始」进入邀请码输入。介绍只出现一次，标记存在 `localStorage` 的
+`gaworld.twin.introSeen`；已经持有令牌的用户永远不会看到它。想再看一次就清掉这个键。
 
 注意 `/` 会 **302 跳到 `/site/mobile/`**。这是必需的：前端的相对路径、manifest 的
 `start_url` 与 Service Worker 的 scope 都依赖真实的 base URL；如果直接在 `/` 上吐
@@ -250,6 +254,10 @@ python3 scripts/twin_calibrate.py 1 --approve --out output/twin/calibration.json
 4. **manifest 没有图标**，安装后用的是系统默认。
 5. **Service Worker 缓存需手动失效**：改动 `site/mobile/` 下任何 shell 文件后，
    必须同步提升 `sw.js` 里的 `CACHE_NAME`，否则老用户拿到的是旧包。
+6. **Service Worker 注册尚未在真实浏览器中成功过。** 内嵌预览环境会拒绝注册
+   （`An unknown error occurred when fetching the script`），而 `sw.js` 本身
+   200 且 MIME 正确。`app.js` 对注册失败做了静默降级，所以应用照常可用，
+   只是没有离线外壳——这一条同样要靠真机确认。
 
 ---
 

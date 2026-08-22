@@ -121,6 +121,15 @@
     return snap.fresh ? "已同步" : "未同步";
   }
 
+  /* The intro is a first-run explainer, not a gate. Anyone already holding a
+   * token has used the app before, so it is skipped even if the "seen" flag
+   * was lost (new device, cleared storage) — re-explaining the product to a
+   * returning user is worse than never explaining it. */
+  function shouldShowIntro(hasToken, hasSeenIntro) {
+    if (hasToken) { return false; }
+    return !hasSeenIntro;
+  }
+
   function outOfMapNotice(report) {
     if (report && report.out_of_map) {
       return "当前位置在地图覆盖范围之外，位置不会同步到智能体";
@@ -136,6 +145,7 @@
     trailBounds: trailBounds,
     projectPoint: projectPoint,
     visiblePoints: visiblePoints,
+    shouldShowIntro: shouldShowIntro,
     syncLabel: syncLabel,
     outOfMapNotice: outOfMapNotice,
   };

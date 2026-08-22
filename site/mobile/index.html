@@ -10,6 +10,45 @@
 </head>
 <body>
   <main id="app">
+    <!-- First-run explainer. Shown before the auth gate, once. -->
+    <section id="intro" hidden>
+      <div class="card intro-hero">
+        <svg class="hero" viewBox="0 0 320 150" role="img"
+             aria-label="示意动画：你在现实中移动，智能体在仿真中同步移动">
+          <text x="14" y="18" class="hero-label">现实</text>
+          <text x="14" y="144" class="hero-label">仿真</text>
+
+          <!-- The same route, drawn twice: reality on top, simulation below. -->
+          <line x1="40" y1="42" x2="280" y2="42" class="hero-route" />
+          <line x1="40" y1="110" x2="280" y2="110" class="hero-route" />
+          <g class="hero-stops">
+            <circle cx="40" cy="42" r="3.5" /><circle cx="160" cy="42" r="3.5" />
+            <circle cx="280" cy="42" r="3.5" /><circle cx="40" cy="110" r="3.5" />
+            <circle cx="160" cy="110" r="3.5" /><circle cx="280" cy="110" r="3.5" />
+          </g>
+
+          <!-- One group, so the mirroring is inherent rather than choreographed:
+               the agent cannot drift out of step with you. -->
+          <g class="hero-convoy">
+            <circle cx="40" cy="42" r="8" class="hero-you" />
+            <line x1="40" y1="54" x2="40" y2="98" class="hero-link" />
+            <circle cx="40" cy="110" r="8" class="hero-agent" />
+          </g>
+        </svg>
+      </div>
+
+      <div class="card">
+        <h1>把你自己接进仿真</h1>
+        <ol class="intro-steps">
+          <li><b>上报</b><span>选一个行为，一次点击带上位置</span></li>
+          <li><b>孪生</b><span>智能体照着你的现实生活走</span></li>
+          <li><b>观察</b><span>看它的形象、状态与今日轨迹</span></li>
+        </ol>
+        <button id="introStart" type="button" class="primary">开始</button>
+        <p class="muted">需要一个邀请码。位置数据只发到你自己的服务器。</p>
+      </div>
+    </section>
+
     <!-- Gate: shown until a token exists in localStorage. -->
     <section id="authGate" class="card" hidden>
       <h1>连接到 GAWorld</h1>
