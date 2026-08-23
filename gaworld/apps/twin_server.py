@@ -93,6 +93,19 @@ def make_handler(backend):
                 return self._reply(
                     backend.trail(self._token(), since_ts=float(since) if since else None)
                 )
+            if path == "/api/twin/life":
+                return self._reply(backend.life(self._token()))
+            if path == "/api/twin/reports":
+                since = query.get("since_ts", [None])[0]
+                return self._reply(
+                    backend.reports(self._token(), since_ts=float(since) if since else None)
+                )
+            if path == "/api/twin/places":
+                return self._reply(backend.places(
+                    self._token(),
+                    query=query.get("q", [""])[0],
+                    limit=int(query.get("limit", ["40"])[0] or 40),
+                ))
             if path.startswith("/api/"):
                 return self._json({"error": "not found"}, status=404)
 
@@ -119,6 +132,15 @@ def make_handler(backend):
                 return self._reply(backend.authenticate(code))
             if path == "/api/twin/report":
                 return self._reply(backend.submit(self._token(), body))
+            if path == "/api/twin/amend":
+                payload = body if isinstance(body, dict) else {}
+                return self._reply(backend.amend(
+                    self._token(),
+                    payload.get("target"),
+                    payload.get("op"),
+                    patch=payload.get("patch"),
+                    amend_id=payload.get("amend_id"),
+                ))
             return self._json({"error": "not found"}, status=404)
 
     return TwinHandler
@@ -137,12 +159,18 @@ def build_backend(config=None):
         # Without a map every fix is reported out of map, which is the correct
         # conservative behaviour: better than snapping to a fabricated node.
         city_map = {"nodes": {}}
+    base = config or CONFIG
     return TwinBackend(
         root=cfg.get("root", "output/twin"),
         bindings_path=cfg.get("bindings_path", "data/twin_bindings.json"),
         city_map=city_map,
         snapshot_ttl_minutes=cfg.get("snapshot_ttl_minutes", 30),
         max_snap_km=cfg.get("max_snap_km", 3.0),
+        # The life card reads what the simulator writes, so these must track
+        # the simulator's own output paths rather than being hardcoded.
+        diary_dir=base.get("diary_output_dir", "output/diaries"),
+        state_dir=base.get("state_output_dir", "output/state"),
+        memory_dir=base.get("memory_dir", "output/memory"),
     )
 
 

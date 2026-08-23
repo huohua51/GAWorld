@@ -45,6 +45,12 @@ class TestTwinServer(unittest.TestCase):
             root=os.path.join(self._tmp.name, "twin"),
             bindings_path=self.bindings,
             city_map=_fake_map(),
+            # Point the life artifacts at the sandbox too, or these tests
+            # would read the repo's real output/ and break whenever a
+            # simulation had produced a diary for this agent id.
+            diary_dir=os.path.join(self._tmp.name, "diaries"),
+            state_dir=os.path.join(self._tmp.name, "state"),
+            memory_dir=os.path.join(self._tmp.name, "memory"),
         )
         handler = twin_server.make_handler(backend)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -100,11 +106,46 @@ class TestTwinServer(unittest.TestCase):
         status, _ = _request(f"{self.base}/api/twin/report", {"report_id": "a"}, token=token)
         self.assertEqual(status, 400)
 
-    def test_profile_and_trail_require_a_token(self):
-        for path in ("/api/twin/profile", "/api/twin/trail", "/api/twin/snapshot"):
+    def test_every_read_route_requires_a_token(self):
+        for path in ("/api/twin/profile", "/api/twin/trail", "/api/twin/snapshot",
+                     "/api/twin/life", "/api/twin/reports", "/api/twin/places"):
             with self.subTest(path=path):
                 status, _ = _request(f"{self.base}{path}")
                 self.assertEqual(status, 401)
+
+    def test_amend_requires_a_token(self):
+        status, _ = _request(f"{self.base}/api/twin/amend",
+                             {"target": "a", "op": "delete"})
+        self.assertEqual(status, 401)
+
+    def test_amend_round_trips(self):
+        token = self._token()
+        _request(f"{self.base}/api/twin/report", [
+            {"report_id": "a", "ts": 1000,
+             "loc": {"lat": 30.2741, "lng": 120.1551, "source": "gps"},
+             "action_tag": "work"}
+        ], token=token)
+
+        status, _ = _request(f"{self.base}/api/twin/amend",
+                             {"target": "a", "op": "update",
+                              "patch": {"action_tag": "meal"}, "amend_id": "m1"},
+                             token=token)
+        self.assertEqual(status, 200)
+
+        _, body = _request(f"{self.base}/api/twin/reports", token=token)
+        self.assertEqual(body["reports"][0]["action_tag"], "meal")
+
+        status, _ = _request(f"{self.base}/api/twin/amend",
+                             {"target": "a", "op": "delete", "amend_id": "m2"},
+                             token=token)
+        self.assertEqual(status, 200)
+        _, body = _request(f"{self.base}/api/twin/reports", token=token)
+        self.assertEqual(body["reports"], [])
+
+    def test_life_returns_empty_structures(self):
+        _, body = _request(f"{self.base}/api/twin/life", token=self._token())
+        self.assertEqual(body["diary"]["text"], "")
+        self.assertEqual(body["goals"]["life_goals"], [])
 
     def test_profile_returns_an_avatar(self):
         status, body = _request(f"{self.base}/api/twin/profile", token=self._token())

@@ -43,6 +43,9 @@ class TestTwinBackend(unittest.TestCase):
             city_map=_fake_map(),
             snapshot_ttl_minutes=30,
             max_snap_km=3.0,
+            diary_dir=os.path.join(self._tmp.name, "diaries"),
+            state_dir=os.path.join(self._tmp.name, "state"),
+            memory_dir=os.path.join(self._tmp.name, "memory"),
         )
         self.code = binding.issue_code(agent_id=7, label="cw", path=self.bindings)
         self.token = binding.redeem_code(self.code, path=self.bindings)
