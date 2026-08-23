@@ -197,6 +197,120 @@ button.primary {
 }
 button:disabled { opacity: 0.55; }
 
+/* -- repeat / auto-sample -------------------------------------------- */
+
+.repeat {
+  width: 100%;
+  margin-bottom: 10px;
+  border-style: dashed;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+}
+
+.auto-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.auto-row input { width: 18px; height: 18px; accent-color: var(--accent); }
+
+/* -- place picker ---------------------------------------------------- */
+
+.place-list { max-height: 240px; overflow-y: auto; margin-bottom: 10px; }
+.place-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 2px;
+}
+.place-list .dist { color: var(--muted); font-size: 12px; flex: none; }
+
+/* -- life card ------------------------------------------------------- */
+
+.diary {
+  white-space: pre-wrap;
+  font-size: 14px;
+  color: var(--ink);
+  margin: 0 0 14px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.bars { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+.bar-row { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+.bar-row .name { color: var(--muted); flex: none; width: 5.5em; }
+.bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--panel2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+/* Must be block: it is a <span> inside a non-flex track, so left inline it
+   would ignore `width` entirely and render at zero. */
+.bar-fill { display: block; height: 100%; border-radius: 999px; transition: width 0.6s ease; }
+.bar-fill[data-tone="good"] { background: var(--accent2); }
+.bar-fill[data-tone="warn"] { background: var(--warn); }
+.bar-fill[data-tone="neutral"] { background: var(--accent); }
+.bar-row .pct { color: var(--muted); flex: none; width: 2.5em; text-align: right; }
+
+.goals { list-style: none; margin: 0; padding: 0; }
+.goals li { display: flex; gap: 8px; padding: 6px 0; font-size: 13px; }
+.goals .tier {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  height: fit-content;
+}
+
+/* -- history --------------------------------------------------------- */
+
+.history { display: flex; flex-direction: column; }
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.history-row:last-child { border-bottom: 0; }
+.history-row .time { color: var(--muted); flex: none; width: 3.6em; }
+.history-row .what { flex: 1; min-width: 0; }
+.history-row .where { color: var(--muted); font-size: 12px; }
+.history-row select {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 5px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.history-row .del {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--err);
+  padding: 6px 8px;
+  font-size: 16px;
+  line-height: 1;
+}
+
 canvas {
   width: 100%;
   height: auto;

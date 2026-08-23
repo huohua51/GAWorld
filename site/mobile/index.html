@@ -73,10 +73,37 @@
 
       <section class="card">
         <h2>你在做什么？</h2>
+        <button id="repeatButton" type="button" class="repeat" hidden></button>
         <div id="tagGrid" class="tag-grid"></div>
         <input id="noteInput" type="text" placeholder="备注（可选）" aria-label="备注" />
         <button id="reportButton" type="button" class="primary">上报</button>
         <p id="queueState" class="muted"></p>
+        <label class="auto-row">
+          <input id="autoSample" type="checkbox" />
+          <span>打开期间每 10 分钟自动记录位置</span>
+        </label>
+        <p class="muted">关掉页面后无法继续记录，这是手机浏览器的限制。</p>
+      </section>
+
+      <!-- Manual picker: shown when geolocation is denied or unavailable. -->
+      <section id="placePicker" class="card" hidden>
+        <h2>手动选择位置</h2>
+        <p class="muted">拿不到定位。选一个地点，或直接上报行为。</p>
+        <input id="placeSearch" type="text" placeholder="搜索地点" aria-label="搜索地点" />
+        <div id="placeList" class="place-list"></div>
+        <button id="placeCancel" type="button">仅上报行为</button>
+      </section>
+
+      <section class="card">
+        <h2>智能体的今天</h2>
+        <p id="lifeDiary" class="diary">还没有日记。</p>
+        <div id="lifeState" class="bars"></div>
+        <ul id="lifeGoals" class="goals"></ul>
+      </section>
+
+      <section class="card">
+        <h2>今日上报</h2>
+        <div id="historyList" class="history"></div>
       </section>
 
       <section class="card">

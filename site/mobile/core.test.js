@@ -152,6 +152,76 @@ test("intro never interrupts a user who already has a token", () => {
 });
 
 
+test("stateBars renders only numeric metrics", () => {
+  const bars = core.stateBars({emotion: 0.7, stress: "bad", nonsense: 0.5});
+  assert.deepEqual(bars.map(b => b.key), ["emotion"]);
+  assert.equal(bars[0].percent, 70);
+  assert.equal(bars[0].label, "情绪");
+});
+
+
+test("stateBars clamps out-of-range values", () => {
+  const bars = core.stateBars({emotion: 1.8, stress: -0.4});
+  const byKey = Object.fromEntries(bars.map(b => [b.key, b]));
+  assert.equal(byKey.emotion.percent, 100);
+  assert.equal(byKey.stress.percent, 0);
+});
+
+
+test("stateBars tones high-is-good and low-is-good metrics oppositely", () => {
+  // Same numeric value, opposite meaning: 0.8 emotion is good, 0.8 stress is not.
+  const bars = core.stateBars({emotion: 0.8, stress: 0.8});
+  const byKey = Object.fromEntries(bars.map(b => [b.key, b]));
+  assert.equal(byKey.emotion.tone, "good");
+  assert.equal(byKey.stress.tone, "warn");
+});
+
+
+test("stateBars on empty state is empty", () => {
+  assert.deepEqual(core.stateBars({}), []);
+  assert.deepEqual(core.stateBars(null), []);
+});
+
+
+test("localDayKey uses the report's own timezone, not the reader's", () => {
+  // 2026-08-08 23:30 UTC is already 2026-08-09 in UTC+8.
+  const ts = Date.UTC(2026, 7, 8, 23, 30) / 1000;
+  assert.equal(core.localDayKey({ts: ts, tz_offset: 480}), "2026-08-09");
+  assert.equal(core.localDayKey({ts: ts, tz_offset: 0}), "2026-08-08");
+});
+
+
+test("groupReportsByDay preserves order and splits on local day", () => {
+  const base = Date.UTC(2026, 7, 8, 23, 30) / 1000;
+  const groups = core.groupReportsByDay([
+    {report_id: "a", ts: base, tz_offset: 480},
+    {report_id: "b", ts: base + 3600, tz_offset: 480},
+    {report_id: "c", ts: base - 86400, tz_offset: 480},
+  ]);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0].reports.map(r => r.report_id), ["a", "b"]);
+  assert.deepEqual(groups[1].reports.map(r => r.report_id), ["c"]);
+});
+
+
+test("groupReportsByDay on no reports is empty", () => {
+  assert.deepEqual(core.groupReportsByDay([]), []);
+});
+
+
+test("auto-sample never fires while the page is hidden", () => {
+  assert.equal(core.shouldAutoSample(0, 99999, 10, false), false);
+  assert.equal(core.shouldAutoSample(null, 99999, 10, false), false);
+});
+
+
+test("auto-sample fires first time and then on interval", () => {
+  assert.equal(core.shouldAutoSample(null, 1000, 10, true), true);
+  assert.equal(core.shouldAutoSample(1000, 1000 + 9 * 60, 10, true), false);
+  assert.equal(core.shouldAutoSample(1000, 1000 + 10 * 60, 10, true), true);
+});
+
+
 test("outOfMapNotice appears only for an out-of-map report", () => {
   assert.ok(core.outOfMapNotice({out_of_map: true}));
   assert.equal(core.outOfMapNotice({out_of_map: false}), "");

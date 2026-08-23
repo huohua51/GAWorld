@@ -130,6 +130,74 @@
     return !hasSeenIntro;
   }
 
+  /* The nine normalized state variables, with the direction that counts as
+   * "good" so the bar can be coloured without the caller deciding. */
+  const STATE_LABELS = {
+    emotion: {label: "情绪", good: "high"},
+    stress: {label: "压力", good: "low"},
+    econ_security: {label: "经济安全感", good: "high"},
+    city_identity: {label: "城市认同", good: "high"},
+    policy_sensitivity: {label: "政策敏感度", good: "neutral"},
+    platform_dependence: {label: "平台依赖", good: "neutral"},
+    risk_preference: {label: "风险偏好", good: "neutral"},
+    voice_propensity: {label: "表达意愿", good: "neutral"},
+    mobility_intent: {label: "迁移意愿", good: "neutral"},
+  };
+
+  function stateBars(state) {
+    const rows = [];
+    Object.keys(STATE_LABELS).forEach(function (key) {
+      const raw = (state || {})[key];
+      if (typeof raw !== "number" || !isFinite(raw)) { return; }
+      const value = Math.max(0, Math.min(1, raw));
+      const meta = STATE_LABELS[key];
+      let tone = "neutral";
+      if (meta.good === "high") { tone = value >= 0.5 ? "good" : "warn"; }
+      if (meta.good === "low") { tone = value <= 0.5 ? "good" : "warn"; }
+      rows.push({
+        key: key,
+        label: meta.label,
+        value: value,
+        percent: Math.round(value * 100),
+        tone: tone,
+      });
+    });
+    return rows;
+  }
+
+  /* Local-day grouping, using each report's own tz_offset rather than the
+   * reader's clock: a report made in Hangzhou belongs to the Hangzhou day it
+   * was made on, whoever is looking at it later. */
+  function localDayKey(report) {
+    const ts = Number((report || {}).ts || 0);
+    const offsetMinutes = Number((report || {}).tz_offset || 0);
+    const shifted = new Date((ts + offsetMinutes * 60) * 1000);
+    return shifted.toISOString().slice(0, 10);
+  }
+
+  function groupReportsByDay(reports) {
+    const groups = [];
+    const index = {};
+    (reports || []).forEach(function (report) {
+      const key = localDayKey(report);
+      if (!index[key]) {
+        index[key] = {day: key, reports: []};
+        groups.push(index[key]);
+      }
+      index[key].reports.push(report);
+    });
+    return groups;
+  }
+
+  /* Auto-sampling only makes sense while the page is actually on screen; a
+   * backgrounded tab would burn battery for data the browser may throttle
+   * anyway. iOS additionally cannot sample at all once the app is closed. */
+  function shouldAutoSample(lastSampleTs, nowTs, intervalMinutes, visible) {
+    if (!visible) { return false; }
+    if (!lastSampleTs) { return true; }
+    return (Number(nowTs) - Number(lastSampleTs)) >= Number(intervalMinutes) * 60;
+  }
+
   function outOfMapNotice(report) {
     if (report && report.out_of_map) {
       return "当前位置在地图覆盖范围之外，位置不会同步到智能体";
@@ -146,6 +214,11 @@
     projectPoint: projectPoint,
     visiblePoints: visiblePoints,
     shouldShowIntro: shouldShowIntro,
+    STATE_LABELS: STATE_LABELS,
+    stateBars: stateBars,
+    localDayKey: localDayKey,
+    groupReportsByDay: groupReportsByDay,
+    shouldAutoSample: shouldAutoSample,
     syncLabel: syncLabel,
     outOfMapNotice: outOfMapNotice,
   };

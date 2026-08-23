@@ -8,7 +8,7 @@
  * service-worker failure, so the shell list is kept short and explicit rather
  * than pattern-matched.
  */
-const CACHE_NAME = "gaworld-twin-v2";
+const CACHE_NAME = "gaworld-twin-v3";
 const SHELL = [
   "./",
   "./index.html",

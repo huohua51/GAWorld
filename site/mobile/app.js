@@ -14,9 +14,15 @@
   const STORE = "queue";
   const POLL_MS = 30000;
 
+  const LAST_TAG_KEY = "gaworld.twin.lastTag";
+  const AUTO_KEY = "gaworld.twin.autoSample";
+  const AUTO_INTERVAL_MIN = 10;
+
   let token = localStorage.getItem(TOKEN_KEY) || "";
   let selectedTag = "work";
   let trailPoints = [];
+  let lastAutoSampleTs = null;
+  let pendingManualReport = null;
 
   const el = function (id) { return document.getElementById(id); };
 
@@ -148,6 +154,135 @@
     });
   }
 
+  function renderLife(data) {
+    const diary = (data.diary || {}).text || "";
+    el("lifeDiary").textContent = diary
+      ? (data.diary.day ? "第 " + data.diary.day + " 天\n\n" : "") + diary
+      : "还没有日记。跑一次仿真后这里会出现它写的东西。";
+
+    const bars = core.stateBars(data.state);
+    const stateEl = el("lifeState");
+    stateEl.innerHTML = "";
+    bars.forEach(function (bar) {
+      const row = document.createElement("div");
+      row.className = "bar-row";
+
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = bar.label;
+
+      const track = document.createElement("span");
+      track.className = "bar-track";
+      const fill = document.createElement("span");
+      fill.className = "bar-fill";
+      fill.setAttribute("data-tone", bar.tone);
+      fill.style.width = bar.percent + "%";
+      track.appendChild(fill);
+
+      const pct = document.createElement("span");
+      pct.className = "pct";
+      pct.textContent = bar.percent;
+
+      row.appendChild(name);
+      row.appendChild(track);
+      row.appendChild(pct);
+      stateEl.appendChild(row);
+    });
+
+    const TIERS = {life_goals: "人生", long_term_goals: "长期", short_term_goals: "近期"};
+    const goalsEl = el("lifeGoals");
+    goalsEl.innerHTML = "";
+    Object.keys(TIERS).forEach(function (tier) {
+      ((data.goals || {})[tier] || []).forEach(function (goal) {
+        const li = document.createElement("li");
+        const badge = document.createElement("span");
+        badge.className = "tier";
+        badge.textContent = TIERS[tier];
+        const text = document.createElement("span");
+        text.textContent = goal.title || "";
+        li.appendChild(badge);
+        li.appendChild(text);
+        goalsEl.appendChild(li);
+      });
+    });
+  }
+
+  function renderHistory(reports) {
+    const listEl = el("historyList");
+    listEl.innerHTML = "";
+    const groups = core.groupReportsByDay(reports);
+    const today = groups.length ? groups[0].reports : [];
+
+    if (!today.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "今天还没有上报。";
+      listEl.appendChild(empty);
+      return;
+    }
+
+    today.forEach(function (report) {
+      const row = document.createElement("div");
+      row.className = "history-row";
+
+      const time = document.createElement("span");
+      time.className = "time";
+      const when = new Date((Number(report.ts) + Number(report.tz_offset || 0) * 60) * 1000);
+      time.textContent = when.toISOString().slice(11, 16);
+
+      const what = document.createElement("span");
+      what.className = "what";
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", "更正行为");
+      core.ACTION_TAGS.forEach(function (tag) {
+        const option = document.createElement("option");
+        option.value = tag;
+        option.textContent = core.TAG_LABELS[tag] || tag;
+        option.selected = tag === report.action_tag;
+        select.appendChild(option);
+      });
+      select.addEventListener("change", function () {
+        amend(report.report_id, "update", {action_tag: select.value});
+      });
+      const where = document.createElement("div");
+      where.className = "where";
+      where.textContent = (report.node_id || "地图之外")
+        + (report.note ? " · " + report.note : "");
+      what.appendChild(select);
+      what.appendChild(where);
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "del";
+      del.setAttribute("aria-label", "删除这条上报");
+      del.textContent = "✕";
+      del.addEventListener("click", function () {
+        /* Deletion cannot be undone from the phone, so it asks first. */
+        if (window.confirm("删除这条上报？无法撤销。")) {
+          amend(report.report_id, "delete");
+        }
+      });
+
+      row.appendChild(time);
+      row.appendChild(what);
+      row.appendChild(del);
+      listEl.appendChild(row);
+    });
+  }
+
+  function amend(target, op, patch) {
+    return api("/api/twin/amend", {
+      method: "POST",
+      body: {
+        target: target,
+        op: op,
+        patch: patch || {},
+        amend_id: (crypto.randomUUID && crypto.randomUUID())
+          || String(Date.now()) + Math.random().toString(16).slice(2),
+      },
+    }).then(function () { return refresh(); });
+  }
+
   /* Temporal animation: replay the day's points along their own timeline. */
   function replayTrail() {
     if (trailPoints.length < 2) { drawTrail(trailPoints); return; }
@@ -163,7 +298,12 @@
 
   function refresh() {
     if (!token) { return Promise.resolve(); }
-    return Promise.all([api("/api/twin/snapshot"), api("/api/twin/trail")])
+    return Promise.all([
+      api("/api/twin/snapshot"),
+      api("/api/twin/trail"),
+      api("/api/twin/life"),
+      api("/api/twin/reports"),
+    ])
       .then(function (results) {
         const snapshot = results[0];
         const trail = results[1];
@@ -175,6 +315,9 @@
           return p.grid && !p.out_of_map;
         });
         drawTrail(trailPoints);
+        renderLife(results[2].data || {});
+        renderHistory((results[3].data || {}).reports || []);
+        renderRepeat(snapshot.data.report);
       })
       .catch(function () {
         /* Offline: keep the last render rather than blanking the screen. */
@@ -217,33 +360,125 @@
     });
   }
 
+  function renderRepeat(report) {
+    const button = el("repeatButton");
+    if (!report || !report.action_tag) {
+      button.hidden = true;
+      return;
+    }
+    button.hidden = false;
+    button.textContent = "和刚才一样 · "
+      + (core.TAG_LABELS[report.action_tag] || report.action_tag);
+    button.onclick = function () {
+      selectedTag = report.action_tag;
+      renderTagGrid();
+      submitReport();
+    };
+  }
+
+  function newReportId() {
+    return (crypto.randomUUID && crypto.randomUUID())
+      || String(Date.now()) + Math.random().toString(16).slice(2);
+  }
+
+  function sendReport(coords, options) {
+    const opts = options || {};
+    const report = core.buildReport({
+      reportId: newReportId(),
+      ts: Math.floor(Date.now() / 1000),
+      tzOffset: -new Date().getTimezoneOffset(),
+      coords: coords,
+      tag: opts.tag || selectedTag,
+      note: opts.note === undefined ? el("noteInput").value : opts.note,
+      manual: !!opts.manual,
+    });
+    return enqueue(report).then(flushQueue).then(function () {
+      if (opts.note === undefined) { el("noteInput").value = ""; }
+    });
+  }
+
+  /* -- manual place picking ------------------------------------------- */
+
+  function renderPlaces(places) {
+    const listEl = el("placeList");
+    listEl.innerHTML = "";
+    (places || []).forEach(function (place) {
+      const button = document.createElement("button");
+      button.type = "button";
+      const name = document.createElement("span");
+      name.textContent = place.name;
+      const dist = document.createElement("span");
+      dist.className = "dist";
+      dist.textContent = place.distance_km + " km";
+      button.appendChild(name);
+      button.appendChild(dist);
+      button.addEventListener("click", function () {
+        closePicker();
+        /* A manually chosen node still travels as a coordinate, so the server
+         * runs the same snapping and out-of-map logic as a real GPS fix — the
+         * client never gets to assert a node id directly. */
+        sendReport(
+          {latitude: place.lat, longitude: place.lng, accuracy: 0},
+          {manual: true, tag: pendingManualReport && pendingManualReport.tag}
+        );
+      });
+      listEl.appendChild(button);
+    });
+  }
+
+  function openPicker() {
+    pendingManualReport = {tag: selectedTag};
+    el("placePicker").hidden = false;
+    el("placeSearch").value = "";
+    api("/api/twin/places").then(function (result) {
+      renderPlaces((result.data || {}).places);
+    });
+  }
+
+  function closePicker() {
+    el("placePicker").hidden = true;
+    pendingManualReport = null;
+  }
+
+  function searchPlaces() {
+    const q = encodeURIComponent(el("placeSearch").value.trim());
+    api("/api/twin/places?q=" + q).then(function (result) {
+      renderPlaces((result.data || {}).places);
+    });
+  }
+
   function submitReport() {
     const button = el("reportButton");
     button.disabled = true;
     return currentPosition().then(function (coords) {
       if (!coords) {
-        /* Permission denied or unavailable: the spec requires the feature to
-         * keep working, so fall back to a manual fix at the last known node
-         * rather than dropping the activity report. */
-        el("notice").textContent = "无法获取定位，本次仅上报行为";
-        el("notice").hidden = false;
-        coords = {latitude: 0, longitude: 0, accuracy: 0};
+        /* Permission denied or unavailable. Offer a manual pick rather than
+         * silently sending 0,0 — those coordinates land ~12000 km from the
+         * map and get flagged out-of-map, losing the location entirely. */
+        openPicker();
+        return null;
       }
-      const report = core.buildReport({
-        reportId: (crypto.randomUUID && crypto.randomUUID())
-          || String(Date.now()) + Math.random().toString(16).slice(2),
-        ts: Math.floor(Date.now() / 1000),
-        tzOffset: -new Date().getTimezoneOffset(),
-        coords: coords,
-        tag: selectedTag,
-        note: el("noteInput").value,
-        manual: !coords.accuracy,
-      });
-      return enqueue(report)
-        .then(flushQueue)
-        .then(function () { el("noteInput").value = ""; });
+      return sendReport(coords);
     }).finally(function () {
       button.disabled = false;
+    });
+  }
+
+  /* -- auto-sampling --------------------------------------------------- */
+
+  function maybeAutoSample() {
+    if (!el("autoSample").checked) { return; }
+    const visible = document.visibilityState === "visible";
+    const now = Date.now() / 1000;
+    if (!core.shouldAutoSample(lastAutoSampleTs, now, AUTO_INTERVAL_MIN, visible)) {
+      return;
+    }
+    currentPosition().then(function (coords) {
+      if (!coords) { return; }
+      lastAutoSampleTs = now;
+      /* Auto samples carry the last chosen tag and no note: they record where
+       * you were, not a fresh claim about what you were doing. */
+      sendReport(coords, {note: ""});
     });
   }
 
@@ -296,9 +531,14 @@
       el("agentLabel").textContent = result.data.label
         || ("Agent " + result.data.agent_id);
     });
+    el("autoSample").checked = localStorage.getItem(AUTO_KEY) === "1";
     refresh();
     flushQueue();
-    setInterval(function () { refresh(); flushQueue(); }, POLL_MS);
+    setInterval(function () {
+      refresh();
+      flushQueue();
+      maybeAutoSample();
+    }, POLL_MS);
   }
 
   function init() {
@@ -306,6 +546,17 @@
     el("introStart").addEventListener("click", dismissIntro);
     el("reportButton").addEventListener("click", submitReport);
     el("replayButton").addEventListener("click", replayTrail);
+    el("placeCancel").addEventListener("click", function () {
+      closePicker();
+      /* "Activity only": send with no usable fix. The server flags it
+       * out-of-map and the mirror channel skips the position, but the
+       * behaviour is still recorded. */
+      sendReport({latitude: 0, longitude: 0, accuracy: 0}, {manual: true});
+    });
+    el("placeSearch").addEventListener("input", searchPlaces);
+    el("autoSample").addEventListener("change", function () {
+      localStorage.setItem(AUTO_KEY, el("autoSample").checked ? "1" : "0");
+    });
     window.addEventListener("online", flushQueue);
 
     if (token) {
