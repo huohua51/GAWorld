@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import time
 
+import math
+
 from gaworld.io.avatar import build_agent_avatar_svg
-from gaworld.twin import binding, geo, store
+from gaworld.twin import binding, geo, life, store
 
 
 ACTION_TAGS = (
@@ -43,12 +45,18 @@ class TwinBackend:
         city_map=None,
         snapshot_ttl_minutes=30,
         max_snap_km=geo.DEFAULT_MAX_SNAP_KM,
+        diary_dir=life.DEFAULT_DIARY_DIR,
+        state_dir=life.DEFAULT_STATE_DIR,
+        memory_dir=life.DEFAULT_MEMORY_DIR,
     ):
         self.root = root
         self.bindings_path = bindings_path
         self.city_map = city_map or {"nodes": {}}
         self.snapshot_ttl_minutes = float(snapshot_ttl_minutes)
         self.max_snap_km = float(max_snap_km)
+        self.diary_dir = diary_dir
+        self.state_dir = state_dir
+        self.memory_dir = memory_dir
 
     # -- auth ------------------------------------------------------------
 
@@ -154,6 +162,88 @@ class TwinBackend:
             "avatar_svg": build_agent_avatar_svg(agent, size=128),
             "action_tags": list(ACTION_TAGS),
         }
+
+    def reports(self, token, since_ts=None):
+        """The caller's effective reports, newest first, for the history list."""
+        agent_id = self._agent_for(token)
+        if agent_id is None:
+            return _unauthorized()
+        rows = store.load_reports(agent_id, root=self.root, since_ts=since_ts)
+        rows.sort(key=lambda item: float(item.get("ts", 0)), reverse=True)
+        return {"ok": True, "status": 200, "agent_id": agent_id, "reports": rows}
+
+    def amend(self, token, target, op, patch=None, amend_id=None):
+        """Correct or delete one of the caller's own reports."""
+        agent_id = self._agent_for(token)
+        if agent_id is None:
+            return _unauthorized()
+        if op not in ("delete", "update"):
+            return {"ok": False, "status": 400, "error": f"unknown op {op!r}"}
+
+        # Resolve the target WITHIN this agent's own log. Looking it up
+        # globally would let a token amend another user's reports.
+        owned = {
+            str(row.get("report_id"))
+            for row in store.load_reports(agent_id, root=self.root)
+        }
+        if str(target) not in owned:
+            return {"ok": False, "status": 404, "error": "unknown report"}
+
+        store.append_amendment(
+            agent_id,
+            amend_id or f"amend-{target}-{len(owned)}",
+            target,
+            op,
+            patch=patch,
+            root=self.root,
+        )
+        return {"ok": True, "status": 200, "target": str(target), "op": op}
+
+    def life(self, token):
+        """What the agent is living: diary, state, goals."""
+        agent_id = self._agent_for(token)
+        if agent_id is None:
+            return _unauthorized()
+        return {
+            "ok": True,
+            "status": 200,
+            "agent_id": agent_id,
+            "diary": life.latest_diary(agent_id, diary_dir=self.diary_dir),
+            "state": life.latest_state(agent_id, state_dir=self.state_dir),
+            "goals": life.active_goals(agent_id, memory_dir=self.memory_dir),
+        }
+
+    def places(self, token, query="", limit=40):
+        """Map nodes for manual location picking when GPS is unavailable."""
+        agent_id = self._agent_for(token)
+        if agent_id is None:
+            return _unauthorized()
+
+        snapshot = store.read_snapshot(agent_id, root=self.root)
+        origin = (snapshot or {}).get("grid") or {"x": 0.0, "y": 0.0}
+        needle = str(query or "").strip().lower()
+
+        rows = []
+        for node_id, node in ((self.city_map or {}).get("nodes") or {}).items():
+            name = str(node.get("name") or node_id)
+            if needle and needle not in name.lower() and needle not in str(node_id).lower():
+                continue
+            try:
+                dx = float(node["x_km"]) - float(origin.get("x", 0)) * geo.KM_PER_GRID_X
+                dy = float(node["y_km"]) - float(origin.get("y", 0)) * geo.KM_PER_GRID_Y
+                distance = math.sqrt(dx * dx + dy * dy)
+            except (KeyError, TypeError, ValueError):
+                continue
+            rows.append({
+                "id": node_id,
+                "name": name,
+                "category": node.get("category", ""),
+                "distance_km": round(distance, 2),
+                "lat": node.get("lat"),
+                "lng": node.get("lng"),
+            })
+        rows.sort(key=lambda item: item["distance_km"])
+        return {"ok": True, "status": 200, "places": rows[: max(1, int(limit))]}
 
     def trail(self, token, since_ts=None):
         """Ordered trail points for the canvas replay."""

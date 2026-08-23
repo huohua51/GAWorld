@@ -124,8 +124,67 @@ class TestTwinBackend(unittest.TestCase):
         self.assertEqual(point["action_tag"], "work")
         self.assertEqual(point["node_id"], "office")
 
+    def test_amend_can_delete_the_callers_own_report(self):
+        self.backend.submit(self.token, [_raw("a")])
+        result = self.backend.amend(self.token, "a", "delete", amend_id="m1")
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.backend.reports(self.token)["reports"], [])
+
+    def test_amend_can_retag(self):
+        self.backend.submit(self.token, [_raw("a", action_tag="work")])
+        self.backend.amend(self.token, "a", "update",
+                           patch={"action_tag": "meal"}, amend_id="m1")
+        self.assertEqual(
+            self.backend.reports(self.token)["reports"][0]["action_tag"], "meal"
+        )
+
+    def test_amend_rejects_an_unknown_target(self):
+        result = self.backend.amend(self.token, "nope", "delete", amend_id="m1")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 404)
+
+    def test_amend_cannot_touch_another_agents_report(self):
+        # Same class of bug as writing another agent's reports: the target
+        # must be resolved within the token's own agent, never globally.
+        other_code = binding.issue_code(agent_id=8, label="other", path=self.bindings)
+        other_token = binding.redeem_code(other_code, path=self.bindings)
+        self.backend.submit(other_token, [_raw("a")])
+
+        result = self.backend.amend(self.token, "a", "delete", amend_id="m1")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 404)
+        # Agent 8's report must survive untouched.
+        self.assertEqual(len(self.backend.reports(other_token)["reports"]), 1)
+
+    def test_amend_rejects_an_unknown_op(self):
+        self.backend.submit(self.token, [_raw("a")])
+        result = self.backend.amend(self.token, "a", "obliterate", amend_id="m1")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 400)
+
+    def test_reports_are_newest_first(self):
+        self.backend.submit(self.token, [_raw("a", ts=1000), _raw("b", ts=2000)])
+        ids = [r["report_id"] for r in self.backend.reports(self.token)["reports"]]
+        self.assertEqual(ids, ["b", "a"])
+
+    def test_life_returns_empty_structures_when_nothing_exists(self):
+        result = self.backend.life(self.token)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["diary"]["text"], "")
+        self.assertEqual(result["state"], {})
+        self.assertEqual(result["goals"]["life_goals"], [])
+
+    def test_places_are_sorted_by_distance_from_a_point(self):
+        places = self.backend.places(self.token)["places"]
+        self.assertEqual([p["id"] for p in places], ["home", "office"])
+
+    def test_places_can_be_filtered_by_name(self):
+        places = self.backend.places(self.token, query="off")["places"]
+        self.assertEqual([p["id"] for p in places], ["office"])
+
     def test_every_read_operation_rejects_an_invalid_token(self):
-        for call in (self.backend.snapshot, self.backend.profile, self.backend.trail):
+        for call in (self.backend.snapshot, self.backend.profile, self.backend.trail,
+                     self.backend.life, self.backend.reports, self.backend.places):
             with self.subTest(call=call.__name__):
                 result = call("nope")
                 self.assertFalse(result["ok"])
