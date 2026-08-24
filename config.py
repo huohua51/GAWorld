@@ -1,6 +1,12 @@
 import json
 import os
 
+from gaworld.env_loader import load_env_file
+
+_CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+load_env_file(os.path.join(_CONFIG_DIR, ".env"))
+load_env_file(".env")
+
 CONFIG = {
     # LLM (legacy defaults for compatibility)
     "ollama_url": "http://localhost:11434/api/generate",
@@ -50,6 +56,19 @@ CONFIG = {
                 "api_key_env": "OPENAI_API_KEY",
                 "timeout": 120,
             },
+            # OpenAI-compatible gateway (Paratera / GLM). Key stays in .env.
+            "paratera_glm": {
+                "type": "openai",
+                "base_url": os.environ.get(
+                    "GAWORLD_LLM_API_BASE",
+                    os.environ.get("OPENAI_BASE_URL", "https://llmapi.paratera.com/v1"),
+                ),
+                "model": os.environ.get("GAWORLD_LLM_MODEL", "GLM-4-Flash"),
+                "api_key_env": os.environ.get("GAWORLD_LLM_API_KEY_ENV", "OPENAI_API_KEY"),
+                "timeout": 120,
+                "temperature": 0,
+                "max_tokens": 512,
+            },
             "minimax": {
                 "type": "anthropic",
                 "base_url": os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic"),
@@ -71,6 +90,18 @@ CONFIG = {
                 "schedule": "minimax",
             },
         },
+    },
+    # Opt-in evaluation contract. Default run stays a city simulator.
+    # When enabled, the environment must not rewrite activities, invent
+    # diaries, or paste one prose blob onto every interview question.
+    "eval_mode": {
+        "enabled": False,
+        "disable_dynamic_behavior": True,
+        "disable_routine_change": True,
+        "disable_diary_fallback": True,
+        "strict_interview_json": True,
+        "write_run_manifest": True,
+        "unique_intervention_paths": [],
     },
     # Simulation
     "agent_ids": [52],
@@ -659,3 +690,11 @@ _deep_update(CONFIG, _load_json_override("dashboard_config.json"))
 _deep_update(CONFIG, _OVERRIDES)
 _deep_update(CONFIG, _load_environment_config(CONFIG.get("environment_config_path")))
 _deep_update(CONFIG, _OVERRIDES)
+
+_LLM_PROVIDER = os.environ.get("GAWORLD_LLM_PROVIDER", "").strip()
+if _LLM_PROVIDER:
+    _routing = CONFIG.setdefault("llm", {}).setdefault("routing", {})
+    _routing["default"] = _LLM_PROVIDER
+    _tasks = dict(_routing.get("tasks") or {})
+    _tasks.setdefault("schedule", _LLM_PROVIDER)
+    _routing["tasks"] = _tasks

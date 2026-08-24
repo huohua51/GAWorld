@@ -112,7 +112,12 @@ class WorkerPool:
         with self._inflight_lock:
             self._inflight[brief.task_id] = fut
 
+    def _latest_brief(self, brief: WorkBrief) -> WorkBrief:
+        latest = self.queue.get_brief(brief.task_id)
+        return latest if latest is not None else brief
+
     def _run_adapter(self, adapter: WorkAdapter, brief: WorkBrief, ctx: AdapterContext) -> WorkResult:
+        brief = self._latest_brief(brief)
         try:
             return adapter.run(brief, ctx)
         except Exception as exc:  # noqa: BLE001
@@ -205,7 +210,7 @@ class WorkerPool:
                 continue
             ctx = self.ctx_factory(brief.adapter)
             try:
-                result = adapter.run(brief, ctx)
+                result = adapter.run(self._latest_brief(brief), ctx)
             except Exception as exc:  # noqa: BLE001
                 result = make_failed(brief, f"adapter exception: {exc}", time.time())
             self.queue.record_result(result)

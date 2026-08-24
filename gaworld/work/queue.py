@@ -2,6 +2,7 @@
 
 Each line in the file is one of:
 - ``{"event": "submit", "brief": {...}}``
+- ``{"event": "revise", "task_id": "...", "from_version": "v1", "to_version": "v2", ...}``
 - ``{"event": "claim",  "task_id": "...", "claimed_at": ...}``
 - ``{"event": "result", "result": {...}}``
 
@@ -96,6 +97,17 @@ class WorkQueue:
                 return
             self._results[result.task_id] = result
             self._status[result.task_id] = "done" if result.status == "ok" else "failed"
+        elif kind == "revise":
+            data = event.get("brief") or {}
+            if not data:
+                return
+            try:
+                brief = WorkBrief.from_dict(data)
+            except (KeyError, ValueError, TypeError):
+                return
+            if self._status.get(brief.task_id, "pending") in ("pending", "running"):
+                self._briefs[brief.task_id] = brief
+                self._status.setdefault(brief.task_id, "pending")
 
     # ------------------------------------------------------------------
     # Public API
@@ -114,9 +126,57 @@ class WorkQueue:
                 self._status[tid] = "running"
                 ts = time.time()
                 self._claimed_at[tid] = ts
-                self._append({"event": "claim", "task_id": tid, "claimed_at": ts})
+                self._append({
+                    "event": "claim",
+                    "task_id": tid,
+                    "claimed_at": ts,
+                    "input_spec_version": getattr(self._briefs[tid], "spec_version", "v1"),
+                })
                 return self._briefs[tid]
             return None
+
+    def revise(self, task_id: str, *, brief_text: str, spec_version: str) -> dict[str, Any]:
+        """Rewrite a pending or still-running brief to a new spec.
+
+        Allowed before a result is recorded. After ``done`` / ``failed``
+        the call is rejected. Returns an audit dict; ``ok`` is True only
+        when the stored brief was replaced.
+        """
+
+        with self._lock:
+            brief = self._briefs.get(task_id)
+            if brief is None:
+                payload = {"ok": False, "reason": "unknown_task", "task_id": task_id}
+                self._append({"event": "revise", **payload, "ts": time.time()})
+                return payload
+            status = self._status.get(task_id, "unknown")
+            if status not in ("pending", "running"):
+                payload = {
+                    "ok": False,
+                    "reason": "not_revisable",
+                    "task_id": task_id,
+                    "status": status,
+                    "from_version": getattr(brief, "spec_version", "v1"),
+                    "to_version": spec_version,
+                }
+                self._append({"event": "revise", **payload, "ts": time.time()})
+                return payload
+            from_version = getattr(brief, "spec_version", "v1")
+            updated = WorkBrief.from_dict({**brief.to_dict(), "brief_text": brief_text, "spec_version": spec_version})
+            self._briefs[task_id] = updated
+            payload = {
+                "ok": True,
+                "task_id": task_id,
+                "from_version": from_version,
+                "to_version": spec_version,
+                "status": status,
+            }
+            self._append({"event": "revise", **payload, "brief": updated.to_dict(), "ts": time.time()})
+            return payload
+
+    def get_brief(self, task_id: str) -> Optional[WorkBrief]:
+        with self._lock:
+            return self._briefs.get(task_id)
 
     def record_result(self, result: WorkResult) -> None:
         with self._lock:

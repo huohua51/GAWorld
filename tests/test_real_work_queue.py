@@ -38,6 +38,12 @@ class TestSchemaRoundTrip(unittest.TestCase):
         recovered = WorkBrief.from_dict(brief.to_dict())
         self.assertEqual(brief, recovered)
 
+    def test_brief_spec_version_defaults_to_v1(self):
+        payload = _sample_brief().to_dict()
+        payload.pop("spec_version", None)
+        recovered = WorkBrief.from_dict(payload)
+        self.assertEqual("v1", recovered.spec_version)
+
     def test_result_round_trip(self):
         r = WorkResult(
             task_id="wt_1", agent_id=1, status="ok",
@@ -135,6 +141,63 @@ class TestWorkQueue(unittest.TestCase):
         # wt_1 and wt_2 should both load despite the corrupt line.
         statuses = {q2.status_of("wt_1"), q2.status_of("wt_2")}
         self.assertIn("pending", statuses)
+
+    def test_revise_pending_updates_brief_and_version(self):
+        q = WorkQueue(self.path)
+        q.submit(_sample_brief("wt_1"))
+        out = q.revise("wt_1", brief_text="【任务】v2", spec_version="v2")
+        self.assertTrue(out["ok"])
+        brief = q.get_brief("wt_1")
+        self.assertEqual("v2", brief.spec_version)
+        self.assertEqual("【任务】v2", brief.brief_text)
+        claimed = q.claim_next()
+        self.assertEqual("v2", claimed.spec_version)
+
+    def test_revise_after_claim_updates_running_brief(self):
+        q = WorkQueue(self.path)
+        q.submit(_sample_brief("wt_1"))
+        claimed = q.claim_next()
+        self.assertEqual("v1", claimed.spec_version)
+        out = q.revise("wt_1", brief_text="【任务】v2", spec_version="v2")
+        self.assertTrue(out["ok"])
+        self.assertEqual("v2", q.get_brief("wt_1").spec_version)
+
+    def test_revise_after_result_is_rejected(self):
+        q = WorkQueue(self.path)
+        q.submit(_sample_brief("wt_1"))
+        q.claim_next()
+        q.record_result(WorkResult(
+            task_id="wt_1", agent_id=1, status="ok",
+            artifact_paths=["a"], summary="ok",
+        ))
+        out = q.revise("wt_1", brief_text="【任务】v2", spec_version="v2")
+        self.assertFalse(out["ok"])
+        self.assertEqual("not_revisable", out["reason"])
+        self.assertEqual("v1", q.get_brief("wt_1").spec_version)
+
+    def test_revise_replays_from_jsonl(self):
+        q = WorkQueue(self.path)
+        q.submit(_sample_brief("wt_1"))
+        q.revise("wt_1", brief_text="【任务】v2", spec_version="v2")
+        q2 = WorkQueue(self.path)
+        self.assertEqual("v2", q2.get_brief("wt_1").spec_version)
+
+    def test_worker_re_reads_brief_after_running_revise(self):
+        from gaworld.work.adapters.base import AdapterContext
+        from gaworld.work.worker import WorkerPool
+
+        q = WorkQueue(self.path)
+        q.submit(_sample_brief("wt_1"))
+        claimed = q.claim_next()
+        self.assertEqual("v1", claimed.spec_version)
+        q.revise("wt_1", brief_text="【任务】v2", spec_version="v2")
+        pool = WorkerPool(
+            queue=q,
+            adapters={},
+            ctx_factory=lambda _n: AdapterContext(artifacts_root=self.tmp, llm=lambda _p: "", config={}),
+        )
+        latest = pool._latest_brief(claimed)
+        self.assertEqual("v2", latest.spec_version)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -8,6 +8,8 @@ Public surface kept intentionally small — most callers only need
 ``router.maybe_dispatch`` and ``ingest.absorb_completed_for``.
 """
 
+from gaworld.work.artifact_facts import ArtifactFact, extract_facts, verify_review
+from gaworld.work.review import ReviewAction, ReviewChannel
 from gaworld.work.schemas import (
     AgentCapabilities,
     MarketJob,
@@ -16,8 +18,13 @@ from gaworld.work.schemas import (
 )
 
 __all__ = [
+    "ArtifactFact",
+    "extract_facts",
+    "verify_review",
     "AgentCapabilities",
     "MarketJob",
+    "ReviewAction",
+    "ReviewChannel",
     "WorkBrief",
     "WorkResult",
 ]

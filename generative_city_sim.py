@@ -20,6 +20,16 @@ from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from config import CONFIG
 from gaworld.core.runner import parallel_map, resolve_max_workers
+from gaworld.eval_mode import (
+    apply_eval_mode_runtime,
+    diary_fallback_allowed,
+    eval_mode_block,
+    eval_mode_enabled,
+    interview_fallback_allowed,
+    routine_change_allowed,
+    unique_intervention_audit,
+    write_run_manifest,
+)
 from gaworld.logging_setup import get_logger, LOG_MODE
 from gaworld.personal_twin.state import apply_daily_twin_update, build_initial_twin_state
 from gaworld.personal_twin.what_if import write_personal_what_if_report as _write_personal_what_if_report
@@ -4369,6 +4379,8 @@ def format_transient_thought(thought):
 
 def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, plan_text,
                           env_context, env_events, policy_desc, transient_thought=None, social_context=""):
+    if not routine_change_allowed(CONFIG):
+        return scheduled_activity, "", False
     prob = _routine_change_probability(agent, env_events, policy_desc)
     if prob <= 0:
         return scheduled_activity, "", False
@@ -5255,6 +5267,12 @@ def interview_agent(agent, questions, context=None, max_questions=6):
     parsed = _parse_interview(response, questions)
     if parsed:
         return parsed
+    if not interview_fallback_allowed(CONFIG):
+        _LOG.warning(
+            "eval_mode: interview JSON missing for agent %s; refusing prose fallback",
+            agent.get("id"),
+        )
+        return []
     fallback = response.strip()
     if not fallback:
         return []
@@ -5536,6 +5554,9 @@ def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", cons
         or "## 今天的感想" not in response
         or "## 明天的计划" not in response
     ):
+        if not diary_fallback_allowed(CONFIG):
+            _LOG.warning("eval_mode: daily_diary invalid for agent %s; refusing fallback", agent.get("id"))
+            return ""
         return _fallback_daily_diary(
             agent,
             day,
@@ -5547,6 +5568,13 @@ def generate_daily_diary(agent, day, logs, day_context=None, day_memory="", cons
     # Require meaningful content length (not just headings with no body).
     body_only = re.sub(r"^#{1,2}\s*[^ ]*.*$", "", response, flags=re.MULTILINE).strip()
     if len(body_only) < 30:
+        if not diary_fallback_allowed(CONFIG):
+            _LOG.warning(
+                "eval_mode: daily_diary too short for agent %s (%d chars); refusing fallback",
+                agent.get("id"),
+                len(body_only),
+            )
+            return ""
         _LOG.warning("daily_diary response too short for agent %s (%d chars), using fallback", agent.get("id"), len(body_only))
         return _fallback_daily_diary(
             agent,
@@ -5647,6 +5675,14 @@ def _enforce_memory_model_compat(sim_state):
         )
 
 def run_simulation():
+    eval_applied = apply_eval_mode_runtime(CONFIG)
+    if eval_applied.get("applied") and eval_mode_block(CONFIG).get("write_run_manifest", True):
+        manifest_dir = CONFIG.get("state_output_dir", "output/state")
+        write_run_manifest(
+            os.path.join(os.path.dirname(manifest_dir) or "output", "run_manifest.json"),
+            CONFIG,
+            extra={"apply_eval_mode": eval_applied},
+        )
     if RANDOM_SEED is not None:
         try:
             seed = int(RANDOM_SEED)
@@ -7400,6 +7436,23 @@ def _build_compare_overrides(scenario_dir, include_event, event_payload, args):
                 "tasks": forced_tasks,
             }
         }
+    if getattr(args, "eval_mode", False):
+        paths = list(getattr(args, "registered_metrics", None) or [])
+        overrides["eval_mode"] = {
+            "enabled": True,
+            "disable_dynamic_behavior": True,
+            "disable_routine_change": True,
+            "disable_diary_fallback": True,
+            "strict_interview_json": True,
+            "write_run_manifest": True,
+            "unique_intervention_paths": paths,
+        }
+        overrides.setdefault("dynamic_behavior", {})
+        if isinstance(overrides["dynamic_behavior"], dict):
+            overrides["dynamic_behavior"]["enabled"] = False
+        overrides.setdefault("routine_change", {})
+        if isinstance(overrides["routine_change"], dict):
+            overrides["routine_change"]["enabled"] = False
     return overrides
 
 
@@ -7516,10 +7569,18 @@ def _impact_hint(metric, delta):
     return f"{direction}（Δ={amount:.4f}）"
 
 
-def _write_comparison_report(output_root, event_payload, rows):
+def _write_comparison_report(output_root, event_payload, rows, registered_paths=None):
     os.makedirs(output_root, exist_ok=True)
     metrics_csv = os.path.join(output_root, "comparison_metrics.csv")
     report_md = os.path.join(output_root, "comparison_summary.md")
+    audit = None
+    paths = [str(item) for item in (registered_paths or []) if str(item).strip()]
+    if paths:
+        audit = unique_intervention_audit(rows, paths)
+        audit_path = os.path.join(output_root, "unique_path_audit.json")
+        with open(audit_path, "w", encoding="utf-8") as handle:
+            json.dump(audit, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
     if rows:
         pd.DataFrame(rows).to_csv(metrics_csv, index=False)
     else:
@@ -7572,12 +7633,31 @@ def _write_comparison_report(output_root, event_payload, rows):
         lines.append(f"事件对系统的主要影响表现为：{top_hint}。")
     else:
         lines.append("未生成有效状态对比数据，请检查两组 simulation 输出。")
+    if audit is not None:
+        lines.append("")
+        lines.append("## 唯一干预审计")
+        lines.append("")
+        lines.append(f"- 登记路径：{', '.join(audit['registered_paths']) or '（空）'}")
+        lines.append(f"- unique_path_ok：{audit['unique_path_ok']}")
+        lines.append(f"- measurement_valid：{audit['measurement_valid']}")
+        if audit["leaked_metrics"]:
+            leaked = ", ".join(item["metric"] for item in audit["leaked_metrics"])
+            lines.append(f"- 溢出指标：{leaked}")
+            lines.append("- 本对比不能作为因果 Pair 分。")
+        lines.append(f"- 审计文件：`{os.path.join(output_root, 'unique_path_audit.json')}`")
     lines.append("")
     lines.append(f"- 指标明细：`{metrics_csv}`")
     with open(report_md, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return report_md, metrics_csv
 
+
+
+def _registered_paths_from_args(args):
+    paths = list(getattr(args, "registered_metrics", None) or [])
+    if not paths:
+        paths = list(eval_mode_block(CONFIG).get("unique_intervention_paths") or [])
+    return [str(item) for item in paths if str(item).strip()]
 
 
 def _cli_compare_event(args):
@@ -7655,7 +7735,12 @@ def _cli_compare_event(args):
     baseline_state_csv = os.path.join(baseline_overrides["state_output_dir"], "agent_state_history.csv")
     event_state_csv = os.path.join(event_overrides["state_output_dir"], "agent_state_history.csv")
     rows = _compose_comparison_rows(baseline_state_csv, event_state_csv)
-    report_md, metrics_csv = _write_comparison_report(root, event_payload, rows)
+    report_md, metrics_csv = _write_comparison_report(
+        root,
+        event_payload,
+        rows,
+        registered_paths=_registered_paths_from_args(args),
+    )
 
     print("\n✅ 对比 simulation 完成")
     print(f"输出目录: {root}")
@@ -7754,7 +7839,12 @@ def _cli_personal_what_if(args):
     baseline_state_csv = os.path.join(baseline_overrides["state_output_dir"], "agent_state_history.csv")
     event_state_csv = os.path.join(event_overrides["state_output_dir"], "agent_state_history.csv")
     rows = _compose_comparison_rows(baseline_state_csv, event_state_csv)
-    report_md, metrics_csv = _write_comparison_report(root, event_payload, rows)
+    report_md, metrics_csv = _write_comparison_report(
+        root,
+        event_payload,
+        rows,
+        registered_paths=_registered_paths_from_args(args),
+    )
     personal_report = _write_personal_what_if_report(
         root,
         question=args.question,
@@ -7776,7 +7866,12 @@ def _build_arg_parser():
     parser = argparse.ArgumentParser(description="GAWorld simulator")
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("run", help="Run the full simulation")
+    run_cmd = subparsers.add_parser("run", help="Run the full simulation")
+    run_cmd.add_argument(
+        "--eval-mode",
+        action="store_true",
+        help="Freeze environment rewrites, refuse diary/interview fallback, write run_manifest",
+    )
     subparsers.add_parser("reset", help="Reset simulation memory/logs/cache")
 
     interview = subparsers.add_parser("interview", help="Interview a specific agent by ID")
@@ -7795,6 +7890,11 @@ def _build_arg_parser():
         "--context",
         default=None,
         help="Optional background context for the interview",
+    )
+    interview.add_argument(
+        "--eval-mode",
+        action="store_true",
+        help="Refuse prose fallback; require 1:1 JSON answers",
     )
 
     create_from_social = subparsers.add_parser(
@@ -7877,6 +7977,18 @@ def _build_arg_parser():
         default="output/comparisons",
         help="Output root for comparison artifacts",
     )
+    compare_event.add_argument(
+        "--eval-mode",
+        action="store_true",
+        help="Freeze environment rewrites and write a run_manifest in both branches",
+    )
+    compare_event.add_argument(
+        "--registered-metric",
+        action="append",
+        dest="registered_metrics",
+        default=None,
+        help="Metric path that the official causal track may change (repeatable)",
+    )
 
     personal_what_if = subparsers.add_parser(
         "personal-what-if",
@@ -7898,6 +8010,18 @@ def _build_arg_parser():
         "--output-root",
         default="output/personal_what_if",
         help="Output root for personal what-if artifacts",
+    )
+    personal_what_if.add_argument(
+        "--eval-mode",
+        action="store_true",
+        help="Freeze environment rewrites and write a run_manifest in both branches",
+    )
+    personal_what_if.add_argument(
+        "--registered-metric",
+        action="append",
+        dest="registered_metrics",
+        default=None,
+        help="Metric path that the official causal track may change (repeatable)",
     )
 
     serve_viz = subparsers.add_parser(
@@ -7992,9 +8116,22 @@ def _cli_serve_distributed(host=None, port=None, state_path=None, max_messages=N
         max_messages=use_max_messages,
     )
 
+def _enable_eval_mode_from_cli(args):
+    if not getattr(args, "eval_mode", False):
+        return
+    block = eval_mode_block(CONFIG)
+    block["enabled"] = True
+    paths = list(getattr(args, "registered_metrics", None) or [])
+    if paths:
+        block["unique_intervention_paths"] = paths
+    CONFIG["eval_mode"] = block
+    apply_eval_mode_runtime(CONFIG)
+
+
 def _main():
     parser = _build_arg_parser()
     args = parser.parse_args()
+    _enable_eval_mode_from_cli(args)
 
     if args.command == "reset":
         reset_simulation()

@@ -87,6 +87,7 @@ class WorkBrief:
     estimated_minutes: int
     submitted_at: float
     market_job_id: Optional[str] = None  # set if dispatched via JobMarket
+    spec_version: str = "v1"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -106,6 +107,7 @@ class WorkBrief:
             estimated_minutes=int(payload.get("estimated_minutes", 30)),
             submitted_at=float(payload.get("submitted_at", 0.0)),
             market_job_id=payload.get("market_job_id"),
+            spec_version=str(payload.get("spec_version") or "v1"),
         )
 
 
