@@ -9,6 +9,9 @@ Public surface kept intentionally small — most callers only need
 """
 
 from gaworld.work.artifact_facts import ArtifactFact, extract_facts, verify_review
+from gaworld.work.continuity import CHECKPOINT_VERSION, WorkflowCheckpointChannel, next_step
+from gaworld.work.plan_registry import PlanRegistry
+from gaworld.work.coordination import JointAssignmentChannel, actual_final_conflict_free, occupancy_table
 from gaworld.work.review import ReviewAction, ReviewChannel
 from gaworld.work.schemas import (
     AgentCapabilities,
@@ -21,6 +24,13 @@ __all__ = [
     "ArtifactFact",
     "extract_facts",
     "verify_review",
+    "WorkflowCheckpointChannel",
+    "CHECKPOINT_VERSION",
+    "next_step",
+    "PlanRegistry",
+    "JointAssignmentChannel",
+    "actual_final_conflict_free",
+    "occupancy_table",
     "AgentCapabilities",
     "MarketJob",
     "ReviewAction",
