@@ -49,6 +49,54 @@ def _empty_completion(
     return EmptyCompletionError(f"LLM returned an empty completion ({detail}).")
 
 
+# ---------------------------------------------------------------------------
+# Truncation is information the API gives us and the old code threw away.
+# ---------------------------------------------------------------------------
+
+#: ``provider -> times the output cap cut a *non-empty* answer short``.
+_TRUNCATED: dict[str, int] = {}
+
+
+def truncation_counts() -> dict[str, int]:
+    """How many completions were cut off by ``max_tokens``, per provider."""
+    return dict(_TRUNCATED)
+
+
+def reset_truncation_counts() -> None:
+    _TRUNCATED.clear()
+
+
+def _note_truncated(provider: str, reason: Any, max_tokens: Any) -> None:
+    """Warn when the provider says it stopped because it ran out of budget.
+
+    Both API shapes already report this -- Anthropic as ``stop_reason ==
+    "max_tokens"``, OpenAI as ``finish_reason == "length"`` -- and the old code
+    consulted it only when the answer came back *empty*. A truncated answer
+    with text in it was returned as though it were complete, so every
+    downstream parser saw a malformed response and could not tell "the model
+    said something unparseable" from "the model was cut off mid-sentence".
+
+    Measured on 848 real ``actions`` completions, that was 318 of them (37.5%),
+    silently. Hence the escalating log: at a rate like that, one line per call
+    is unreadable and one line per run is too easy to miss.
+
+    This does not raise. A truncated answer is often still usable -- the action
+    space parser salvages the activities that closed -- and turning a degraded
+    result into a hard failure would be a worse trade.
+    """
+    if str(reason) not in ("max_tokens", "length"):
+        return
+    count = _TRUNCATED.get(provider, 0) + 1
+    _TRUNCATED[provider] = count
+    if count in (1, 10, 100) or count % 500 == 0:
+        _LOG.warning(
+            "LLM output was truncated by max_tokens=%s (%s, %s time(s) so far). "
+            "Downstream parsers see this as malformed input; raise max_tokens "
+            "for this provider, or ask for less per call.",
+            max_tokens, provider, count,
+        )
+
+
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, requests.exceptions.HTTPError):
         resp = getattr(exc, "response", None)
@@ -247,6 +295,10 @@ class OpenAIProvider:
             )
             r.raise_for_status()
             data = r.json()
+            choice = (data.get("choices") or [{}])[0]
+            _note_truncated(
+                f"openai:{self.model}", choice.get("finish_reason"), self.max_tokens
+            )
             return data["choices"][0]["message"]["content"]
 
         if self.stream:
@@ -408,6 +460,9 @@ class AnthropicProvider:
                         ],
                         max_tokens=self.max_tokens,
                     )
+                _note_truncated(
+                    f"anthropic:{self.model}", data.get("stop_reason"), self.max_tokens
+                )
                 return text
             except requests.exceptions.HTTPError as exc:
                 last_response = r

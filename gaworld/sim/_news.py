@@ -43,6 +43,7 @@ from gaworld.io.web_scrape import (
 from gaworld.io.x_mcp import x_mcp_search
 from gaworld.llm import providers as _llm_providers
 from gaworld.memory.store import save_agent_memory, vector_db_add_entry
+from gaworld.personality import personality_line
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +568,7 @@ def info_seek_and_store(
     profile_text = "\\n".join([
         f"姓名：{agent.get('name', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "news"),
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
     prompt = f"""
@@ -846,7 +847,7 @@ def search_web_and_store(
     profile_text = "\\n".join([
         f"姓名：{agent.get('name', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "news"),
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
     prompt = f"""
@@ -919,7 +920,7 @@ def read_news_and_store(
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "news"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])

@@ -29,6 +29,7 @@
 | 轨迹回放查看器 | 可视化回放智能体移动轨迹；顶部「运行」下拉可选择任意一次已记录的仿真：当前运行（实时）、历史归档运行（`output/visualization/runs/<run_id>/`）、compare-event 等场景运行；`?run=<id>` 可分享指定运行 | `python generative_city_sim.py serve-viz --port 8000` → `/site/simviz/index.html`（Dashboard 内为「仿真回放」页签） |
 | 分布式 relay | 多机协同仿真，各节点处理本地 agent 子集 | `python generative_city_sim.py serve-distributed --host 0.0.0.0 --port 8877` |
 | 城市地图生成 | 用自然语言描述生成城市地图（节点 / 道路 / 地铁） | `python scripts/generate_citymap.py --description "..."` |
+| 大五人格生成与合入闸门 | 一次性离线**先采样** 51 位居民的大五（OCEAN）z 分、**再据此改写**人物设定里的行为描述（51 次调用），产出 `data/agents_big5.csv` 与新增的 `人格与行为倾向` 字段，旧语料备份到 `data/hangzhou_profiles_with_names.v1.md`；独立性由采样器保证，只保留开放性↔`risk_preference`、外向性↔`voice_propensity` 两条 r≈0.3 的真实相关。两个闸门脚本分别量给定幅度下人格与行为的相关上限、检查五个维度是不是已有状态变量的线性组合 | `python scripts/author_personality.py`（`--dry-run` 只看提示词与采样分数，`--agents 1-5` 试水写 `output/traits/authored_preview.md`，`--apply` 全量落盘）；`python scripts/big5_effect_ceiling.py`；`python scripts/big5_collinearity.py --annotate`（生成后必跑，把不合格维度写回 CSV，运行时会打印警告）。`python scripts/calibrate_big5.py` 保留用于给外部导入的 agent 打分、以及作对照组校验打分器 |
 
 Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时，磁盘上仍标记为
 `running` 的会话会恢复为 `interrupted`，保留此前事件、讨论记录和合作产物，
@@ -64,6 +65,7 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 | 长时段快进（fast-forward） | 每天压缩成每个智能体一条日简报、跳过日内时刻循环，让 60/600 天长期模拟可行；状态/目标/关系仍近似推进，输出为每天一个 `Day N 简报` | `CONFIG["long_run"]["enabled"]`（或 `run --fast-forward`）；`long_run.randomness`(0–1) 越高突发事件越频繁、波动越大；Dashboard 工具栏勾选「长时段快进」+「随机性」滑杆 |
 | 日程网格对齐 | 把每个 agent 的日程对齐到固定时间网格，让 tick 数恒为 `1440/step` 而不随人口超线性增长。**只设 `time_step_minutes` 不够**——主时间线是网格与 LLM 自拟时间的并集 | `CONFIG["time_grid_snap"]=True` + `CONFIG["time_step_minutes"]=30`；默认 OFF（会改变日内时序） |
 | Cohort 遥测插件 | 在个体运行中发布群体划分与逐日漂移到 recorder，只观测不改行为 | `CONFIG["group"]["enabled"]=True`；产物 `output/records/*.jsonl` 中的 `group.partition` / `group.cohort_stats` |
+| 大五人格（OCEAN） | 每位居民带一组离线生成的五维人格分（五维全部 51/51 有分，运行内不漂移），经 `rules`（动作选择加性权重项「性格倾向」+ 打断阈值 / 冲动 / 搭话 / 决策噪声 / 消费储蓄倾向的乘性微调 + 个人情绪基准线，确定性、零 token）、`prompt`（第二人称行为锚句注入日程 / 日内调整 / 目标 / 新闻反应四类提示词）、`voice`（同样的锚句只进日记提示词）三条通道影响行为；profile 有 `人格与行为倾向` 字段时提示词渲染该段而非旧的「性格与情绪特征」行（`agent["personality"]` 本身不变，按关键词读它的子系统行为照旧）；无人格数据的 agent 或关掉的通道与加入前逐位一致 | `CONFIG["personality"]["enabled"]`（默认 ON，插件 `big_five`）；`channels` 分通道开关，`strength=0` 为对照组；数据 `data/agents_big5.csv`；产物 `output/traits/agent_traits.csv` |
 
 ## 四、微内核插件体系（2026-07）
 
@@ -94,6 +96,7 @@ Dashboard 讨论与合作会话支持暂停、继续和终止。服务重启时�
 - [Skill 系统](SKILL_SYSTEM.md) · [真实工作系统使用](REAL_WORK_USAGE.md)
 - [群体模拟教程](GROUP_SIMULATION_TUTORIAL.md) · [群体模拟设计](GROUP_AGENT_DESIGN.md)
 - [家庭系统设计](FAMILY_DESIGN.md)（婚姻抽样、共居、家庭日程与账目、覆盖层与工作台编辑面板）
+- [大五人格子系统设计](proposals/2026-08-20-big-five-personality.md)（标定流程、三条通道、幅度与合入闸门）
 - [外部系统教程](EXTERNAL_SYSTEMS_TUTORIAL.md)（货币系统 / 外部环境 / 对外服务的观察与编辑）
 - [平行世界教程](PARALLEL_WORLDS_TUTORIAL.md)（多分支反事实实验：设计、读图、剂量反应与安慰剂对照）
 - [项目结构](PROJECT_STRUCTURE.md) · [中文 README](../README.zh-CN.md) · [English README](../README.md)

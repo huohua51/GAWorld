@@ -59,8 +59,21 @@ class TestSeverityWeightedTrigger(unittest.TestCase):
     def test_severe_event_beats_medium_commitment(self):
         # "购物" is a medium-commitment activity: a mild event leaves it intact
         # (LLM never consulted), a severe event forces the routine-change query.
+        #
+        # ROUTINE_CHANGE_RANDOMNESS has to be pinned for that to be what is
+        # actually under test. At its shipped default (0.85) the knob scales
+        # resistance down to ~0.40x and adds ~0.38 of free-floating restlessness
+        # to the trigger, which carries *any* event past *any* commitment level:
+        # the mild case then reaches the `random.random()` gate further down and
+        # this assertion holds or fails on that draw, i.e. on whatever the global
+        # RNG happens to be after every test that ran before it. Pinned to 0,
+        # the mild case is stopped by `trigger <= resistance` — which is the
+        # severity-versus-commitment claim this test exists to make.
+        # The randomness path itself is covered by test_routine_change_randomness.
         agent = _calm_agent()
-        with patch.object(sim, "call_llm") as mock_call:
+        with patch.object(sim, "ROUTINE_CHANGE_RANDOMNESS", 0.0), patch.object(
+            sim, "call_llm"
+        ) as mock_call:
             _, _, changed_mild = sim.maybe_adjust_activity(
                 agent, "15:00", "购物", "环境平稳", "目标：随便逛逛",
                 "无", [{"severity": 0.30, "name": "轻微小事"}], None,
@@ -69,9 +82,9 @@ class TestSeverityWeightedTrigger(unittest.TestCase):
         mock_call.assert_not_called()
 
         response = '{"change": true, "activity": "回家处理", "reason": "家里出急事"}'
-        with patch.object(sim.random, "random", return_value=0.0), patch.object(
-            sim, "call_llm", return_value=response
-        ) as mock_call:
+        with patch.object(sim, "ROUTINE_CHANGE_RANDOMNESS", 0.0), patch.object(
+            sim.random, "random", return_value=0.0
+        ), patch.object(sim, "call_llm", return_value=response) as mock_call:
             activity, _, changed_severe = sim.maybe_adjust_activity(
                 agent, "15:00", "购物", "环境平稳", "目标：随便逛逛", "无",
                 [{"severity": 0.86, "name": "家中急事", "description": "家人突然需要帮助"}],

@@ -40,6 +40,10 @@ def parse_profile(block: str) -> dict[str, Any]:
     p["living"] = re.search(r"居住(?:于)?(.+?)[，。]", base).group(1)
     p["job"] = _extract(r"\*\*职业与工作节奏\*\*：(.+)")
     p["personality"] = _extract(r"\*\*性格与情绪特征\*\*：(.+)")
+    # Written by scripts/author_personality.py from the sampled OCEAN scores,
+    # and absent from profiles that predate it — hence the empty default, which
+    # is what keeps the pre-rewrite corpus rendering byte-identical prompts.
+    p["behavior_tendencies"] = _extract(r"\*\*人格与行为倾向\*\*：(.+)")
     p["daily_life"] = _extract(r"\*\*日常生活与生活习惯\*\*：(.+)")
     p["values"] = _extract(r"\*\*价值观与公共事务态度\*\*：(.+)")
     p["work_style"] = p["job"]

@@ -35,6 +35,7 @@ import requests
 from gaworld.cognition.realism import intention_text
 from gaworld.goals import format_goals_context
 from gaworld.llm import providers as _llm_providers
+from gaworld.personality import anchor_block
 from gaworld.logging_setup import get_logger
 from gaworld.memory.store import save_agent_memory, vector_db_add_entry
 from gaworld.settings import CONFIG
@@ -185,6 +186,13 @@ def generate_daily_diary(
             if str(day_context.get(key, "")).strip()
         ).strip()
     log_excerpt = _compact_text(logs, max_chars=1600)
+    # The diary is the one place personality is allowed to shape *voice*
+    # rather than choices, which is why it sits on its own `voice` channel: an
+    # experiment can turn the prose difference on and the decision difference
+    # off, and tell the two apart. Empty for an agent with no traits, and the
+    # surrounding prompt is then byte-identical to the pre-personality build.
+    voice_hint = anchor_block(agent, "diary")
+    voice_block = f"\n我平时的样子：\n{voice_hint}\n" if voice_hint else ""
     prompt = f"""
 你是{agent.get('name', '某位居民')}，请以第一人称写一篇日记。
 
@@ -199,7 +207,7 @@ def generate_daily_diary(
 今天的经验整合：{consolidation_text}
 明天的行为意图：{intent_hint}
 我的目标与追求：{goals_hint}
-
+{voice_block}
 要求：
 1) 输出 markdown。
 2) 必须包含且只包含这三个二级标题：`## 今天主要发生的事情`、`## 今天的感想`、`## 明天的计划`。

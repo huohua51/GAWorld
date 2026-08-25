@@ -198,6 +198,25 @@ def human_realism_settings() -> dict[str, Any]:
         },
         # Dynamic behaviour system: spontaneous urges, social encounters,
         # need-based interrupts, and environment-triggered activity changes.
+        # LLM-generated action spaces.
+        "action_space": {
+            # How many activities one generation call may ask for.
+            #
+            # Measured, not guessed. On 848 real ``actions`` completions the
+            # per-activity block runs 193 characters at the median and 215 at
+            # p75, while the provider's default 512-token cap lets through
+            # about 916 characters. Four activities sit right on that edge --
+            # 37.5% of the sample was truncated -- and six or more never fit at
+            # all. A real day carries ten distinct activities, so the
+            # un-chunked call could never have worked; it recovered the first
+            # four and the retry then hit the same wall.
+            #
+            # Three leaves a block of headroom for a verbose agent. Chunking is
+            # not more expensive than the old path: ten activities take four
+            # calls that succeed, against two that fail plus a per-activity
+            # top-up call for each one later.
+            "activities_per_call": 3,
+        },
         "dynamic_behavior": {
             "enabled": True,
         },

@@ -51,6 +51,43 @@ CLI/backward-compat entrypoints until their callers have been migrated.
   contradict them; `duties.py`, `finance.py` and `events.py` turn the household
   into schedule pressure, conserving household spending, and shared family
   events plus in-household emotional contagion. `plugin.py` wires all of it.
+- `gaworld/personality/`: Big Five (OCEAN) traits as a person-level
+  modulation layer. `traits.py` is the single read entry point — a stdlib-only
+  leaf that stores z scores at `agent["ext"]["big_five"]` and exposes
+  `traits_of`, `style_fit` (additive) and `trait_modifier` (multiplicative and
+  bounded); `anchors.py`, also stdlib-only, turns those z scores into
+  second-person Chinese behaviour sentences for LLM prompts; `plugin.py`
+  (`BigFivePlugin`, id `big_five`) owns the single `agents.built` hook, seeding
+  traits from `data/agents_big5.csv` when that file is present and sampling
+  from a correlated population prior otherwise. It is registered *first* in
+  `builtin_plugins()`, because personality is a read-only prerequisite layer
+  every later `agents.built` handler may want to consult. Three independent
+  channels (`CONFIG["personality"]["channels"]`, all on by default) keep the
+  effects attributable: `rules` is deterministic and zero-token (an additive
+  `trait_style_fit` component in `choose_action`, bounded multipliers on
+  interrupt threshold, spontaneity, social encounter probability, decision
+  noise, impulse bypass and wealth drive, plus a personal emotion set point),
+  `prompt` injects anchor sentences into the daily-routine,
+  activity-adjustment, goals and news prompts, and `voice` injects them into
+  the diary prompt only — so an experiment can tell "the decisions changed"
+  apart from "the prose changed". Traits never drift during a run (adult OCEAN
+  change is ~0.1-0.2 SD per decade), and an agent with no traits, or a
+  gated-off channel, behaves bit-identically to the pre-personality build.
+  `scripts/author_personality.py` produces the CSV offline, sampling the five
+  scores first and authoring each resident's profile prose from them — the
+  inverse of the old pass, which scored OCEAN out of prose written alongside
+  the person-level state variables and so recovered those variables instead
+  (worst collinearity R² 0.77, now 0.05; coverage now 51/51 on all five
+  dimensions). It adds a `人格与行为倾向` field to every profile, which
+  `personality_line` renders in place of the old `性格与情绪特征` line, and
+  backs the previous corpus up to `data/hangzhou_profiles_with_names.v1.md`.
+  `scripts/calibrate_big5.py` remains, now for scoring externally imported
+  agents and as a control arm that re-scores the authored corpus against the
+  sampled ground truth. `scripts/big5_effect_ceiling.py` (effect size) and
+  `scripts/big5_collinearity.py` (redundancy against the existing person-level
+  state variables) are the merge gates. Design docs:
+  `docs/proposals/2026-08-20-big-five-personality.md` and
+  `docs/proposals/2026-08-21-personality-corpus-rewrite.md`.
 - `gaworld/population/`: parameterised population synthesis. `schema.py` owns the
   knob contract (`PopulationSpec`, presets) and the pure-maths feasibility
   precheck; `synth.py` IPF-fits a joint attribute table with structural zeros and
@@ -117,6 +154,7 @@ CLI/backward-compat entrypoints until their callers have been migrated.
 - `gaworld/settings/runtime.py`: core simulation, paths, memory, planning, and concurrency defaults.
 - `gaworld/settings/environment.py`: external environment, physical perception (`local_physical`, `anomaly`, `replan`, `spatial_preferences`), distributed simulation, and OpenClaw defaults.
 - `gaworld/settings/behavior.py`: news, intervention, interests, human-realism, and dynamic-behavior defaults.
+- `gaworld/settings/personality.py`: Big Five personality defaults — the three channel gates, the style-fit amplitude and modifier band, prompt rendering, the emotion set point, and the population sampling prior.
 - `gaworld/settings/economy.py`: personal finance and macro-economy defaults.
 - `gaworld/settings/integrations.py`: extension hooks and real-work execution defaults.
 - `gaworld/settings/overrides.py`: dashboard, environment file, and `GAWORLD_CONFIG_OVERRIDES` merge logic.

@@ -20,6 +20,7 @@ def builtin_plugins():
     from gaworld.events.plugin import LifeEventsPlugin
     from gaworld.family.plugin import FamilyPlugin
     from gaworld.interests_plugin import InterestsPlugin
+    from gaworld.personality.plugin import BigFivePlugin
     from gaworld.goals_plugin import GoalsPlugin
     from gaworld.policy.plugin import InterventionPlugin
     from gaworld.skills.plugin import SkillsPlugin
@@ -27,6 +28,10 @@ def builtin_plugins():
     from gaworld.world.plugin import LocalPhysicalPlugin, SpatialPreferencesPlugin
 
     return [
+        # First: personality is a read-only prerequisite layer. Seeding it
+        # before any other `agents.built` handler means a subsystem that later
+        # wants to consult traits at build time can, without a reordering.
+        BigFivePlugin(),
         InterventionPlugin(),
         SkillsPlugin(),
         InterestsPlugin(),

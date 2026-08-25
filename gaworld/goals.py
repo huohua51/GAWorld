@@ -20,6 +20,7 @@ import re
 from typing import Any, Callable
 
 from gaworld.logging_setup import get_logger
+from gaworld.personality import personality_line
 
 _LOG = get_logger("gaworld.goals")
 
@@ -233,7 +234,7 @@ def _build_bootstrap_prompt(agent: dict, cfg: dict) -> str:
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "goals"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])

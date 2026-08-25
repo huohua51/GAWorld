@@ -29,6 +29,7 @@ from typing import Any
 
 from gaworld.llm import providers as _llm_providers
 from gaworld.memory.store import _format_memory_hint, retrieve_relevant_memories
+from gaworld.personality import personality_line
 from gaworld.settings import CONFIG
 from gaworld.sim._schedule import _extract_json_array_block
 from gaworld.sim._utils import _sanitize_extra_text
@@ -192,7 +193,7 @@ def _llm_bootstrap_external_items(
         f"年龄：{agent.get('age', '')}",
         f"居住情况：{agent.get('living', agent.get('residence', ''))}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "news"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
@@ -221,7 +222,7 @@ def _summarize_bootstrap_web_item(
     profile_text = "\n".join([
         f"姓名：{agent.get('name', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "news"),
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
     prompt = f"""

@@ -19,6 +19,7 @@ GAWorld/
 │   ├── io/                   # IO 工具（avatar.py, http_guard.py, web_scrape.py）
 │   ├── llm/                  # LLM 提供商（providers.py）
 │   ├── memory/               # 记忆系统（store, experience, consolidation, decay, …）
+│   ├── personality/          # 大五人格 OCEAN 特质（traits/anchors + plugin.py，默认开启）
 │   ├── policy/               # 干预策略（intervention.py + plugin.py）
 │   ├── settings/             # 配置（CONFIG, defaults, overrides）
 │   ├── skills/               # 技能系统（schemas, registry, consolidation + plugin.py）

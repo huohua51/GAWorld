@@ -113,6 +113,7 @@ from gaworld.goals import (
 
 from gaworld.policy.intervention import INTERVENTION_METRICS
 from gaworld.plugins import builtin_plugins
+from gaworld.personality import personality_line
 from gaworld.events.life import life_event_dir
 from gaworld.memory.store import (
     append_agent_log,
@@ -1179,7 +1180,7 @@ def _rewrite_weekend_schedule_from_profile(agent, schedule, day_context=None, da
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "routine"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"家庭状况：{agent.get('family', '') or '（无家庭记录）'}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
@@ -1570,7 +1571,7 @@ def generate_daily_routine(agent, base_schedule, day=None, day_context=None):
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "routine"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"家庭状况：{agent.get('family', '') or '（无家庭记录）'}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
@@ -1677,7 +1678,7 @@ def generate_schedule(agent):
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "routine"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"家庭状况：{agent.get('family', '') or '（无家庭记录）'}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
@@ -2107,7 +2108,7 @@ def maybe_adjust_activity(agent, time_str, scheduled_activity, perception_text, 
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "action"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
@@ -2203,7 +2204,7 @@ def infer_event_effect(agent, event_desc, event_type="event"):
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "news"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])

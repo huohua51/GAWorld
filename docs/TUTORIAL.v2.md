@@ -16,6 +16,7 @@
 4. [核心概念：智能体与仿真循环](#4-核心概念智能体与仿真循环)
 5. [既有特性详解](#5-既有特性详解)
     - [5.7 家庭与户](#57-家庭与户)
+    - [5.8 大五人格](#58-大五人格)
 6. [新特性一：物理环境感知与反应式重规划](#6-新特性一物理环境感知与反应式重规划)
 7. [新特性二：可复用 Skill 库](#7-新特性二可复用-skill-库)
 8. [新特性三：真实工作任务系统](#8-新特性三真实工作任务系统)
@@ -374,6 +375,116 @@ CONFIG["family"]["seed"] = 20260813                      # 换一批家庭
 再 `run`，否则已有居民会直接复用上一次生成的基础日程。
 
 设计取舍与踩过的坑见 [家庭系统设计](FAMILY_DESIGN.md)。
+
+---
+
+### 5.8 大五人格
+
+开关 `CONFIG["personality"]["enabled"]`（**默认 ON**）。以插件形式提供——插件 id `big_five`，
+在 `gaworld/plugins/builtin_plugins()` 里第一个注册，只挂 `agents.built` 一个钩子，
+代码在 `gaworld/personality/`。
+
+每位居民带一组**离线生成好的**大五（OCEAN）z 分，运行时只读 `data/agents_big5.csv`；
+没有这份文件时按人群先验采样（`sampling.*`：`seed` / `correlations` / `rescale`）。
+**人格在一次运行内不漂移**——它是这个人的底色，不是又一个会飘的状态变量。
+
+**三条通道**（`personality.channels`，默认全开，可分别关掉）：
+
+| 通道 | 做了什么 |
+|---|---|
+| `rules` | 确定性、零 token。`choose_action` 里加一个加性权重项 `trait_style_fit`（决策依据里显示为「性格倾向」）；对打断阈值、自发冲动概率、共处时的搭话概率、决策噪声、冲动绕过概率、消费 / 储蓄倾向做乘性微调；再给情绪加一条属于个人的基准线 |
+| `prompt` | 把人格写成第二人称的**行为锚句**，注入日程生成、日内活动调整、目标推导、新闻反应四类提示词。每段最多两条，按概率渲染（越极端越必然被写），**永远不写数字和维度名** |
+| `voice` | 同样的锚句只进日记提示词，用来把「文风变了」和「决策变了」分开归因 |
+
+**常用旋钮**（`CONFIG["personality"]`，定义在 `gaworld/settings/personality.py`）：
+
+```python
+CONFIG["personality"]["enabled"] = False               # 整个关掉
+CONFIG["personality"]["channels"]["prompt"] = False    # 只留规则通道（或只留 voice 做归因实验）
+CONFIG["personality"]["strength"] = 0.0                # 对照组：数据还在，人格不起作用
+CONFIG["personality"]["style_fit_amplitude"] = 0.30    # 人格在动作选择里的权重幅度
+CONFIG["personality"]["modifier_band"] = 0.25          # 乘性调节的上下限
+CONFIG["personality"]["residual_ratio"] = 0.6          # 每个人身上与人格无关的个体差异
+CONFIG["personality"]["profile_path"] = "data/agents_big5.csv"   # 人格分数表，运行时只读
+```
+
+另有 `prompt.render_midpoint` / `prompt.render_spread` / `prompt.strong_z` / `prompt.max_dims`
+控制锚句的渲染概率与每段条数；`emotion_baseline.*`（`contagion_weight` 0.06、
+`recovery_rate` 0.08、`n_recovery_slope` 0.30、`n_baseline_slope` 0.12、
+`e_baseline_slope` 0.04）控制个人情绪基准线。
+
+**人格分从哪来：先采样 OCEAN，再据此写人物设定**
+
+老流程是反过来的——读每个人 profile 里的「性格与情绪特征」段落，让 LLM 从中打分。
+这在这份语料上不成立：那段文字中位数只有 **20 字**，是标签不是描述；而
+`policy_sensitivity` / `platform_dependence` / `risk_preference` / `voice_propensity` /
+`mobility_intent` 这五个个体级状态变量就写在同一份 profile 里、紧挨着它。
+散文和数字本来就是同一个作者对同一个人的两种写法，从散文打分只是把数字读了回来——
+开放性与 `mobility_intent` 的相关高达 **0.90**，共线性闸门在 O、C、E 三维上判不合格。
+
+现在由 `scripts/author_personality.py` **先采样五维分数，再据此写行为描述**：
+独立性由采样器保证，不再是事后测出来的。只保留两条有文献依据的真实相关——
+开放性 ↔ `risk_preference`、外向性 ↔ `voice_propensity`，都是 r≈0.3；C / A / N 独立采样，
+不编造配对。只有明显偏离均值的维度（|z| ≥ 0.5，平均每人 3.0 个）才会被写进文字。
+profile 因此多出一个 `**人格与行为倾向**` 字段，原来的 `**性格与情绪特征**` 在文件里原样不动。
+
+```bash
+python scripts/author_personality.py --agents 1-5 --dry-run   # 看提示词与采样分数，不花钱
+python scripts/author_personality.py --agents 1-5             # 试水，写 output/traits/authored_preview.md
+python scripts/author_personality.py --apply                  # 全量，自动备份 .v1.md，写 md + CSV
+python scripts/big5_collinearity.py --annotate                # 必跑
+python scripts/big5_effect_ceiling.py                         # 复核幅度
+```
+
+`--apply` 会把旧语料备份到 `data/hangzhou_profiles_with_names.v1.md`。
+两道闸门的含义不变：`big5_effect_ceiling.py` 蒙特卡洛真实的 `choose_action`，
+报告给定幅度下人格与行为的相关能到多大；`big5_collinearity.py --annotate`
+检查五个维度是不是已有状态变量的线性组合，把不合格维度写回 CSV。
+
+`scripts/calibrate_big5.py` **没有删**，只是换了职责：一是给外部导入的 agent 打分
+（社交媒体导入那条路），二是当对照组——用它重新给新语料打分，跟采样得到的真值一比，
+就知道这个打分器到底有多准。
+
+**两个溯源列，会跟着数据一路进到运行产物里。** 人物设定没描述到的维度会被记成 `unstated`
+并取 **恰好 0**（无行为倾向、不写进提示词），共线性闸门判定不合格的维度会被 `--annotate`
+记成 `redundant`。两者都会进 agent record、进 `output/traits/agent_traits.csv`、
+进 recorder 载荷，并在**每次运行启动时打印出来**。反向生成之后这两列在当前语料上都是空的，
+所以启动时只剩一行：
+
+```
+🧬 大五人格已就绪：51 人（标定 51 / 先验采样 0），启用通道 rules+prompt+voice
+```
+
+两列仍然有意义：外部导入的 agent 走的还是打分那条路，仍可能留下 `unstated`。
+
+当前这份语料的实际情况（`--apply` 跑完 51 人之后）：
+
+| | 反向生成前 | 反向生成后 |
+|---|---|---|
+| 覆盖率 | N 35/51、C 26、O 17、E 13、A 11 | **五维全部 51/51** |
+| 共线性最差调整 R² | 0.77（不合格） | **0.05（合格）** |
+| 人群标准差 | 0.45–0.74 | **1.00** |
+| `style_fit_amplitude = 0.30` | PASS | 仍然 PASS |
+| `data/agents_big5.csv` 的 `source` | `llm_median3` | `sampled_authored` |
+
+五个维度现在都可以单独立论。
+
+**一处行为变化**：profile 里有 `人格与行为倾向` 时，`personality_line` 渲染的是这一段，
+**而不是**旧的 `性格与情绪特征` 行——两者在 51 人里有 9 人自相矛盾，而且本来就并排出现在
+每条提示词的相邻两行。`agent["personality"]` 本身没动，所以按关键词匹配它的四处子系统
+（`dynamic.py` 的原型表与 `is_extrovert`、`finance.py` 的财富驱动、`_heuristic_schedule`
+的睡眠提示）行为与之前完全一致。
+
+**怎么观察它生效**：
+
+- 产物 `output/traits/agent_traits.csv`（`personality.output_dir`）：本次运行**实际生效**的五维分数、来源与启用通道；试水时另有 `output/traits/authored_preview.md`，打分那条路另有 `output/traits/calibration_audit.csv`；
+- 决策依据里多出「性格倾向」一项；
+- 日程 / 日内活动调整 / 目标推导 / 新闻反应的提示词里出现第二人称行为锚句。
+
+**向后兼容**：没有人格数据的 agent、或被关掉的通道，行为与加这个子系统之前**逐位一致**。
+
+设计文档见 [`docs/proposals/2026-08-20-big-five-personality.md`](proposals/2026-08-20-big-five-personality.md)，
+反向生成语料的那次改动见 [`docs/proposals/2026-08-21-personality-corpus-rewrite.md`](proposals/2026-08-21-personality-corpus-rewrite.md)。
 
 ---
 
@@ -1048,6 +1159,7 @@ CONFIG["time_grid_snap"] = True    # 默认 False
 | `economy` | 个税、社保、恩格尔消费、投资、宏观周期、冲击、部门池守恒、信贷（`credit`）、agent 间路由（`routing`）、熟人借贷（`friend_loans`）；**可在控制台「外部系统」页签里可视化编辑**，见 [12.3](#123-外部系统观测台) |
 | `family` | **新**：家庭与户——婚姻状态分布、配对（含 `in_sim_pair_share` 这个建模旋钮）、生育、共居、家庭责任、家庭财务、家庭事件与户内情绪传染；**可在配置面板「家庭与户」分区里可视化编辑**，逐人指定见 [12.5](#125-家庭看板卡片与工作台编辑面板) |
 | `interests` | 兴趣 / 技能成长（开关、上限、插入倾向、持久化、日终衰减 `decay`、兴趣集演化 `evolution`） |
+| `personality` | **新**：大五人格（OCEAN，插件 `big_five`，默认 ON）——`channels` 分 `rules` / `prompt` / `voice` 三条通道开关，`strength=0` 即对照组，另有 `style_fit_amplitude` / `modifier_band` / `residual_ratio`、锚句渲染 `prompt.*`、个人情绪基准线 `emotion_baseline.*`、无标定文件时的人群先验 `sampling.*`，见 [5.8](#58-大五人格) |
 | `dynamic_behavior` | 动态行为系统开关 |
 | `environment.local_physical` / `.anomaly` / `.replan` / `.spatial_preferences` | **新**：物理感知与反应式重规划 |
 | `external_environment` | 外部环境生成器：四类事件的日概率、天气池、生成方式（`llm` / 规则）、日内突发（面板可编辑，见 [12.3](#123-外部系统观测台)） |
@@ -1085,6 +1197,8 @@ output/
 ├── network/     social_network.png
 ├── records/     family.{summary,household,agent,finance}.jsonl  ← 新：家庭结构与家庭开支
 │                （以及其它插件的统一事件流）
+├── traits/      agent_traits.csv        ← 新：本次运行实际生效的五维人格分、来源与启用通道
+│                calibration_audit.csv   ← 新：标定脚本产出的审计表
 ├── visualization/ simulation_trace.json、latest_frame.json
 ├── work/        capabilities.json、queue.jsonl、market.jsonl、agent_<id>/<task_id>/  ← 新
 ├── comparisons/ <事件名>/comparison_summary.md、comparison_metrics.csv

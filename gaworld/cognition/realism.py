@@ -7,6 +7,8 @@ import requests
 from gaworld.interests import format_growth_context, growth_focus
 from gaworld.logging_setup import get_logger
 from gaworld.llm.providers import call_llm
+from gaworld.personality import personality_line
+from gaworld.sim._schedule import loads_tolerant
 
 _LOG = get_logger("gaworld.realism")
 
@@ -42,10 +44,7 @@ def _parse_json_dict(text):
     blob = _extract_json_block(text)
     if not blob:
         return {}
-    try:
-        data = json.loads(blob)
-    except json.JSONDecodeError:
-        return {}
+    data = loads_tolerant(blob)
     return data if isinstance(data, dict) else {}
 
 
@@ -332,7 +331,7 @@ def build_daily_intentions(agent, recent_episodes, cfg, llm_budget_ctx, goals_co
     profile_text = "\n".join([
         f"姓名：{agent.get('name', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "routine"),
         f"当前状态：{json.dumps(agent.get('state', {}), ensure_ascii=False)}",
         f"兴趣与技能成长画像：\n{format_growth_context(agent.get('growth_profile'))}",
     ])

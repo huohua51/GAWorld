@@ -20,7 +20,7 @@
       }
     }
   },
-  "sim_days": 2,
+  "sim_days": 30,
   "seconds_per_day": 30,
   "agent_ids": [
     37
@@ -28,10 +28,10 @@
   "simulate_realtime": true,
   "time_step_minutes": null,
   "long_run": {
-    "enabled": false,
-    "randomness": 0.9
+    "enabled": true,
+    "randomness": 1.0
   },
   "routine_change": {
-    "randomness": 0.85
+    "randomness": 1.0
   }
 }

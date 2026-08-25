@@ -76,6 +76,7 @@ GAWorld 的目标不是简单地“跑一群 Agent”，而是提供一个可控
 - 政策事件和环境事件模拟
 - PolicySim 风格的推荐 / 曝光干预指标
 - 货币守恒的闭环经济仿真（企业/政府/银行部门池、个税与五险一金真实代扣、现金约束消费 + 信贷、共同市场因子投资、智能体间支付路由与熟人借贷、宏观经济周期）
+- 大五人格（OCEAN）：每位居民带一组 O/C/E/A/N 的 z 分数，通过三条可独立开关的通道影响行为——`rules`（确定性、零 token：动作选择里的加性 style-fit 分量，中断阈值 / 自发行为 / 社交偶遇概率 / 决策噪声 / 冲动绕过 / 财富驱动上的有界乘子，以及个人情绪基准点）、`prompt`（把人格锚句注入日程生成、活动调整、目标与新闻 prompt）、`voice`（锚句只进日记 prompt）。三条通道分开，才能让实验把「决策变了」和「文风变了」分开归因。特质在构建智能体时一次性种入——有 `data/agents_big5.csv` 就用离线生成的值（**先独立采样五维分数，再据此改写每个人 profile 里的行为描述**，而不是从 profile 文本反推分数），没有就从带相关结构的人口先验采样——且运行期间不漂移（成年人的 OCEAN 每十年只变 0.1–0.2 个标准差）。没有特质的智能体、或被关掉的通道，行为与加人格之前**逐位一致**
 - 家庭与户：按年龄段 × 性别抽样婚姻状态（未婚/已婚/离异/丧偶），匹配得上的居民在仿真内配成夫妻并**共享同一个住处**，配不上的补场外家人；子女、同住长辈、合租室友随之生成。户型（独居/合租/与父母同住/未婚同居/夫妻二人/核心家庭/单亲/三代同堂）是分配结果的**读数**而不是预设配额。家庭进入日程（接送、陪写作业、照料老人、回家吃晚饭）、账本（育儿与赡养开销按收入分摊、伴侣互相补现金缺口，全程货币守恒）、事件（一件家事同一 tick 落到全家人身上）与户内情绪传染；可在配置面板调整整体分布，也可在 Agent Studio 里逐人精确指定并跨运行生效
 - 真实位置系统：基于类别的空间匹配、出行成本计算、高峰时段和天气影响、通勤记忆
 - 动态行为系统：情绪驱动的即兴行为、社交偶遇链、需求中断、环境事件连锁反应、承诺度感知的日程中断
@@ -116,6 +117,7 @@ GAWorld/
 │   ├── io/                        # HTTP guard、头像生成、HTML 抽取
 │   ├── llm/providers.py           # LLM 提供商封装与路由
 │   ├── memory/                    # 记忆系统（store、experience、consolidation、decay、spatial_preferences）
+│   ├── personality/               # 大五人格 OCEAN（traits、anchors + plugin.py，三通道默认开启）
 │   ├── policy/intervention.py     # 干预指标与推荐
 │   ├── settings/                  # 分层配置（LLM、运行时、行为、经济、环境）
 │   ├── sim/                       # 仿真子模块（schedule、location、cognition、rag…）
@@ -559,6 +561,76 @@ Refl: 感受：情绪有一点波动；教训：下次要更早判断状态和�
 
 该功能不执行 SFT/DPO 模型训练，也不会调用外部内容审核 API。
 
+### 大五人格（OCEAN）系统
+
+每位居民带一组大五人格 z 分数（开放性 O / 尽责性 C / 外向性 E / 宜人性 A / 神经质 N），
+存放在 `agent["ext"]["big_five"]`，统一经 `gaworld/personality/traits.py` 读取——包外任何模块
+都不直接索引这个字段。`traits_of` 取特质，`style_fit` 给出加性分量，`trait_modifier` 给出
+有界乘子；`anchors.py` 则把 z 分数翻译成第二人称的中文行为描述句，供 LLM prompt 使用。
+两个模块都只依赖标准库。
+
+人格通过**三条互相独立、默认全开**的通道生效（`CONFIG["personality"]["channels"]`）：
+
+| 通道 | 影响什么 |
+|---|---|
+| `rules` | `choose_action` 里的加性 `trait_style_fit` 分量；中断阈值、自发行为、社交偶遇概率、决策噪声、冲动绕过、财富驱动上的**有界乘子**；以及个人情绪基准点。确定性，零 token |
+| `prompt` | 把人格锚句注入日程生成、活动调整、目标与新闻 prompt |
+| `voice` | 锚句只进日记 prompt |
+
+分成三条通道而不是一个总开关，是因为这个子系统的价值就在于能把「**决策**变了」和
+「**文风**变了」分开归因：只留 `rules` 得到的是零 token 的确定性调制，只留 `prompt` / `voice`
+则改变的仅仅是措辞。
+
+**特质从哪里来**
+
+`BigFivePlugin`（id `big_five`）只挂 `agents.built` 一个钩子，并在 `builtin_plugins()` 里
+**注册在第一位**——人格是只读的前置层，先种进去，后面任何一个 `agents.built` 处理器都能
+直接读到特质，不用再调顺序。有 `data/agents_big5.csv` 就读离线生成的值，没有则从一个带相关结构的
+人口先验采样，因此新克隆的仓库也能直接跑。51 位杭州居民的分数由 `scripts/author_personality.py`
+离线跑一次，方向是**反过来的**：先采样五维 z 分数，再据此改写 profile 里的行为描述。
+
+老做法是从每个人 profile 里的「性格与情绪特征」段落反推分数，在这份语料上不成立——
+那段文字中位数只有 20 字（是标签不是描述），而 `policy_sensitivity` / `platform_dependence` /
+`risk_preference` / `voice_propensity` / `mobility_intent` 五个状态变量就写在同一份 profile 里、
+紧挨着它；散文和数字是同一个作者对同一个人的两种写法，反推出来的开放性与 `mobility_intent`
+相关达 0.90，共线性闸门在 O、C、E 三维上判不合格。
+
+先采样再写，独立性就由采样器保证，而不是事后测出来的。只保留两条有文献依据的真实相关——
+开放性 ↔ `risk_preference`、外向性 ↔ `voice_propensity`，都是 r≈0.3；C / A / N 独立采样。
+只有明显偏离均值的维度（|z| ≥ 0.5，平均每人 3.0 个）会被写进文字。改写后每份 profile
+多出一个 `人格与行为倾向` 字段（原来的「性格与情绪特征」原样保留），旧语料备份在
+`data/hangzhou_profiles_with_names.v1.md`。跑完 51 人后：五个维度**全部 51/51 有分**
+（此前 N 35/51、C 26、O 17、E 13、A 11），共线性最差调整 R² 从 0.77（不合格）降到 0.05，
+人群标准差从 0.45–0.74 变成 1.00，`style_fit_amplitude = 0.30` 仍然通过幅度闸门。
+`scripts/calibrate_big5.py` 没有删：它现在负责给外部导入的 agent（社交媒体导入那条路）打分，
+并作为对照组——重新给新语料打分、与采样真值比对，量一量打分器有多准。
+
+**提示词渲染的是哪一段**
+
+profile 里存在 `人格与行为倾向` 时，`personality_line` 渲染这一段，**而不是**旧的
+「性格与情绪特征」行——两者在 51 人里有 9 人互相矛盾，而且原本就并排出现在每条提示词的
+相邻两行。`agent["personality"]` 本身没动，所以按关键词匹配它的四处子系统
+（`dynamic.py` 的原型表与 `is_extrovert`、`finance.py` 的财富驱动、`_heuristic_schedule`
+的睡眠提示）行为与之前完全一致。
+
+**人格不漂移**
+
+成年人的 OCEAN 每十年只变化约 0.1–0.2 个标准差，因此特质在一次运行内是常量——没有「今天更
+外向了」这回事。随时间变的是状态变量，不是人格本身。
+
+**幅度不是拍脑袋定的**
+
+两个脚本作为合入门槛：`scripts/big5_effect_ceiling.py` 用真实的 `choose_action` 跑蒙特卡洛，
+报告给定振幅下隐含的特质—行为相关；`scripts/big5_collinearity.py` 把每个维度对已有的五个
+个体级状态变量做回归，某一维如果基本冗余就直接判失败。
+
+**向后兼容**
+
+没有特质的智能体、或被关掉的通道，行为与加人格之前**逐位一致**；这条契约由
+`tests/test_personality_big_five.py`（36 个测试）覆盖。详见
+[大五人格设计](./docs/proposals/2026-08-20-big-five-personality.md)与
+[人格语料反向生成](./docs/proposals/2026-08-21-personality-corpus-rewrite.md)。
+
 ### 家庭系统
 
 在这个特性之前，仿真里**所有居民事实上都是单身**：profile 文本几乎不写婚育，
@@ -876,6 +948,7 @@ LLM 调用之前完成决策。
 - [群体模拟 — 教程](./docs/GROUP_SIMULATION_TUTORIAL.md) · [设计](./docs/GROUP_AGENT_DESIGN.md)（人口合成、cohort 模式、L1–L4 验证门）
 - [外部系统 — 教程](./docs/EXTERNAL_SYSTEMS_TUTORIAL.md)（货币系统、外部环境、对外服务的观察与编辑，以及运行时干预）
 - [平行世界 — 教程](./docs/PARALLEL_WORLDS_TUTORIAL.md)（多分支反事实实验：设计实验、读分叉与偏离图、剂量反应设计，以及为什么要先跑安慰剂世界）
+- [大五人格（OCEAN）— 设计](./docs/proposals/2026-08-20-big-five-personality.md)（三条独立通道、效应量与共线性两道合入门、离线特质标定）
 - [项目结构](./docs/PROJECT_STRUCTURE.md)
 - [仓库规范](./AGENTS.md)
 - [更新日志](./CHANGELOG.md)

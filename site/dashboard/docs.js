@@ -199,6 +199,15 @@
       summary: "工作任务如何被分解、执行和评估的实施设计。",
       tags: ["design", "real work", "设计"],
     },
+    {
+      id: "big-five-design",
+      path: "/docs/proposals/2026-08-20-big-five-personality.md",
+      title: "大五人格设计",
+      en: "Big Five Personality Design",
+      group: "设计文档",
+      summary: "五维人格怎么从性格段落离线标定并冻结、规则/提示词/日记三条通道各改变什么、以及为什么运行期不漂移。",
+      tags: ["design", "personality", "big five", "ocean", "人格", "设计"],
+    },
   ];
 
   var GROUPS = ["快速上手", "功能与玩法", "专题教程", "开发与扩展", "设计文档"];

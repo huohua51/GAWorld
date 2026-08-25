@@ -22,6 +22,8 @@ import random
 from collections import defaultdict
 from copy import deepcopy
 
+from gaworld.personality.traits import trait_modifier
+
 # ---------------------------------------------------------------------------
 # 0. MODULE RNG
 # ---------------------------------------------------------------------------
@@ -957,6 +959,11 @@ def _infer_wealth_drive(agent):
         base += 0.08
     if _contains_any(personality, ["佛系", "躺平", "知足", "淡泊"]):
         base -= 0.10
+    # Conscientiousness pushes towards accumulation, neuroticism towards
+    # precautionary saving. Applied on top of the keyword read rather than
+    # instead of it: the narrative text still carries 佛系/上进, which the
+    # trait vector does not encode.
+    base *= trait_modifier(agent, "wealth_drive")
     return _clip(base, 0.08, 0.98)
 
 

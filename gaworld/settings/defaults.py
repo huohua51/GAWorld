@@ -11,6 +11,7 @@ from .environment import environment_settings
 from .family import family_settings
 from .integrations import integration_settings
 from .llm import llm_settings
+from .personality import personality_settings
 from .runtime import simulation_settings
 
 
@@ -26,6 +27,7 @@ def build_default_config() -> dict[str, Any]:
         human_realism_settings(),
         economy_settings(),
         family_settings(),
+        personality_settings(),
         integration_settings(),
     ):
         config.update(fragment)

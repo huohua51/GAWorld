@@ -25,6 +25,7 @@ wholesale. LLM access uses module-attribute dispatch
 from __future__ import annotations
 
 import json
+import re
 import random
 from typing import Any
 
@@ -32,6 +33,7 @@ from gaworld.cognition.realism import build_context_key
 from gaworld.interests import match_growth_items
 from gaworld.llm import providers as _llm_providers
 from gaworld.logging_setup import get_logger
+from gaworld.personality import personality_line, style_fit, trait_modifier
 from gaworld.memory.store import (
     _format_memory_hint,
     _memory_action_bias,
@@ -57,6 +59,8 @@ from gaworld.sim._schedule import (
     _action_style_tags,
     _activity_commitment_level,
     _extract_json_block,
+    loads_tolerant,
+    repair_inner_quotes,
     is_sleep_activity,
 )
 
@@ -109,16 +113,67 @@ def _vector_db_top_k() -> int:
 # Layer 1 — pure JSON parsers.
 # ---------------------------------------------------------------------------
 
+#: One ``"activity": [ ... ]`` pair whose list actually closed. Non-greedy, so
+#: it stops at the first ``]``; action phrases contain no brackets.
+_ACTIVITY_PAIR = re.compile(r'"((?:[^"\\]|\\.)*)"\s*:\s*\[(.*?)\]', re.S)
+_QUOTED_ITEM = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def _salvage_action_space(text: str, activities: list[str]) -> dict[str, list[str]]:
+    """Activities whose list survived, from an object the model never finished.
+
+    Only pairs with a closing ``]`` are taken, so a half-written list is
+    dropped rather than handed on as a short one -- the conservative direction,
+    since the caller's retry will ask for whatever is missing.
+    """
+    source = repair_inner_quotes(text or "")
+    salvaged: dict[str, list[str]] = {}
+    for match in _ACTIVITY_PAIR.finditer(source):
+        activity = match.group(1).strip()
+        if activity not in activities:
+            continue
+        items = [
+            item.group(1).strip().replace('\\"', '"')
+            for item in _QUOTED_ITEM.finditer(match.group(2))
+        ]
+        items = [item for item in items if item]
+        if items:
+            salvaged[activity] = items
+    return salvaged
+
+
 def _parse_action_space(text: str, activities: list[str]) -> dict[str, list[str]]:
+    """Parse an action-space response, tolerating the two ways it really fails.
+
+    Measured on 848 real ``actions`` responses captured by the A4 arm, the
+    strict parser below returned ``{}`` for **354 of them (41.7%)**:
+
+    * **318 truncated.** The prompt asks for four activities of five to ten
+      actions each, and the provider's default ``max_tokens`` of 512 cuts the
+      object off mid-list (lengths 618-993, median 914, not one empty
+      response). Production is worse than this sample, not better:
+      ``generate_actions`` passes every distinct activity in a day's schedule,
+      which is more than the four this was measured with.
+    * **36 syntactically broken.** ASCII quotes inside Chinese strings; see
+      :func:`repair_inner_quotes`.
+
+    Returning ``{}`` made both look identical to "the model said nothing", and
+    the consequence was not a caught error: the caller retries with *the same*
+    activity list, hits the same cap, and the agent spends the day on four
+    generic filler actions per activity. Two calls spent, nothing learned.
+
+    With the two fallbacks below, 0/4 recovery goes from 41.7% to **0%**, and
+    93.4% of responses yield three or four of the four activities. The caller's
+    existing retry then asks only for the one or two that are genuinely
+    missing, which is a short enough request to fit.
+
+    Both fallbacks run only where the strict parse already failed, so no call
+    that works today can change behaviour.
+    """
     json_blob = _extract_json_block(text)
-    if not json_blob:
-        return {}
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return {}
+    raw = loads_tolerant(json_blob)
     if not isinstance(raw, dict):
-        return {}
+        return _salvage_action_space(text, activities)
     action_space: dict[str, list[str]] = {}
     for activity in activities:
         acts = raw.get(activity, [])
@@ -127,7 +182,7 @@ def _parse_action_space(text: str, activities: list[str]) -> dict[str, list[str]
         cleaned = [str(a).strip() for a in acts if str(a).strip()]
         if cleaned:
             action_space[activity] = cleaned
-    return action_space
+    return action_space or _salvage_action_space(text, activities)
 
 
 def _parse_location_bias(
@@ -136,10 +191,7 @@ def _parse_location_bias(
     json_blob = _extract_json_block(text)
     if not json_blob:
         return {}
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return {}
+    raw = loads_tolerant(json_blob)
     if not isinstance(raw, dict):
         return {}
     bias_map: dict[str, dict[str, list[str]]] = {}
@@ -167,10 +219,7 @@ def _parse_policy_effect(text: str) -> dict[str, float]:
     json_blob = _extract_json_block(text)
     if not json_blob:
         return {}
-    try:
-        raw = json.loads(json_blob)
-    except json.JSONDecodeError:
-        return {}
+    raw = loads_tolerant(json_blob)
     if not isinstance(raw, dict):
         return {}
     allowed = {
@@ -198,15 +247,65 @@ def _parse_policy_effect(text: str) -> dict[str, float]:
 # Layer 2 — LLM-generated action spaces.
 # ---------------------------------------------------------------------------
 
+def _activities_per_call() -> int:
+    """Chunk size from CONFIG, floored at 1 so a bad value cannot stall."""
+    try:
+        raw = int((CONFIG.get("action_space", {}) or {}).get("activities_per_call", 3))
+    except (TypeError, ValueError):
+        return 3
+    return max(1, raw)
+
+
 def _llm_generate_actions(
     agent: dict[str, Any], activities: list[str],
     seed_actions: dict[str, list[str]] | None = None,
 ) -> dict[str, list[str]]:
+    """Action space for ``activities``, asked for in chunks that actually fit.
+
+    The un-chunked version could not have worked at production scale, and the
+    numbers say so rather than a hunch. Across 848 real completions one
+    activity's block is 193 characters at the median (215 at p75), while the
+    provider's default 512-token cap passes about 916. Four activities sit on
+    the edge -- 37.5% of that sample came back truncated -- and six or more
+    never fit. A real day carries **ten** distinct activities, so the single
+    call returned the first four at best, and the retry, asked for the other
+    six, hit the same wall. What kept the caches healthy was
+    ``ensure_action_space_for_activity`` quietly buying the rest back one call
+    at a time, later.
+
+    Chunking is not the more expensive option, which is the part that is easy
+    to get backwards: ten activities become four calls that succeed, against
+    two that fail plus a per-activity top-up for each one afterwards.
+
+    Truncation recovery in :func:`_parse_action_space` stays -- chunk sizes are
+    sized off a median, and a verbose agent can still overrun one.
+    """
+    activities = list(activities)
+    chunk = _activities_per_call()
+    if len(activities) <= chunk:
+        return _llm_generate_actions_batch(agent, activities, seed_actions)
+    merged: dict[str, list[str]] = {}
+    for start in range(0, len(activities), chunk):
+        group = activities[start:start + chunk]
+        seeds = None
+        if seed_actions:
+            # Only this chunk's seeds: the rest are prompt weight with nothing
+            # to contribute to the answer being asked for.
+            seeds = {a: seed_actions[a] for a in group if a in seed_actions} or None
+        merged.update(_llm_generate_actions_batch(agent, group, seeds))
+    return merged
+
+
+def _llm_generate_actions_batch(
+    agent: dict[str, Any], activities: list[str],
+    seed_actions: dict[str, list[str]] | None = None,
+) -> dict[str, list[str]]:
+    """One generation call plus its top-up retry, for a chunk that should fit."""
     profile_text = "\n".join([
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "action"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
@@ -288,7 +387,7 @@ def _llm_generate_location_bias(
         f"姓名：{agent.get('name', '')}",
         f"年龄：{agent.get('age', '')}",
         f"职业：{agent.get('job', '')}",
-        f"性格与情绪特征：{agent.get('personality', '')}",
+        personality_line(agent, "action"),
         f"日常生活与习惯：{agent.get('daily_life', '')}",
         f"价值观与公共事务态度：{agent.get('values', '')}",
     ])
@@ -466,7 +565,11 @@ def choose_action(
     habits = agent.get("habits", {}) if realism_enabled else {}
     behavior_cfg = _behavior_cfg()
     inertia_weight = float(behavior_cfg.get("inertia_weight", 0.25))
-    decision_noise = float(behavior_cfg.get("decision_noise", 0.18))
+    # Open agents entertain more of the field before settling; the jitter
+    # width is the closest thing choose_action has to "how firmly decided".
+    decision_noise = float(behavior_cfg.get("decision_noise", 0.18)) * trait_modifier(
+        agent, "decision_noise"
+    )
     avoidance_bonus_scale = float(behavior_cfg.get("avoidance_bonus_scale", 1.1))
     need_weights = behavior_cfg.get("need_weights", {}) if isinstance(behavior_cfg, dict) else {}
     energy_w = float(need_weights.get("energy", 0.45))
@@ -527,6 +630,7 @@ def choose_action(
         "growth_interest": "兴趣恢复",
         "growth_skill": "技能成长",
         "growth_career": "职业成长牵引",
+        "trait_style_fit": "性格倾向",
     }
     growth_profile = agent.get("growth_profile") if _interests_enabled() else {}
     activity_growth_matches = match_growth_items(growth_profile, activity) if growth_profile else []
@@ -540,6 +644,15 @@ def choose_action(
         maintain = "maintain" in styles
         restorative = "restorative" in styles
         quick = "quick" in styles
+
+        # Personality enters the decision loop here and nowhere else in this
+        # function: one additive term, sized like `growth_drive` next to it,
+        # scored against the style tags the loop already computes. Exactly 0.0
+        # for an agent with no traits, so the key never appears and the draw is
+        # bit-identical to the pre-personality build.
+        trait_fit = style_fit(agent, styles)
+        if trait_fit:
+            components["trait_style_fit"] = trait_fit
 
         if s["stress"] > 0.7 and avoidant:
             components["stress_avoidance"] = 1.2 * avoidance_bonus_scale
@@ -678,6 +791,10 @@ def choose_action(
         random_action_chance = _spontaneity_random_chance() + thought_intensity * 0.12
         if thought_source == "impulse":
             random_action_chance += 0.08
+        # Low conscientiousness makes the weighted draw easier to bypass
+        # altogether. Multiplicative and narrowly bounded because this branch
+        # already tops out at 0.40 and compounds over every step of the day.
+        random_action_chance *= trait_modifier(agent, "impulse_gate")
         if random.random() < min(0.40, random_action_chance):
             impulse_pool: list[str] = []
             for option in options:

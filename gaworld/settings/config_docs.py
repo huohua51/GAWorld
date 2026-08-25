@@ -38,6 +38,7 @@ from .environment import environment_settings
 from .family import family_settings
 from .integrations import integration_settings
 from .llm import llm_settings
+from .personality import personality_settings
 from .runtime import simulation_settings
 
 _SETTINGS_DIR = Path(__file__).resolve().parent
@@ -119,6 +120,15 @@ SECTIONS: tuple[tuple[str, str, Any, str, str], ...] = (
         "家庭与户",
         "谁结了婚、谁还单身、谁跟父母住、谁在带娃。婚姻状态按年龄段抽样，家庭再决定日程里"
         "的接送与晚饭、账上的育儿与赡养开销、以及一家人共担的突发事件。改的是下一次运行。",
+    ),
+    (
+        "personality",
+        "personality",
+        personality_settings,
+        "大五人格",
+        "每个居民的开放性/尽责性/外向性/宜人性/神经质。三条通道可以分别开关：rules 影响"
+        "动作选择与打断阈值，prompt 把人格写成行为描述进决策提示词，voice 只影响日记文风。"
+        "分开是为了能区分「决策变了」和「文风变了」。",
     ),
     (
         "integrations",
@@ -318,6 +328,24 @@ MANUAL_HELP: dict[str, str] = {
     "family.duties.max_per_day": "一天最多往日程提示里塞几条家庭责任。调大了日程会被家务填满，调到 0 等于只保留家庭关系、不影响日程。",
     "family.finance.pooling_rate": "伴侣手头紧时，另一方最多拿出自己富余现金的多大比例去补。这是两人账户之间的转账，不凭空产生钱。",
     "family.finance.child_cost_monthly": "每个孩子每月的花销（托育、学费、杂项）。这笔钱按收入在家里挣钱的人之间分摊，走的是经济模块正常的支出通道。",
+    # ---- 大五人格 ----
+    "personality.channels": "人格从哪几条路影响居民，可以分别关掉。rules 是确定性规则（动作选择、打断阈值、消费倾向、情绪基线），零调用且可复现；prompt 在决策提示词里额外加一两句本场景相关的行为锚句；voice 只进日记。分成三条是为了能回答「到底是决策变了还是文风变了」——全开时这个问题无解。\n\nprompt 默认关，依据是 A4 消融臂（1,632 次调用，提案 §15）：87 格配对探针，结构化选择朝锚句方向移动的只有 48/87（判据 52），反向锚句判别臂 16/30，两项都不达标。原因不是锚句没进模型——与分类器无关的文本相似度检验显示 anchor 与 plain 的输出确实比同条件两次采样更不像（Cohen d = 0.29），模型读了；是它没把选择推到决策循环看得见的方向。而人格进提示词这件事本身已由语料重写完成：每位居民的「人格与行为倾向」段落**不在这条通道上，无论开关都会渲染**，独立打分器能从中把分数读回来（r = 0.79）。锚句是在那之上再加一句所有同极人共用的泛泛话，89.8% 重复段落已写的维度，成本约 36 tokens/次。要做 A4 对照或想试更强的配置，把它打开即可。",
+    "action_space.activities_per_call": "一次动作生成调用最多问几个活动。这个数不是拍的：848 条真实响应里，单个活动块中位 193 字、p75 215 字，而 provider 默认 512 token 的输出上限只放得下约 916 字——4 个活动正好卡在边上（实测 37.5% 被截断），6 个以上必然装不下。而真实一天有 10 个不重复活动，所以不分批的那次调用从来就不可能成功：它只能救回前 4 个，重试再撞同一堵墙。取 3 是给啰嗦的智能体留一档余量。分批不比原来贵——10 个活动分 4 次都成功，对比原来 2 次失败之后每个活动还要各补一次。",
+    "personality.profile_path": "每位居民的五个人格分数（z 分，正数偏高、负数偏低）。由 scripts/calibrate_big5.py 从人物设定里的「性格与情绪特征」离线标定一次后冻结在这里，运行时只读不改：每次开跑都重新打分既费钱，也会让同一个种子的两次运行对不上。文件不在时改用人群先验采样。",
+    "personality.strength": "人格总开关的力度。所有通道一起缩放，调到 0 等于人格不起作用但数据还在（可以拿来做对照组），调到 1 以上会让人格盖过情境。",
+    "personality.style_fit_amplitude": "人格在「选哪个动作」里占多大权重。参照系是旁边已有的权重项：成长动机 0.6、习惯惯性约 0.9。调过 0.9 人格就和习惯一样强了，那不符合人格只解释一到两成行为差异的实证量级。改完先跑 scripts/big5_effect_ceiling.py 看隐含相关落没落在 0.10-0.40。",
+    "personality.modifier_band": "乘性调节的上下限。这类调节作用在每个时间步都会复合的小概率上（打断、冲动、偶遇），所以band 刻意留窄——放宽会在几十步之后失控。",
+    "personality.residual_ratio": "每个人身上与人格无关的个体差异有多大。设成 0 会让人格与行为变成精确映射，观测窗口一长相关就趋近 1，那时测到的是天数不是人格。",
+    "personality.prompt.render_midpoint": "一个维度要多突出才会被写进提示词。这不是硬阈值：写不写按概率抽，刚好卡在中点的人是五五开，越极端越必然被写。用硬阈值会把连续的人格切成高/中/低三类，还在阈值处留一个跳变。",
+    "personality.prompt.render_spread": "上面那个概率的过渡带宽度。调小就接近硬阈值，调大则连普通人也会被描述几句。",
+    "personality.prompt.floor_z": "低于这个 |z| 就完全不写，无论上面的概率算出多少。和写入门槛的分工不同：那个决定「多突出才值得一提」，这个决定「这个人到底有没有偏向」。它也是 prompt 通道两种定位的分界——0.25 时锚句大多在重复「人格与行为倾向」段落已经写过的维度（段落写 |z| ≥ 0.5），0.5 时锚句只补段落没写的空档。",
+    "personality.prompt.max_dims": "每段提示词最多写几条人格描述。这些提示词本来就有十几段上下文，人格写多了会把当天的处境挤掉——人格压过处境正是最常见的失真。",
+    "personality.emotion_baseline": "给情绪一个属于个人的基准线。原先的情绪传染只把人往邻居的平均情绪上拉、没有任何东西把他拉回自己，跑久了全城情绪会收敛成一个数——个体差异被抹平。神经质要能起作用，必须先修这里。",
+    "personality.emotion_baseline.contagion_weight": "被周围人情绪带走的速度。原来写死是 0.1，调低后个人基线才拉得回来。",
+    "personality.emotion_baseline.recovery_rate": "每一步往自己的情绪基准线回多少，和上面的传染强度是同一根天平的两头。越大情绪越有韧性，越小越容易被周围人带走。",
+    "personality.sampling": "没有标定文件时怎么现场生成人格。合成人口走的就是这条路——它的性格描述本身是由压力和表达倾向拼出来的模板，拿去反向打分只会把状态变量原样捞回来，等于什么信息都没加。",
+    "personality.sampling.correlations": "五个维度之间的相关。人格维度并不正交：神经质与其余四维负相关，宜人性/尽责性/外向性之间弱正相关。全填 0 会造出现实中不存在的人（比如又极度神经质又极度情绪稳定的组合）。",
+    "personality.sampling.rescale": "抽完之后把人群拉回均值 0、标准差 1。五十来个人的样本，均值本身就有约 0.14 个标准差的抖动，不拉回来整座城可能系统性偏内向或偏焦虑，而这会被误读成一个发现。",
     "family.finance.elder_support_monthly": "给不同住的老人每月寄多少赡养费。父母年龄到了下面那个阈值才开始算。",
     "family.events.daily_probability": "每户每天发生一件家庭事件的概率（孩子发烧、夫妻吵架、家庭聚餐……）。事件会同时落到全家人身上。",
     "family.events.contagion_weight": "同住家人之间情绪和压力的互相影响强度。它是「向对方靠拢」而不是凭空加减：全家都平静时不会产生任何漂移。调到 0 就关掉传染。",
@@ -375,6 +403,19 @@ LABELS: dict[str, str] = {
     "time_step_minutes": "时间步长(分钟)", "time_grid_snap": "对齐时间格",
     "long_run": "长时段快进", "brief_llm": "日简报用 LLM", "max_state_delta": "单日状态变化上限",
     "brief_max_chars": "日简报字数上限",
+    "action_space": "动作空间生成", "activities_per_call": "每次调用问几个活动",
+    # 大五人格
+    "personality": "大五人格", "channels": "生效通道", "rules": "规则通道", "prompt": "提示词通道",
+    "voice": "文风通道", "profile_path": "人格分数表", "strength": "总力度",
+    "style_fit_amplitude": "动作偏好幅度", "modifier_band": "乘性调节上限",
+    "residual_ratio": "个体差异比例", "render_midpoint": "写入门槛", "render_spread": "门槛过渡带",
+    "strong_z": "强描述阈值", "max_dims": "每段最多几条", "floor_z": "不写下限",
+    "emotion_baseline": "情绪基准线",
+    "contagion_weight": "情绪传染强度", "recovery_rate": "回归速率",
+    "n_recovery_slope": "神经质·回归放缓", "n_baseline_slope": "神经质·基线下移",
+    "e_baseline_slope": "外向性·基线上移",
+    "sampling": "先验采样", "correlations": "维度间相关",
+    "rescale": "采样后重标定",
     "calendar": "日历", "start_date": "开局日期", "start_weekday": "开局星期", "weekend_days": "周末",
     "background": "时代背景", "csv_path": "居民状态表", "md_path": "人物设定文档",
     "map_path": "虚拟地图", "map_mode": "地图模式", "real_map_path": "真实地图数据",

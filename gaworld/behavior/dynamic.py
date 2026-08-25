@@ -43,6 +43,10 @@ import math
 import random
 from typing import Any, Dict, List, Optional, Tuple
 
+# Leaf import: gaworld.personality.traits is stdlib-only, so this module keeps
+# its "no heavy dependencies" property.
+from gaworld.personality.traits import trait_modifier, traits_of
+
 try:
     import numpy as np  # type: ignore
 except ImportError:  # pragma: no cover — numpy is optional at import time
@@ -179,6 +183,11 @@ def evaluate_interrupts(
 
     # Threshold: high self-control + high commitment = very hard to interrupt
     threshold = 0.10 + commitment * 0.55 + self_control * 0.15 - risk_pref * 0.08
+    # Conscientiousness raises the bar, neuroticism lowers it. Multiplicative
+    # and narrowly bounded: this threshold is consulted every step, so a wide
+    # band would compound into an agent that is either never or always
+    # interruptible.
+    threshold *= trait_modifier(agent, "interrupt_threshold")
 
     best: Optional[InterruptCandidate] = None
     best_net = -1.0
@@ -319,6 +328,7 @@ def generate_spontaneous_urge(
 
     # Base probability of having a spontaneous thought
     base_prob = 0.25 - self_control * 0.15
+    base_prob *= trait_modifier(agent, "spontaneity_chance")
     stress = _f(state.get("stress", 0.5), 0.5)
     base_prob += max(0.0, stress - 0.55) * 0.20
     base_prob += max(0.0, 0.45 - _f(state.get("emotion", 0.5), 0.5)) * 0.15
@@ -559,6 +569,10 @@ def generate_social_interrupts(
 
     state = agent.get("state", {}) if isinstance(agent, dict) else {}
     social_need = _f(state.get("social_need", 0.5), 0.5)
+    # Traits first, keyword sniffing as the fallback for agents the Big Five
+    # plugin never seeded. Keeping both is not double-counting: the branch
+    # below picks exactly one.
+    has_traits = any(traits_of(agent, "rules").values())
     personality_blob = str(agent.get("personality", ""))
     is_extrovert = _contains_any(personality_blob, ["外向", "活泼", "社交", "热情", "开朗"])
 
@@ -571,7 +585,9 @@ def generate_social_interrupts(
 
         # Encounter probability: higher closeness + social need = more likely
         encounter_prob = closeness * 0.35 + social_need * 0.20
-        if is_extrovert:
+        if has_traits:
+            encounter_prob *= trait_modifier(agent, "social_encounter")
+        elif is_extrovert:
             encounter_prob += 0.10
         encounter_prob = _clip(encounter_prob, 0.05, 0.70)
 
@@ -685,7 +701,33 @@ _PERSONALITY_KEYWORDS: Dict[str, List[str]] = {
 }
 
 
+#: OCEAN loadings for the four response archetypes above. Note that the
+#: keyword table and the Big Five disagree about the word 开放: it sits under
+#: ``adventurous`` there, while Openness here also feeds ``curious``. That is
+#: precisely why traits win outright rather than being blended in — two
+#: vocabularies for the same word would make the archetype unreadable.
+_TRAIT_ARCHETYPES: Dict[str, Dict[str, float]] = {
+    "cautious": {"n": 0.60, "o": -0.40},
+    "adventurous": {"o": 0.60, "e": 0.35, "n": -0.25},
+    "curious": {"o": 0.75, "e": -0.20},
+    "pragmatic": {"c": 0.70, "o": -0.20},
+}
+
+#: Below this the trait vector says nothing distinctive and the keyword
+#: fallback is the better guess.
+_ARCHETYPE_FLOOR = 0.35
+
+
 def _classify_personality(agent: Dict) -> str:
+    traits = traits_of(agent, "rules")
+    if any(traits.values()):
+        scored = {
+            name: sum(w * traits.get(dim, 0.0) for dim, w in loadings.items())
+            for name, loadings in _TRAIT_ARCHETYPES.items()
+        }
+        best_trait_type = max(scored, key=lambda name: scored[name])
+        if scored[best_trait_type] >= _ARCHETYPE_FLOOR:
+            return best_trait_type
     blob = " ".join([
         str(agent.get("personality", "")),
         str(agent.get("values", "")),

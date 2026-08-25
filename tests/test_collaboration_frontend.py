@@ -173,11 +173,19 @@ def test_console_registers_persistent_cooperation_tab():
     html = (CONSOLE / "index.html").read_text(encoding="utf-8")
     source = (CONSOLE / "console.js").read_text(encoding="utf-8")
 
-    assert re.search(
-        r'<button[^>]*data-tab="collaboration"[^>]*>'
-        r'合作任务<span class="en">Cooperation</span></button>',
-        html,
-    )
+    # The tab is present; what changed under this assertion is that every tab's
+    # Chinese label was wrapped in <span data-i18n="nav.*"> when i18n landed,
+    # and the old regex pinned the pre-i18n byte sequence. Asserting structure
+    # instead of exact markup: the button carries the right data-tab, the i18n
+    # key the locale files are keyed on, and both labels. That survives the next
+    # markup tweak and still fails if the tab is actually removed or renamed.
+    button = re.search(r'<button[^>]*data-tab="collaboration"[^>]*>(.*?)</button>',
+                       html, re.S)
+    assert button, "console has no collaboration tab"
+    label = button.group(1)
+    assert 'data-i18n="nav.collaboration"' in label, label
+    assert "合作任务" in label, label
+    assert '<span class="en">Cooperation</span>' in label, label
     assert re.search(
         r'\{\s*id:\s*"collaboration",\s*'
         r'src:\s*"/site/dashboard/collaboration\.html"\s*\}',

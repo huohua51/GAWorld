@@ -39,15 +39,42 @@ class TestConsolidation(unittest.TestCase, _MemoryStoreTempDir):
         self._teardown_tmp_store()
         CONFIG["memory"] = self._old_mem_cfg
 
-    def test_disabled_by_default_returns_empty(self):
-        # Default config doesn't enable consolidation, so the call is a
-        # no-op even with episodes in the DB and a working LLM.
+    def test_disabled_returns_empty(self):
+        """Turning it off is a no-op even with episodes and a working LLM.
+
+        This case used to assert that *the default* was off, and it has never
+        passed: the test and ``settings/runtime.py`` were added in the same
+        commit (aca2ce7) already disagreeing -- the settings file says
+        ``enabled: True`` while ``consolidation.py`` falls back to ``False``
+        when the key is absent. Which of the two is intended is a product
+        decision and is recorded in ``test_the_current_defaults`` below rather
+        than silently settled here. What this case can test without deciding
+        anything is the mechanism: when it *is* off, nothing happens.
+        """
+        CONFIG["memory"] = {"consolidation": {"enabled": False}}
         for i in range(4):
             ms.vector_db_add_entry(7, "memory", f"E{i}: 工作 顺利", sim_day=1)
         out = consolidation.consolidate_recent(
             {"id": 7}, llm=lambda p: '["foo"]', today=2
         )
         self.assertEqual([], out)
+
+    def test_the_current_defaults(self):
+        """Pins what ships today. **Not** a statement that it is right.
+
+        ``memory.consolidation`` and ``memory.decay`` both ship enabled, so an
+        operator who never touches the config gets periodic summarisation and
+        periodic **deletion** of low-salience memories older than 30 days.
+        Deletion-by-default in a longitudinal simulator is the kind of thing
+        that should be chosen on purpose; nobody has confirmed it was. This
+        test exists so the choice is visible and so a change to it is
+        deliberate -- see the open question in CHANGELOG.
+        """
+        defaults = CONFIG["memory"]
+        self.assertTrue(defaults["consolidation"]["enabled"])
+        self.assertTrue(defaults["decay"]["enabled"])
+        self.assertEqual(30, defaults["decay"]["min_age_days"])
+        self.assertEqual(0.20, defaults["decay"]["salience_floor"])
 
     def test_enabled_writes_semantic_rows_with_high_salience(self):
         CONFIG["memory"] = {
@@ -129,7 +156,11 @@ class TestDecay(unittest.TestCase, _MemoryStoreTempDir):
                 ),
             )
 
-    def test_disabled_by_default_is_noop(self):
+    def test_disabled_is_noop(self):
+        # Same story as consolidation above: this asserted the default, the
+        # default has always been on, and the mechanism is what is testable
+        # without deciding whether it should be.
+        CONFIG["memory"] = {"decay": {"enabled": False}}
         self._insert_old_row(31, "已经很久 没用 的 旧 记忆", 0.10, age_seconds=86400 * 100)
         out = decay.decay_pass(31, today=200)
         self.assertEqual({"decayed": 0, "deleted": 0}, out)

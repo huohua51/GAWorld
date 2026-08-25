@@ -232,7 +232,48 @@ python generative_city_sim.py dashboard --port 8766
 
 完整说明见[完整教程 5.7 节](TUTORIAL.v2.md#57-家庭与户)与[家庭系统设计](FAMILY_DESIGN.md)。
 
-## 14. 想扩展 GAWorld？
+## 14. 想让居民有性格？
+
+默认就有。每位居民带一组**离线生成好的**大五（OCEAN）人格分，运行时只读
+`data/agents_big5.csv`，**一次运行内不漂移**。它通过三条可分别开关的通道起作用：
+
+- `rules`：动作选择里多一个「性格倾向」权重项，并微调打断阈值、自发冲动、搭话概率、
+  决策噪声、消费/储蓄倾向，还给情绪加一条属于个人的基准线（确定性、零 token）；
+- `prompt`：把人格写成第二人称的行为锚句，注入日程、日内活动调整、目标推导、
+  新闻反应四类提示词——只写行为，不写数字和维度名；
+- `voice`：同样的锚句只进日记提示词，用来把"文风变了"和"决策变了"分开归因。
+
+想做对照组，把 `personality.strength` 设成 `0`：人格数据还在，但不起作用；
+整个关掉是 `personality.enabled = False`。没有人格数据的 agent、或被关掉的通道，
+行为与加这个子系统之前逐位一致。本次运行实际生效的分数写在
+`output/traits/agent_traits.csv`。
+
+人格分是一次性的离线产物（没有这份文件时会退回人群先验采样）。
+生成的方向是**先采样五维分数，再据此写人物设定里的行为描述**——
+从「性格与情绪特征」那段文字反推分数的老做法不成立：那段中位数只有 20 字，
+而五个个体级状态变量就写在同一份 profile 里，反推出来的只是那几个数字的回声。
+
+```bash
+python scripts/author_personality.py --agents 1-5 --dry-run   # 看提示词与采样分数，不花钱
+python scripts/author_personality.py --agents 1-5             # 试水，写 output/traits/authored_preview.md
+python scripts/author_personality.py --apply                  # 全量，自动备份 .v1.md，写 md + CSV
+python scripts/big5_collinearity.py --annotate                # 必跑：标出与已有状态变量重叠的维度
+python scripts/big5_effect_ceiling.py                         # 复核幅度
+```
+
+`--apply` 会把旧语料备份到 `data/hangzhou_profiles_with_names.v1.md`，
+并给每份 profile 加一个 `人格与行为倾向` 字段；提示词里从此渲染这一段，
+而不是旧的「性格与情绪特征」行（两者对 9 位居民自相矛盾）。
+`scripts/calibrate_big5.py` 还在，用于给外部导入的 agent 打分、以及作对照组校验打分器。
+
+当前语料下五个维度**全部 51/51 有分**，共线性最差调整 R² 为 0.05（此前 0.77 不合格），
+五维的效应都可以单独立论。人物设定没描述到的维度会取**恰好 0**（无倾向、也不会写进提示词），
+和闸门标出的「与已有变量重叠」的维度一起，在每次运行启动时打印出来——
+当前语料两类都是空的。
+
+完整说明见[完整教程 5.8 节](TUTORIAL.v2.md#58-大五人格)。
+
+## 15. 想扩展 GAWorld？
 
 所有子系统都运行在微内核插件接口上：写一个 `gaworld.kernel.Plugin`
 子类 + `CONFIG["plugins"]` 一行声明即可加新子系统，不用改核心代码；

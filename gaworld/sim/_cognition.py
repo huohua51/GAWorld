@@ -28,6 +28,7 @@ from typing import Any
 
 from gaworld.cognition.realism import relationship_weight
 from gaworld.llm import providers as _llm_providers
+from gaworld.personality.traits import traits_of
 from gaworld.settings import CONFIG
 
 # NB: access ``call_llm`` via ``_llm_providers.call_llm`` rather than a
@@ -133,6 +134,38 @@ def perception(
 # Social influence (relationship-weighted emotion contagion).
 # ---------------------------------------------------------------------------
 
+def _emotion_baseline_cfg() -> dict[str, Any]:
+    personality = CONFIG.get("personality", {}) or {}
+    if not personality.get("enabled", True):
+        return {}
+    cfg = personality.get("emotion_baseline", {}) or {}
+    return cfg if cfg.get("enabled", True) else {}
+
+
+def _emotion_setpoint(agent: dict[str, Any], traits: dict[str, float], cfg: dict[str, Any]) -> float:
+    """The emotion this agent drifts back to when nothing is happening.
+
+    Anchored on the agent's *own* starting emotion rather than a population
+    constant, because the initial values carry real heterogeneity from
+    ``data/hangzhou_agents_state_init.csv``; replacing them with one number
+    would swap the flattening this function is meant to fix for a different
+    one. Captured on first use and cached, so it is a trait-like constant
+    rather than something that chases the state it is supposed to anchor.
+    """
+    record = agent.setdefault("ext", {}).setdefault("big_five", {})
+    cached = record.get("emotion_setpoint")
+    if cached is not None:
+        return float(cached)
+    base = float(agent["state"]["emotion"])
+    # Neuroticism lowers the set point, extraversion raises it — the two
+    # best-replicated trait/affect links there are.
+    setpoint = base - float(cfg.get("n_baseline_slope", 0.12)) * traits["n"]
+    setpoint += float(cfg.get("e_baseline_slope", 0.04)) * traits["e"]
+    setpoint = max(0.15, min(0.85, setpoint))
+    record["emotion_setpoint"] = round(setpoint, 4)
+    return setpoint
+
+
 def social_influence(agent: dict[str, Any], agents_by_id: dict[Any, dict[str, Any]]) -> None:
     neighbors = agent["social_neighbors"]
     if not neighbors:
@@ -148,7 +181,28 @@ def social_influence(agent: dict[str, Any], agents_by_id: dict[Any, dict[str, An
             ) / total
     else:
         avg_emotion = sum(agents_by_id[n]["state"]["emotion"] for n in neighbors) / len(neighbors)
-    agent["state"]["emotion"] += 0.1 * (avg_emotion - agent["state"]["emotion"])
+    # Contagion alone is a pure averaging operator: repeated often enough it
+    # drives every connected agent onto one emotion, erasing exactly the
+    # individual differences the Big Five is supposed to introduce. Pairing it
+    # with a pull back towards a personal set point is what makes the
+    # neuroticism -> affect link survive more than a few steps. The two forces
+    # act at the same cadence because they act on the same variable; the
+    # weights are configurable under `personality.emotion_baseline`.
+    cfg = _emotion_baseline_cfg()
+    traits = traits_of(agent, "rules") if cfg else {}
+    if not cfg or not any(traits.values()):
+        agent["state"]["emotion"] += 0.1 * (avg_emotion - agent["state"]["emotion"])
+        return
+    emotion = float(agent["state"]["emotion"])
+    setpoint = _emotion_setpoint(agent, traits, cfg)
+    # High neuroticism recovers more slowly, so a shock lasts longer and the
+    # emotion series has a wider spread — the observable signature of N.
+    recovery = float(cfg.get("recovery_rate", 0.08)) / (
+        1.0 + float(cfg.get("n_recovery_slope", 0.30)) * traits["n"]
+    )
+    emotion += float(cfg.get("contagion_weight", 0.06)) * (avg_emotion - emotion)
+    emotion += max(0.0, recovery) * (setpoint - emotion)
+    agent["state"]["emotion"] = max(0.0, min(1.0, emotion))
 
 
 __all__ = [
