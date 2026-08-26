@@ -61,10 +61,12 @@ CONFIG = {
                 "type": "openai",
                 "base_url": os.environ.get(
                     "GAWORLD_LLM_API_BASE",
-                    os.environ.get("OPENAI_BASE_URL", "https://llmapi.paratera.com/v1"),
+                    os.environ.get("PARATERA_BASE_URL", "https://llmapi.paratera.com/v1"),
                 ),
                 "model": os.environ.get("GAWORLD_LLM_MODEL", "GLM-4-Flash"),
-                "api_key_env": os.environ.get("GAWORLD_LLM_API_KEY_ENV", "OPENAI_API_KEY"),
+                "api_key_env": os.environ.get(
+                    "GAWORLD_LLM_API_KEY_ENV", "PARATERA_API_KEY"
+                ),
                 "timeout": 120,
                 "temperature": 0,
                 "max_tokens": 512,
