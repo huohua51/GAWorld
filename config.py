@@ -63,10 +63,14 @@ CONFIG = {
                     "GAWORLD_LLM_API_BASE",
                     os.environ.get("PARATERA_BASE_URL", "https://llmapi.paratera.com/v1"),
                 ),
-                "model": os.environ.get("GAWORLD_LLM_MODEL", "GLM-4-Flash"),
+                "model": os.environ.get("GAWORLD_LLM_MODEL", "GLM-5.2"),
                 "api_key_env": os.environ.get(
                     "GAWORLD_LLM_API_KEY_ENV", "PARATERA_API_KEY"
                 ),
+                "thinking": {
+                    "type": os.environ.get("GAWORLD_LLM_THINKING", "enabled")
+                },
+                "reasoning_effort": os.environ.get("GAWORLD_LLM_REASONING_EFFORT"),
                 "timeout": 120,
                 "temperature": 0,
                 "max_tokens": 512,

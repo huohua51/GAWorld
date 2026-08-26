@@ -113,6 +113,8 @@ class OpenAIProvider:
         stream=False,
         max_tokens=None,
         temperature=None,
+        thinking=None,
+        reasoning_effort=None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -121,6 +123,8 @@ class OpenAIProvider:
         self.stream = bool(stream)
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.thinking = thinking
+        self.reasoning_effort = reasoning_effort
 
     def call(self, prompt):
         headers = {
@@ -135,6 +139,28 @@ class OpenAIProvider:
             payload["max_tokens"] = self.max_tokens
         if self.temperature is not None:
             payload["temperature"] = self.temperature
+        if self.thinking is not None:
+            payload["thinking"] = self.thinking
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
+
+        def _message_text(message: dict[str, Any]) -> str:
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict) and isinstance(item.get("text"), str):
+                        parts.append(item["text"])
+                if parts:
+                    return "".join(parts)
+            if message.get("reasoning_content"):
+                raise ValueError(
+                    "OpenAI-compatible response contained reasoning_content but no "
+                    "final content; increase max_tokens or disable thinking"
+                )
+            raise ValueError("OpenAI-compatible response contained no textual content")
 
         def _do_streaming() -> str:
             stream_payload = dict(payload, stream=True)
@@ -205,7 +231,7 @@ class OpenAIProvider:
             )
             r.raise_for_status()
             data = r.json()
-            return data["choices"][0]["message"]["content"]
+            return _message_text(data["choices"][0]["message"])
 
         if self.stream:
             return _retrying(_do_streaming, provider=f"openai:{self.model}", task="")
@@ -371,6 +397,8 @@ class LLMRouter:
                     stream=cfg.get("stream", False),
                     max_tokens=cfg.get("max_tokens"),
                     temperature=cfg.get("temperature"),
+                    thinking=cfg.get("thinking"),
+                    reasoning_effort=cfg.get("reasoning_effort"),
                 )
             elif p_type in ("claude", "anthropic"):
                 providers[name] = AnthropicProvider(
