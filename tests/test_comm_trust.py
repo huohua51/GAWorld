@@ -184,6 +184,80 @@ class TestTrustLedger(unittest.TestCase):
         )
         self.assertEqual(action, TrustAction.from_dict(action.to_dict()))
 
+    def test_bound_action_uses_platform_message_and_version(self):
+        self.ch.put_private(
+            self.task,
+            "dispatcher",
+            {
+                "action": "submit_route",
+                "legal_values": ["main_route", "alternate_route"],
+            },
+        )
+        self._current_pair()
+        emitted = self.ch.emit_trust(
+            self.task,
+            updater_id=2,
+            payload={
+                "trusted_person_id": "neighbor_lin",
+                "trusted_state": "main_open",
+                "trust_version": "v1",
+                "other_person_id": "passer_wu",
+            },
+            round_name="formation",
+        )
+        self.ch.deliver_trust(self.task)
+        message_id = emitted["message"]["message_id"]
+
+        not_adopted = self.ch.submit_bound_action(
+            self.task,
+            dispatcher_id=3,
+            message_id=message_id,
+            selected_value="main_route",
+            round_name="formation",
+        )
+        self.assertFalse(not_adopted["ok"])
+        self.assertEqual("trust_message_not_adopted", not_adopted["reason"])
+
+        self.assertTrue(self.ch.adopt_trust(self.task, message_id)["ok"])
+        wrong_round = self.ch.submit_bound_action(
+            self.task,
+            dispatcher_id=3,
+            message_id=message_id,
+            selected_value="main_route",
+            round_name="update",
+        )
+        self.assertFalse(wrong_round["ok"])
+        self.assertEqual("action_round_mismatch", wrong_round["reason"])
+
+        bound = self.ch.submit_bound_action(
+            self.task,
+            dispatcher_id=3,
+            message_id=message_id,
+            selected_value="main_route",
+            round_name="formation",
+        )
+        self.assertTrue(bound["ok"])
+        action = bound["action"]
+        self.assertEqual("submit_route", action["action"])
+        self.assertEqual("v1", action["adopted_trust_version"])
+        self.assertEqual(message_id, action["evidence_message_id"])
+
+    def test_bound_action_rejects_unregistered_value(self):
+        self.ch.put_private(
+            self.task,
+            "dispatcher",
+            {"action": "submit_route", "legal_values": ["main_route"]},
+        )
+        denied = self.ch.submit_bound_action(
+            self.task,
+            dispatcher_id=3,
+            message_id="not-delivered",
+            selected_value="alternate_route",
+            round_name="formation",
+        )
+        self.assertFalse(denied["ok"])
+        self.assertEqual("selected_value_not_registered", denied["reason"])
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

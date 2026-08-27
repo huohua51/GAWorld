@@ -401,6 +401,80 @@ class TrustLedger:
             self._append({"event": "action_submitted", "task_id": task_id, "action": action.to_dict()})
             return {"ok": True, "action": action.to_dict()}
 
+    def submit_bound_action(
+        self,
+        task_id: str,
+        *,
+        dispatcher_id: int,
+        message_id: str,
+        selected_value: str,
+        round_name: str,
+    ) -> dict[str, Any]:
+        """Submit a dispatcher choice bound to an adopted delivered trust message.
+
+        The model chooses only the registered business value. The platform
+        supplies the evidence message identifier, trust version, and action
+        name from its own delivery/adoption state.
+        """
+        with self._lock:
+            private = self._private.get((task_id, "dispatcher")) or {}
+            action_name = str(private.get("action") or "")
+            legal_values = {str(item) for item in (private.get("legal_values") or [])}
+            if not action_name or not legal_values:
+                return self._deny("dispatcher_contract_missing", task_id=task_id)
+            value = str(selected_value or "")
+            if value not in legal_values:
+                return self._deny(
+                    "selected_value_not_registered",
+                    task_id=task_id,
+                    selected_value=value,
+                )
+            inbox = self._inbox.get(task_id) or []
+            message = next(
+                (item for item in inbox if item.get("message_id") == message_id),
+                None,
+            )
+            if message is None:
+                return self._deny(
+                    "trust_message_not_delivered",
+                    task_id=task_id,
+                    message_id=message_id,
+                )
+            if message_id not in (self._adopted.get(task_id) or []):
+                return self._deny(
+                    "trust_message_not_adopted",
+                    task_id=task_id,
+                    message_id=message_id,
+                )
+            message_round = str(message.get("round") or "")
+            if str(round_name or "") != message_round:
+                return self._deny(
+                    "action_round_mismatch",
+                    task_id=task_id,
+                    expected=message_round,
+                    observed=str(round_name or ""),
+                )
+            version = str(message.get("trust_version") or "")
+            if version != self._adopted_version.get(task_id):
+                return self._deny(
+                    "stale_trust_used",
+                    task_id=task_id,
+                    incoming=version,
+                    current=self._adopted_version.get(task_id),
+                )
+            payload = {
+                "action": action_name,
+                "value": value,
+                "adopted_trust_version": version,
+                "evidence_message_id": message_id,
+                "round": message_round,
+            }
+            return self.submit_action(
+                task_id,
+                dispatcher_id=dispatcher_id,
+                payload=payload,
+            )
+
     def reject_submit(self, task_id: str, role: Role) -> dict[str, Any]:
         with self._lock:
             if role == "dispatcher":
