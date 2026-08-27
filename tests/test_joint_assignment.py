@@ -69,6 +69,7 @@ class TestJointAssignmentChannel(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertFalse(out["accepted"])
         self.assertEqual(1, out["retries_remaining"])
+        self.assertNotIn("plan_id", out)
         self.assertNotIn("suggested_slot", out)
         self.assertNotIn("actual_final_conflict_free", out)
         world = self.ch.world_state()
@@ -138,6 +139,7 @@ class TestJointAssignmentChannel(unittest.TestCase):
         registered = ch.register_protection(agent="agent_a", slot="k1")
         self.assertTrue(registered["ok"])
         self.assertEqual("A", registered["protected_agent"])
+        self.assertEqual("spec-002", registered["spec_version"])
         self.assertNotIn("slot", registered)
         self.assertNotIn("k2", json.dumps(registered))
         nack = ch.inspect_registered_constraints()
@@ -149,7 +151,29 @@ class TestJointAssignmentChannel(unittest.TestCase):
         self.assertNotIn("suggested", blob)
         ack = ch.propose_joint_assignment("coordinator", {"agent_a": "k1", "agent_b": "k2"})
         self.assertTrue(ack["accepted"])
+        self.assertEqual("spec-002", ack["spec_version"])
         self.assertEqual({"agent_a": "k1", "agent_b": "k2"}, ch.world_state()["assignments"])
+
+    def test_spec_revision_invalidates_pre_revision_plan(self):
+        self.ch.save_initial({"agent_a": "k1", "agent_b": "k2"})
+        accepted = self.ch.propose_joint_assignment(
+            "coordinator", {"agent_a": "k1", "agent_b": "k2"}
+        )
+        old_plan_id = accepted["plan_id"]
+        self.assertTrue(
+            self.ch.confirm_assignment(
+                agent_id="agent_a", slot="k1", plan_id=old_plan_id
+            )["ok"]
+        )
+
+        revised = self.ch.register_protection(agent="agent_a", slot="k1")
+        self.assertEqual("spec-002", revised["spec_version"])
+        stale = self.ch.confirm_assignment(
+            agent_id="agent_a", slot="k1", plan_id=old_plan_id
+        )
+        self.assertFalse(stale["ok"])
+        self.assertEqual("stale_plan_spec", stale["reason"])
+        self.assertIsNone(self.ch.world_state()["plan_id"])
 
     def test_protection_noop_when_first_plan_already_keeps_high_priority(self):
         self.ch.save_initial({"agent_a": "k1", "agent_b": "k2"})

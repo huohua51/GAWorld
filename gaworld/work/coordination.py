@@ -171,8 +171,21 @@ class JointAssignmentChannel:
             return self._deny("invalid_protected_slot", slot=protected_slot)
         self.priority = [agent_id] + [item for item in self.priority if item != agent_id]
         self._protected = {agent_id: protected_slot}
-        self._append({"event": "protection_registered", "agent": agent_id, "slot": protected_slot})
-        return {"ok": True, "protected_agent": _agent_label(agent_id)}
+        spec_version = self.registry.revise_spec()
+        self._plan_id = None
+        self._append(
+            {
+                "event": "protection_registered",
+                "agent": agent_id,
+                "slot": protected_slot,
+                "spec_version": spec_version,
+            }
+        )
+        return {
+            "ok": True,
+            "protected_agent": _agent_label(agent_id),
+            "spec_version": spec_version,
+        }
 
     def inspect_registered_constraints(self, assignments: dict[str, str] | None = None) -> dict[str, Any]:
         plan = assignments if assignments is not None else self._proposal or self._initial
@@ -235,22 +248,26 @@ class JointAssignmentChannel:
             return self._deny("agent_must_not_issue_plan_id", assignments=body)
         self._attempts += 1
         self._proposal = copy.deepcopy(body)
-        stamped = self.registry.stamp(body)
-        self._plan_id = stamped["plan_id"]
         violations = _public_violations(self._constraint_violations(body))
         accepted = not violations
         retries_remaining = max(0, self.max_retries + 1 - self._attempts)
         if accepted:
             retries_remaining = 0
+            stamped = self.registry.stamp(body)
+            self._plan_id = stamped["plan_id"]
+        else:
+            stamped = None
+            self._plan_id = None
         agent_payload = {
             "ok": True,
             "accepted": accepted,
             "violations": violations,
             "observed_assignments": copy.deepcopy(body),
             "retries_remaining": retries_remaining,
-            "plan_id": stamped["plan_id"],
-            "spec_version": stamped["spec_version"],
+            "spec_version": self.registry.spec_version,
         }
+        if stamped:
+            agent_payload["plan_id"] = stamped["plan_id"]
         self._append(
             {
                 "event": "proposal",
@@ -259,8 +276,8 @@ class JointAssignmentChannel:
                 "accepted": accepted,
                 "assignments": copy.deepcopy(body),
                 "violations": copy.deepcopy(violations),
-                "plan_id": stamped["plan_id"],
-                "spec_version": stamped["spec_version"],
+                "plan_id": stamped["plan_id"] if stamped else None,
+                "spec_version": self.registry.spec_version,
             }
         )
         return agent_payload
